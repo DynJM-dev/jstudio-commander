@@ -18,7 +18,7 @@
 | `c9f9bf9` | Phase 3 | JSONL parser, project scanner, token tracker, file watchers, data routes |
 | `37e7fd1` | Phase 4 | WebSocket server, event bus, rooms, status poller, watcher bridge |
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
-| `TBD` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
+| `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
 
 ## File Inventory
 
