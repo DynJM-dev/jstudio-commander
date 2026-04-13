@@ -129,3 +129,16 @@
 - Status poller runs every 5s, detects agent status from tmux pane content
 - File watcher uses chokidar with incremental byte-offset reads via `file_watch_state` table
 - Token pricing from `@commander/shared` constants (opus/sonnet/haiku per 1M tokens)
+
+## Notes for Next Coder
+
+- **Read PM_HANDOFF.md first** — it has the full architecture, module map, and phase plan with detailed specs for each phase
+- **Use subagents for file exploration** — reading too many server files into context caused forced compaction during Phase 5. Use `Agent` with `model: "haiku"` for codebase searches
+- **Kill port 3001 before starting server** — `lsof -ti:3001 | xargs kill -9` if previous instance lingers
+- **Vite may use port 5174/5180** if 5173 is occupied by another project (VetCare Santiago was on 5173)
+- **The `useWebSocket.tsx` file is `.tsx` not `.ts`** — it contains JSX (Context.Provider). Don't rename it back
+- **All placeholder pages are identical in structure** — EmptyState with a relevant icon. Phase 6+ replaces them with real content
+- **STATUS_COLORS and STATUS_LABELS** are in `@commander/shared` — use them instead of hardcoding colors for session statuses
+- **WSEvent discriminated union has 18 types** — check `ws-events.ts` before adding new event types
+- **Production build** is clean: `pnpm --filter @commander/client build` passes typecheck + vite build
+- **Commit after every meaningful change** — the PM expects git discipline with conventional commits
