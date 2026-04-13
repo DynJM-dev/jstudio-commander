@@ -22,7 +22,7 @@
 | `6b2c6e1` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
 | `26eff2b` | Phase 8 | Project dashboard: cards, phase timeline, module map, STATE.md viewer |
 | `011d343` | Phase 9 | Terminal panel (xterm.js + node-pty) + Analytics dashboard (Recharts) |
-| `TBD` | Phase 10 | Cloudflare tunnel, PIN auth, sidebar controls, polish, production build |
+| `f894106` | Phase 10 | Cloudflare tunnel, PIN auth, sidebar controls, polish, production build |
 
 ## File Inventory
 
