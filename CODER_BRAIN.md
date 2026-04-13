@@ -1,13 +1,13 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-13 after Phase 7 completion
+> Last updated: 2026-04-13 after Phase 8 completion
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
 
-**Phase 7: Chat Conversation View — COMPLETE**
-- All 7 phases (1-7) committed and verified
-- Ready for Phase 8: Project Dashboard
+**Phase 8: Project Dashboard — COMPLETE**
+- All 8 phases (1-8) committed and verified
+- Ready for Phase 9: Terminal Panel & Token Analytics
 
 ## Git History
 
@@ -20,6 +20,7 @@
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
 | `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
 | `6b2c6e1` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
+| `TBD` | Phase 8 | Project dashboard: cards, phase timeline, module map, STATE.md viewer |
 
 ## File Inventory
 
@@ -91,7 +92,14 @@
 - `components/chat/CodeBlock.tsx` — Shiki syntax highlighting (lazy), copy button, language label, line numbers
 - `components/chat/ThinkingBlock.tsx` — collapsible thinking with BrainCircuit icon, handles redacted
 - `components/chat/MessageMeta.tsx` — model pill + token count + timestamp
+- `hooks/useProjects.ts` — fetch projects, WS subscription, rescan, ProjectDetail type
+- `components/projects/ProjectCard.tsx` — glass card with name, path, phase progress bar, file indicators
+- `components/projects/PhaseTimeline.tsx` — horizontal dots timeline (complete/current/future), tooltips
+- `components/projects/ModuleMap.tsx` — grid of module cards with priority badges (P0/P1/P2)
+- `components/projects/StateViewer.tsx` — react-markdown + remark-gfm, dark theme styled components
 - `pages/ChatPage.tsx` — full conversation view: header, chat thread, session selector dropdown, stats
+- `pages/ProjectsPage.tsx` — project grid with filter pills (All/Active/With Plan/No Plan), rescan button
+- `pages/ProjectDetailPage.tsx` — header, phase timeline, module map, STATE.md viewer, collapsible PM_HANDOFF.md
 - `pages/SessionsPage.tsx` — session grid (active + collapsible stopped), create modal, empty/loading/error states
 - `pages/ChatPage.tsx` — placeholder with EmptyState
 - `pages/ProjectsPage.tsx` — placeholder with EmptyState

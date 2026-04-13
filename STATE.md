@@ -1,7 +1,7 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: 7 Chat Conversation View — COMPLETE
+- Phase: 8 Project Dashboard — COMPLETE
 - Last updated: 2026-04-13
 - Blockers: None
 
@@ -14,11 +14,12 @@
 - [x] Phase 5: App Shell & Navigation — 21 files, collapsible glass sidebar (64↔240px), top command bar, mobile bottom nav + overflow drawer, Framer Motion transitions, 6 placeholder pages, WS context provider (3a9baaf)
 - [x] Phase 6: Session Management UI — 6 new files + 3 modified, useSessions hook, SessionCard, CommandInput, SessionActions, CreateSessionModal, real TopCommandBar + MobileOverflowDrawer stats
 - [x] Phase 7: Chat Conversation View — 12 new files + 1 modified, useChat hook, ChatThread, UserBubble, AssistantBubble, ToolCallBlock, CodeBlock (Shiki), ThinkingBlock, MessageMeta, format utils, text renderer
-- [ ] Phase 8: Project Dashboard
+- [x] Phase 8: Project Dashboard — 7 new files + 2 modified, useProjects hook, ProjectCard, PhaseTimeline, ModuleMap, StateViewer (react-markdown + remark-gfm), ProjectsPage with filters, ProjectDetailPage
 - [ ] Phase 9: Terminal Panel & Token Analytics
 - [ ] Phase 10: Cloudflare Tunnel, Polish & Delivery
 
 ## Recent Changes
+- 2026-04-13 Phase 8 completed: useProjects hook (fetch + WS + rescan), ProjectCard (glass card with progress bar), PhaseTimeline (horizontal dots), ModuleMap (priority grid), StateViewer (react-markdown dark theme), ProjectsPage (filter pills, rescan, grid), ProjectDetailPage (timeline, modules, STATE.md, collapsible PM_HANDOFF.md)
 - 2026-04-13 Phase 7 completed: useChat hook (paginated fetch + WS), ChatThread (auto-scroll + "New messages" pill), UserBubble (right-aligned teal), AssistantBubble (glass + content blocks), ToolCallBlock (collapsible, icon mapping, Bash/Edit/Write special rendering), CodeBlock (Shiki lazy + copy), ThinkingBlock (collapsible, redacted handling), MessageMeta, ChatPage (header + thread + session selector), format.ts utils, text-renderer.tsx
 - 2026-04-13 Phase 6 completed: useSessions hook (fetch + WS + CRUD), SessionCard (glass card with status/stats/actions), CommandInput (inline send with feedback), SessionActions (kill/remove/rename with confirmation), CreateSessionModal (Framer Motion, project autocomplete, model pills), SessionsPage (grid layout, stopped section, empty/loading), TopCommandBar (active count + real stats), MobileOverflowDrawer (real analytics)
 - 2026-04-13 Phase 5 completed: Logo, GlassCard, StatusBadge, EmptyState, LoadingSkeleton, api.ts, ws.ts, useWebSocket context, Sidebar (collapsible), TopCommandBar, MobileNav, MobileOverflowDrawer, DashboardLayout, App routing with lazy pages, CSS animations (3a9baaf)
