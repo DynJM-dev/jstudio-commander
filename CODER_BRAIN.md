@@ -1,13 +1,13 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-13 after Phase 6 completion
+> Last updated: 2026-04-13 after Phase 7 completion
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
 
-**Phase 6: Session Management UI — COMPLETE**
-- All 6 phases (1-6) committed and verified
-- Ready for Phase 7: Chat Conversation View
+**Phase 7: Chat Conversation View — COMPLETE**
+- All 7 phases (1-7) committed and verified
+- Ready for Phase 8: Project Dashboard
 
 ## Git History
 
@@ -19,6 +19,7 @@
 | `37e7fd1` | Phase 4 | WebSocket server, event bus, rooms, status poller, watcher bridge |
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
 | `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
+| `TBD` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
 
 ## File Inventory
 
@@ -80,6 +81,17 @@
 - `layouts/MobileNav.tsx` — fixed bottom 64px, 4 tabs + More, safe-area-inset
 - `layouts/MobileOverflowDrawer.tsx` — slide-up glass, Analytics + Tunnel + real stats (tokens, cost, active count)
 - `layouts/DashboardLayout.tsx` — Sidebar + TopCommandBar + MobileNav + Outlet, pb-24 lg:pb-6
+- `hooks/useChat.ts` — fetch messages, WS subscription, smart scroll, loadMore, stats
+- `utils/format.ts` — formatTokens, formatCost, formatDuration, formatTime, formatRelativeTime
+- `utils/text-renderer.tsx` — lightweight markdown: bold, inline code, code fences → CodeBlock, line breaks
+- `components/chat/ChatThread.tsx` — scrollable container, auto-scroll, "New messages ↓" pill, load older
+- `components/chat/UserBubble.tsx` — right-aligned teal-tinted bubble
+- `components/chat/AssistantBubble.tsx` — left-aligned glass bubble, renders content blocks
+- `components/chat/ToolCallBlock.tsx` — collapsible tool calls with icon mapping, special Bash/Edit/Write rendering
+- `components/chat/CodeBlock.tsx` — Shiki syntax highlighting (lazy), copy button, language label, line numbers
+- `components/chat/ThinkingBlock.tsx` — collapsible thinking with BrainCircuit icon, handles redacted
+- `components/chat/MessageMeta.tsx` — model pill + token count + timestamp
+- `pages/ChatPage.tsx` — full conversation view: header, chat thread, session selector dropdown, stats
 - `pages/SessionsPage.tsx` — session grid (active + collapsible stopped), create modal, empty/loading/error states
 - `pages/ChatPage.tsx` — placeholder with EmptyState
 - `pages/ProjectsPage.tsx` — placeholder with EmptyState
@@ -118,7 +130,6 @@
 
 ## Remaining Phases
 
-- **Phase 7**: Chat Conversation View — message rendering, thinking blocks, tool calls, streaming
 - **Phase 8**: Project Dashboard — project cards, phase progress bars, STATE.md rendering
 - **Phase 9**: Terminal Panel & Token Analytics — xterm.js, Recharts dashboards
 - **Phase 10**: Cloudflare Tunnel, Polish & Delivery — tunnel management, PWA, final polish
