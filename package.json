@@ -7,7 +7,8 @@
     "dev": "pnpm run --parallel --filter @commander/server --filter @commander/client dev",
     "dev:server": "pnpm --filter @commander/server dev",
     "dev:client": "pnpm --filter @commander/client dev",
-    "build": "pnpm --filter @commander/shared build && pnpm --filter @commander/server build && pnpm --filter @commander/client build",
+    "build": "pnpm --filter @commander/shared build && pnpm --filter @commander/client build && pnpm --filter @commander/server build",
+    "start": "node server/dist/index.js",
     "typecheck": "pnpm -r run typecheck",
     "clean": "pnpm -r run clean"
   },

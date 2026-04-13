@@ -1,22 +1,54 @@
 const BASE_URL = '/api';
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  status: number;
+  requiresPin: boolean;
+  constructor(status: number, message: string, requiresPin = false) {
     super(message);
     this.name = 'ApiError';
+    this.status = status;
+    this.requiresPin = requiresPin;
   }
 }
 
+const getPin = (): string | null => {
+  try {
+    return sessionStorage.getItem('commander-pin');
+  } catch {
+    return null;
+  }
+};
+
+export const setPin = (pin: string): void => {
+  try {
+    sessionStorage.setItem('commander-pin', pin);
+  } catch {
+    // sessionStorage unavailable
+  }
+};
+
+export const clearPin = (): void => {
+  try {
+    sessionStorage.removeItem('commander-pin');
+  } catch {
+    // sessionStorage unavailable
+  }
+};
+
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
+  const pin = getPin();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (pin) headers['x-commander-pin'] = pin;
+
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   });
 
   const body = await res.json();
 
   if (!res.ok) {
-    throw new ApiError(res.status, body.error ?? res.statusText);
+    throw new ApiError(res.status, body.error ?? res.statusText, body.requiresPin ?? false);
   }
 
   return body as T;
@@ -34,3 +66,5 @@ export const api = {
   del: <T>(path: string) =>
     request<T>(path, { method: 'DELETE' }),
 };
+
+export { ApiError };

@@ -12,7 +12,11 @@ import { chatRoutes } from './routes/chat.routes.js';
 import { projectRoutes } from './routes/project.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
 import { terminalRoutes } from './routes/terminal.routes.js';
+import { tunnelRoutes } from './routes/tunnel.routes.js';
+import { authRoutes } from './routes/auth.routes.js';
 import { terminalService } from './services/terminal.service.js';
+import { tunnelService } from './services/tunnel.service.js';
+import { pinAuthMiddleware } from './middleware/pin-auth.js';
 import { projectScannerService } from './services/project-scanner.service.js';
 import { fileWatcherService } from './services/file-watcher.service.js';
 import { statusPollerService } from './services/status-poller.service.js';
@@ -42,6 +46,9 @@ if (existsSync(clientDist)) {
   });
 }
 
+// PIN auth for remote access
+app.addHook('onRequest', pinAuthMiddleware);
+
 // Initialize database
 getDb();
 
@@ -55,6 +62,8 @@ await app.register(chatRoutes);
 await app.register(projectRoutes);
 await app.register(analyticsRoutes);
 await app.register(terminalRoutes);
+await app.register(tunnelRoutes);
+await app.register(authRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
@@ -73,6 +82,7 @@ const shutdown = async () => {
   stopWebSocketTimers();
   fileWatcherService.stop();
   terminalService.cleanup();
+  tunnelService.cleanup();
   closeDb();
   await app.close();
   process.exit(0);

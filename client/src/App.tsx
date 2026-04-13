@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
+import { PinGate } from './components/shared/PinGate';
 import { WebSocketProvider } from './hooks/useWebSocket';
 import { DashboardLayout } from './layouts/DashboardLayout';
 import { LoadingSkeleton } from './components/shared/LoadingSkeleton';
@@ -53,10 +54,12 @@ const AnimatedRoutes = () => {
 
 export const App = () => (
   <ErrorBoundary>
-    <WebSocketProvider>
-      <BrowserRouter>
-        <AnimatedRoutes />
-      </BrowserRouter>
-    </WebSocketProvider>
+    <PinGate>
+      <WebSocketProvider>
+        <BrowserRouter>
+          <AnimatedRoutes />
+        </BrowserRouter>
+      </WebSocketProvider>
+    </PinGate>
   </ErrorBoundary>
 );

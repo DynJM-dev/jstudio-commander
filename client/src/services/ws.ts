@@ -15,7 +15,14 @@ const statusHandlers = new Set<(connected: boolean) => void>();
 
 const getWsUrl = (): string => {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
+  let url = `${proto}//${window.location.host}/ws`;
+  try {
+    const pin = sessionStorage.getItem('commander-pin');
+    if (pin) url += `?pin=${encodeURIComponent(pin)}`;
+  } catch {
+    // sessionStorage unavailable
+  }
+  return url;
 };
 
 const notifyStatus = (connected: boolean): void => {

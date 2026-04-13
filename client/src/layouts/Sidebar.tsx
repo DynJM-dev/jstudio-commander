@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Monitor,
@@ -9,9 +9,13 @@ import {
   ChevronsRight,
   ChevronsLeft,
   Globe,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Logo } from '../components/shared/Logo';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { api } from '../services/api';
+import type { WSEvent } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
@@ -32,11 +36,62 @@ export const Sidebar = () => {
   });
   const location = useLocation();
   const navigate = useNavigate();
-  const { connected } = useWebSocket();
+  const { connected, lastEvent } = useWebSocket();
+  const [tunnelActive, setTunnelActive] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, String(collapsed));
   }, [collapsed]);
+
+  // Fetch initial tunnel status
+  useEffect(() => {
+    api.get<{ active: boolean; url?: string }>('/tunnel/status')
+      .then((res) => {
+        setTunnelActive(res.active);
+        setTunnelUrl(res.url ?? null);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Listen for tunnel WS events
+  useEffect(() => {
+    if (!lastEvent) return;
+    const event = lastEvent as WSEvent;
+    if (event.type === 'tunnel:started') {
+      setTunnelActive(true);
+      setTunnelUrl(event.url);
+      setTunnelLoading(false);
+    }
+    if (event.type === 'tunnel:stopped') {
+      setTunnelActive(false);
+      setTunnelUrl(null);
+      setTunnelLoading(false);
+    }
+  }, [lastEvent]);
+
+  const toggleTunnel = useCallback(async () => {
+    setTunnelLoading(true);
+    try {
+      if (tunnelActive) {
+        await api.post('/tunnel/stop');
+      } else {
+        await api.post<{ url: string }>('/tunnel/start');
+      }
+    } catch {
+      setTunnelLoading(false);
+    }
+  }, [tunnelActive]);
+
+  const copyUrl = useCallback(() => {
+    if (tunnelUrl) {
+      navigator.clipboard.writeText(tunnelUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }, [tunnelUrl]);
 
   return (
     <aside
@@ -110,35 +165,76 @@ export const Sidebar = () => {
           {!collapsed && <span className="text-sm font-medium">Collapse</span>}
         </button>
 
-        <div
-          className="flex items-center gap-3"
+        {/* Tunnel control */}
+        <button
+          onClick={toggleTunnel}
+          disabled={tunnelLoading}
+          className="flex items-center gap-3 rounded-lg transition-colors"
           style={{
-            height: 36,
-            padding: '0 12px',
+            height: collapsed ? 36 : 'auto',
+            minHeight: 36,
+            padding: collapsed ? '0 12px' : '8px 12px',
             justifyContent: collapsed ? 'center' : 'flex-start',
             color: 'var(--color-text-tertiary)',
+            position: 'relative',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
           }}
         >
-          <Globe size={16} />
+          <Globe size={16} className={tunnelLoading ? 'animate-spin' : ''} />
           {!collapsed && (
-            <span className="text-xs">
-              Tunnel:{' '}
-              <span style={{ color: connected ? 'var(--color-working)' : 'var(--color-stopped)' }}>
-                {connected ? 'Connected' : 'Offline'}
+            <div className="flex flex-col items-start min-w-0">
+              <span className="text-xs">
+                Tunnel:{' '}
+                <span style={{ color: tunnelActive ? 'var(--color-working)' : 'var(--color-stopped)' }}>
+                  {tunnelLoading ? 'Starting...' : tunnelActive ? 'Active' : 'Off'}
+                </span>
               </span>
-            </span>
+              {tunnelActive && tunnelUrl && (
+                <span
+                  className="text-[10px] truncate max-w-[160px]"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  {tunnelUrl.replace('https://', '')}
+                </span>
+              )}
+            </div>
           )}
           {collapsed && (
             <span
               className="absolute w-2 h-2 rounded-full"
               style={{
-                backgroundColor: connected ? 'var(--color-working)' : 'var(--color-stopped)',
+                backgroundColor: tunnelActive ? 'var(--color-working)' : 'var(--color-stopped)',
                 bottom: 10,
                 right: 18,
               }}
             />
           )}
-        </div>
+        </button>
+
+        {/* Copy URL button (when expanded and tunnel active) */}
+        {!collapsed && tunnelActive && tunnelUrl && (
+          <button
+            onClick={(e) => { e.stopPropagation(); copyUrl(); }}
+            className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors"
+            style={{
+              color: copied ? 'var(--color-working)' : 'var(--color-text-tertiary)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? 'Copied!' : 'Copy URL'}
+          </button>
+        )}
       </div>
     </aside>
   );
