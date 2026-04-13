@@ -1,14 +1,13 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-13 after Phase 5 completion
+> Last updated: 2026-04-13 after Phase 6 completion
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
 
-**Phase 5: App Shell & Dark Glassmorphism Navigation — COMPLETE**
-- Commit: `3a9baaf` — `feat: add app shell with dark glassmorphism navigation and routing`
-- All 5 phases (1-5) committed and verified
-- Ready for Phase 6: Session Management UI
+**Phase 6: Session Management UI — COMPLETE**
+- All 6 phases (1-6) committed and verified
+- Ready for Phase 7: Chat Conversation View
 
 ## Git History
 
@@ -19,6 +18,7 @@
 | `c9f9bf9` | Phase 3 | JSONL parser, project scanner, token tracker, file watchers, data routes |
 | `37e7fd1` | Phase 4 | WebSocket server, event bus, rooms, status poller, watcher bridge |
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
+| `TBD` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
 
 ## File Inventory
 
@@ -71,11 +71,16 @@
 - `components/shared/EmptyState.tsx` — icon + title + description + action
 - `components/shared/LoadingSkeleton.tsx` — card/list/text/chart variants
 - `layouts/Sidebar.tsx` — collapsible 64↔240px, 5 nav items, localStorage, tunnel status
-- `layouts/TopCommandBar.tsx` — sticky 48px, session context, WS status
+- `hooks/useSessions.ts` — fetch sessions, WS subscription, CRUD actions (createSession, deleteSession, sendCommand, updateSession)
+- `components/sessions/SessionCard.tsx` — glass card: status badge, slug, custom name, project path, model pill, stats row, command input, actions
+- `components/sessions/CommandInput.tsx` — inline text input + send button, "Sent" checkmark feedback
+- `components/sessions/SessionActions.tsx` — kill/remove/rename buttons with inline "Sure?" confirmation
+- `components/sessions/CreateSessionModal.tsx` — Framer Motion modal: name, project autocomplete, model selector pills
+- `layouts/TopCommandBar.tsx` — sticky 48px, active session count, most recent session name, real token/cost stats from analytics API
 - `layouts/MobileNav.tsx` — fixed bottom 64px, 4 tabs + More, safe-area-inset
-- `layouts/MobileOverflowDrawer.tsx` — slide-up glass, Analytics + Tunnel + stats
+- `layouts/MobileOverflowDrawer.tsx` — slide-up glass, Analytics + Tunnel + real stats (tokens, cost, active count)
 - `layouts/DashboardLayout.tsx` — Sidebar + TopCommandBar + MobileNav + Outlet, pb-24 lg:pb-6
-- `pages/SessionsPage.tsx` — placeholder with EmptyState
+- `pages/SessionsPage.tsx` — session grid (active + collapsible stopped), create modal, empty/loading/error states
 - `pages/ChatPage.tsx` — placeholder with EmptyState
 - `pages/ProjectsPage.tsx` — placeholder with EmptyState
 - `pages/ProjectDetailPage.tsx` — placeholder with useParams :id
@@ -113,7 +118,6 @@
 
 ## Remaining Phases
 
-- **Phase 6**: Session Management UI — session cards, create/delete, real-time status, detail drawer
 - **Phase 7**: Chat Conversation View — message rendering, thinking blocks, tool calls, streaming
 - **Phase 8**: Project Dashboard — project cards, phase progress bars, STATE.md rendering
 - **Phase 9**: Terminal Panel & Token Analytics — xterm.js, Recharts dashboards

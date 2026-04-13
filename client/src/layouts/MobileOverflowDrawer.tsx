@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3, Globe, X } from 'lucide-react';
+import type { Session, DailyStats } from '@commander/shared';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { api } from '../services/api';
 
 const M = 'Montserrat, sans-serif';
 
@@ -10,14 +12,24 @@ interface MobileOverflowDrawerProps {
   onClose: () => void;
 }
 
+const formatTokens = (count: number): string => {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
+  return String(count);
+};
+
 export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProps) => {
   const navigate = useNavigate();
   const { connected } = useWebSocket();
   const backdropRef = useRef<HTMLDivElement>(null);
+  const [stats, setStats] = useState<DailyStats | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
 
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
+      api.get<DailyStats>('/analytics/today').then(setStats).catch(() => {});
+      api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
     } else {
       document.body.style.overflow = '';
     }
@@ -32,6 +44,10 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
     navigate(path);
     onClose();
   };
+
+  const activeSessions = sessions.filter((s) => s.status !== 'stopped');
+  const totalTokens = stats ? stats.totalInputTokens + stats.totalOutputTokens : 0;
+  const totalCost = stats?.totalCostUsd ?? 0;
 
   return (
     <div className="fixed inset-0 z-[60] lg:hidden">
@@ -134,9 +150,9 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
             <div className="flex flex-col items-center">
               <span
                 className="font-mono-stats text-xs"
-                style={{ color: 'var(--color-text-tertiary)' }}
+                style={{ color: 'var(--color-accent-light)' }}
               >
-                0 tokens
+                {formatTokens(totalTokens)} tokens
               </span>
               <span
                 className="text-[10px]"
@@ -155,15 +171,36 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
             <div className="flex flex-col items-center">
               <span
                 className="font-mono-stats text-xs"
-                style={{ color: 'var(--color-text-tertiary)' }}
+                style={{ color: 'var(--color-working)' }}
               >
-                $0.00
+                ${totalCost.toFixed(2)}
               </span>
               <span
                 className="text-[10px]"
                 style={{ color: 'var(--color-text-tertiary)' }}
               >
                 Cost
+              </span>
+            </div>
+            <div
+              style={{
+                width: 1,
+                height: 24,
+                background: 'rgba(255, 255, 255, 0.06)',
+              }}
+            />
+            <div className="flex flex-col items-center">
+              <span
+                className="font-mono-stats text-xs"
+                style={{ color: 'var(--color-text-secondary)' }}
+              >
+                {activeSessions.length}
+              </span>
+              <span
+                className="text-[10px]"
+                style={{ color: 'var(--color-text-tertiary)' }}
+              >
+                Active
               </span>
             </div>
           </div>
