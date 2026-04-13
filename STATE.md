@@ -1,7 +1,7 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: 8 Project Dashboard — COMPLETE
+- Phase: 9 Terminal Panel & Token Analytics — COMPLETE
 - Last updated: 2026-04-13
 - Blockers: None
 
@@ -15,10 +15,11 @@
 - [x] Phase 6: Session Management UI — 6 new files + 3 modified, useSessions hook, SessionCard, CommandInput, SessionActions, CreateSessionModal, real TopCommandBar + MobileOverflowDrawer stats
 - [x] Phase 7: Chat Conversation View — 12 new files + 1 modified, useChat hook, ChatThread, UserBubble, AssistantBubble, ToolCallBlock, CodeBlock (Shiki), ThinkingBlock, MessageMeta, format utils, text renderer
 - [x] Phase 8: Project Dashboard — 7 new files + 2 modified, useProjects hook, ProjectCard, PhaseTimeline, ModuleMap, StateViewer (react-markdown + remark-gfm), ProjectsPage with filters, ProjectDetailPage
-- [ ] Phase 9: Terminal Panel & Token Analytics
+- [x] Phase 9: Terminal Panel & Token Analytics — 12 new files + 3 modified, terminal.service (node-pty), terminal.routes (WS bridge), useTerminal (xterm.js), TerminalPanel, TerminalTabs, useAnalytics, TokenCard, CostChart (Recharts), ModelBreakdown, SessionCostTable, TerminalPage, AnalyticsPage
 - [ ] Phase 10: Cloudflare Tunnel, Polish & Delivery
 
 ## Recent Changes
+- 2026-04-13 Phase 9 completed: terminal.service (node-pty tmux attach), terminal.routes (WS bridge with resize), useTerminal (xterm.js + FitAddon + WebglAddon), TerminalPanel + TerminalTabs, TerminalPage (session tabs, auto-connect); useAnalytics, TokenCard, CostChart (Recharts AreaChart), ModelBreakdown (horizontal BarChart), SessionCostTable, AnalyticsPage (stat cards + charts + table)
 - 2026-04-13 Phase 8 completed: useProjects hook (fetch + WS + rescan), ProjectCard (glass card with progress bar), PhaseTimeline (horizontal dots), ModuleMap (priority grid), StateViewer (react-markdown dark theme), ProjectsPage (filter pills, rescan, grid), ProjectDetailPage (timeline, modules, STATE.md, collapsible PM_HANDOFF.md)
 - 2026-04-13 Phase 7 completed: useChat hook (paginated fetch + WS), ChatThread (auto-scroll + "New messages" pill), UserBubble (right-aligned teal), AssistantBubble (glass + content blocks), ToolCallBlock (collapsible, icon mapping, Bash/Edit/Write special rendering), CodeBlock (Shiki lazy + copy), ThinkingBlock (collapsible, redacted handling), MessageMeta, ChatPage (header + thread + session selector), format.ts utils, text-renderer.tsx
 - 2026-04-13 Phase 6 completed: useSessions hook (fetch + WS + CRUD), SessionCard (glass card with status/stats/actions), CommandInput (inline send with feedback), SessionActions (kill/remove/rename with confirmation), CreateSessionModal (Framer Motion, project autocomplete, model pills), SessionsPage (grid layout, stopped section, empty/loading), TopCommandBar (active count + real stats), MobileOverflowDrawer (real analytics)

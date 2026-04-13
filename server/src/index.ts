@@ -11,6 +11,8 @@ import { systemRoutes } from './routes/system.routes.js';
 import { chatRoutes } from './routes/chat.routes.js';
 import { projectRoutes } from './routes/project.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
+import { terminalRoutes } from './routes/terminal.routes.js';
+import { terminalService } from './services/terminal.service.js';
 import { projectScannerService } from './services/project-scanner.service.js';
 import { fileWatcherService } from './services/file-watcher.service.js';
 import { statusPollerService } from './services/status-poller.service.js';
@@ -52,6 +54,7 @@ await app.register(sessionRoutes);
 await app.register(chatRoutes);
 await app.register(projectRoutes);
 await app.register(analyticsRoutes);
+await app.register(terminalRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
@@ -69,6 +72,7 @@ const shutdown = async () => {
   statusPollerService.stop();
   stopWebSocketTimers();
   fileWatcherService.stop();
+  terminalService.cleanup();
   closeDb();
   await app.close();
   process.exit(0);

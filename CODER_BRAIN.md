@@ -1,13 +1,13 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-13 after Phase 8 completion
+> Last updated: 2026-04-13 after Phase 9 completion
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
 
-**Phase 8: Project Dashboard — COMPLETE**
-- All 8 phases (1-8) committed and verified
-- Ready for Phase 9: Terminal Panel & Token Analytics
+**Phase 9: Terminal Panel & Token Analytics — COMPLETE**
+- All 9 phases (1-9) committed and verified
+- Ready for Phase 10: Cloudflare Tunnel, Polish & Delivery
 
 ## Git History
 
@@ -21,6 +21,7 @@
 | `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
 | `6b2c6e1` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
 | `26eff2b` | Phase 8 | Project dashboard: cards, phase timeline, module map, STATE.md viewer |
+| `TBD` | Phase 9 | Terminal panel (xterm.js + node-pty) + Analytics dashboard (Recharts) |
 
 ## File Inventory
 
@@ -99,6 +100,16 @@
 - `components/projects/StateViewer.tsx` — react-markdown + remark-gfm, dark theme styled components
 - `pages/ChatPage.tsx` — full conversation view: header, chat thread, session selector dropdown, stats
 - `pages/ProjectsPage.tsx` — project grid with filter pills (All/Active/With Plan/No Plan), rescan button
+- `hooks/useTerminal.ts` — xterm.js + WebSocket bridge to node-pty, resize handling, WebGL addon
+- `hooks/useAnalytics.ts` — fetch today/daily/session/project analytics, WS subscription
+- `components/terminal/TerminalPanel.tsx` — xterm.js container with loading/error overlays
+- `components/terminal/TerminalTabs.tsx` — session tab bar with status dots, new session button
+- `components/analytics/TokenCard.tsx` — stat card with icon, value, subtitle
+- `components/analytics/CostChart.tsx` — Recharts AreaChart, teal gradient, custom tooltip
+- `components/analytics/ModelBreakdown.tsx` — Recharts horizontal BarChart per model
+- `components/analytics/SessionCostTable.tsx` — cost table with session name, tokens, cost, %
+- `pages/TerminalPage.tsx` — xterm.js terminal with session tabs, auto-connect
+- `pages/AnalyticsPage.tsx` — stat cards + daily cost chart + model breakdown + session table
 - `pages/ProjectDetailPage.tsx` — header, phase timeline, module map, STATE.md viewer, collapsible PM_HANDOFF.md
 - `pages/SessionsPage.tsx` — session grid (active + collapsible stopped), create modal, empty/loading/error states
 - `pages/ChatPage.tsx` — placeholder with EmptyState
