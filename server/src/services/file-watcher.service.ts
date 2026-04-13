@@ -1,0 +1,152 @@
+import { watch } from 'chokidar';
+import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { basename } from 'node:path';
+import type { FSWatcher } from 'chokidar';
+import { getDb } from '../db/connection.js';
+import { config } from '../config.js';
+
+type JsonlChangeHandler = (filePath: string, newLines: string[]) => void;
+type ProjectFileChangeHandler = (filePath: string, type: 'state' | 'handoff') => void;
+
+let jsonlWatcher: FSWatcher | null = null;
+let projectWatcher: FSWatcher | null = null;
+const jsonlHandlers: JsonlChangeHandler[] = [];
+const projectHandlers: ProjectFileChangeHandler[] = [];
+
+const getIncrementalLines = (filePath: string): string[] => {
+  const db = getDb();
+
+  // Get last known offset
+  const state = db.prepare('SELECT last_byte_offset FROM file_watch_state WHERE file_path = ?')
+    .get(filePath) as { last_byte_offset: number } | undefined;
+
+  const lastOffset = state?.last_byte_offset ?? 0;
+
+  let fileSize: number;
+  try {
+    fileSize = statSync(filePath).size;
+  } catch {
+    return [];
+  }
+
+  if (fileSize <= lastOffset) return [];
+
+  // Read new bytes from offset
+  const bytesToRead = fileSize - lastOffset;
+  const buffer = Buffer.alloc(bytesToRead);
+  let fd: number;
+  try {
+    fd = openSync(filePath, 'r');
+  } catch {
+    return [];
+  }
+
+  try {
+    readSync(fd, buffer, 0, bytesToRead, lastOffset);
+  } finally {
+    closeSync(fd);
+  }
+
+  const newContent = buffer.toString('utf-8');
+  const lines = newContent.split('\n').filter((l) => l.trim().length > 0);
+
+  // Update state
+  db.prepare(`
+    INSERT INTO file_watch_state (file_path, last_byte_offset, last_line_count, last_modified)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(file_path) DO UPDATE SET
+      last_byte_offset = excluded.last_byte_offset,
+      last_line_count = last_line_count + excluded.last_line_count,
+      last_modified = datetime('now')
+  `).run(filePath, fileSize, lines.length);
+
+  return lines;
+};
+
+export const fileWatcherService = {
+  start(): void {
+    // Watch Claude JSONL directory
+    const claudeProjectsDir = config.claudeProjectsDir;
+    console.log(`[watcher] Watching JSONL files in ${claudeProjectsDir}`);
+
+    jsonlWatcher = watch(`${claudeProjectsDir}/**/*.jsonl`, {
+      persistent: true,
+      ignoreInitial: true,
+      awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+    });
+
+    jsonlWatcher.on('change', (filePath: string) => {
+      const newLines = getIncrementalLines(filePath);
+      if (newLines.length > 0) {
+        for (const handler of jsonlHandlers) {
+          try {
+            handler(filePath, newLines);
+          } catch (err) {
+            console.error('[watcher] JSONL handler error:', err);
+          }
+        }
+      }
+    });
+
+    jsonlWatcher.on('add', (filePath: string) => {
+      const newLines = getIncrementalLines(filePath);
+      if (newLines.length > 0) {
+        for (const handler of jsonlHandlers) {
+          try {
+            handler(filePath, newLines);
+          } catch (err) {
+            console.error('[watcher] JSONL handler error:', err);
+          }
+        }
+      }
+    });
+
+    // Watch project directories for STATE.md / PM_HANDOFF.md changes
+    const projectGlobs = config.projectDirs.map((d) => `${d}/*/{STATE,PM_HANDOFF}.md`);
+    if (projectGlobs.length > 0) {
+      console.log(`[watcher] Watching project files in ${config.projectDirs.join(', ')}`);
+
+      projectWatcher = watch(projectGlobs, {
+        persistent: true,
+        ignoreInitial: true,
+        awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
+      });
+
+      projectWatcher.on('change', (filePath: string) => {
+        const name = basename(filePath);
+        const type = name === 'STATE.md' ? 'state' : 'handoff';
+        for (const handler of projectHandlers) {
+          try {
+            handler(filePath, type);
+          } catch (err) {
+            console.error('[watcher] Project handler error:', err);
+          }
+        }
+      });
+    }
+  },
+
+  stop(): void {
+    if (jsonlWatcher) {
+      jsonlWatcher.close();
+      jsonlWatcher = null;
+    }
+    if (projectWatcher) {
+      projectWatcher.close();
+      projectWatcher = null;
+    }
+    jsonlHandlers.length = 0;
+    projectHandlers.length = 0;
+    console.log('[watcher] File watchers stopped');
+  },
+
+  onJsonlChange(callback: JsonlChangeHandler): void {
+    jsonlHandlers.push(callback);
+  },
+
+  onProjectFileChange(callback: ProjectFileChangeHandler): void {
+    projectHandlers.push(callback);
+  },
+
+  getIncrementalLines,
+};

@@ -8,6 +8,11 @@ import { config } from './config.js';
 import { getDb, closeDb } from './db/connection.js';
 import { sessionRoutes } from './routes/session.routes.js';
 import { systemRoutes } from './routes/system.routes.js';
+import { chatRoutes } from './routes/chat.routes.js';
+import { projectRoutes } from './routes/project.routes.js';
+import { analyticsRoutes } from './routes/analytics.routes.js';
+import { projectScannerService } from './services/project-scanner.service.js';
+import { fileWatcherService } from './services/file-watcher.service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -38,10 +43,20 @@ getDb();
 // Register routes
 await app.register(systemRoutes);
 await app.register(sessionRoutes);
+await app.register(chatRoutes);
+await app.register(projectRoutes);
+await app.register(analyticsRoutes);
+
+// Initial project scan
+projectScannerService.runInitialScan();
+
+// Start file watchers
+fileWatcherService.start();
 
 // Graceful shutdown
 const shutdown = async () => {
   console.log('\n[server] Shutting down...');
+  fileWatcherService.stop();
   closeDb();
   await app.close();
   process.exit(0);
