@@ -131,3 +131,34 @@ button, a, [role="button"] {
 button:active, a:active, [role="button"]:active {
   transform: scale(0.97);
 }
+
+/* Disable iOS tap highlight */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Monospace stats font */
+.font-mono-stats {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Slow pulse for waiting status */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2.5s ease-in-out infinite;
+}
+
+/* Slide-up animation for mobile drawer */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
