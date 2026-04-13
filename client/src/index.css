@@ -1,0 +1,133 @@
+@import "tailwindcss";
+
+/* Montserrat — Google Fonts fallback (self-hosted WOFF2 preferred in production) */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
+
+@theme {
+  /* === Base Palette === */
+  --color-bg-deep:        #0A0E14;
+  --color-bg-base:        #0F1419;
+  --color-bg-surface:     #151B23;
+  --color-bg-elevated:    #1A2230;
+
+  /* === Glass Surfaces === */
+  --color-glass-light:    rgba(255, 255, 255, 0.04);
+  --color-glass-medium:   rgba(255, 255, 255, 0.07);
+  --color-glass-strong:   rgba(255, 255, 255, 0.10);
+  --color-glass-border:   rgba(255, 255, 255, 0.08);
+
+  /* === Accent — Teal (JStudio Commander) === */
+  --color-accent:         #0E7C7B;
+  --color-accent-light:   #12A5A4;
+  --color-accent-dark:    #0A5C5B;
+  --color-accent-glow:    rgba(14, 124, 123, 0.20);
+  --color-accent-subtle:  rgba(14, 124, 123, 0.10);
+
+  /* === Status Colors === */
+  --color-working:        #22C55E;
+  --color-idle:           #F59E0B;
+  --color-waiting:        #3B82F6;
+  --color-error:          #EF4444;
+  --color-stopped:        #6B7280;
+
+  /* === Text === */
+  --color-text-primary:   #E6EDF3;
+  --color-text-secondary: #8B949E;
+  --color-text-tertiary:  #484F58;
+  --color-text-accent:    #12A5A4;
+
+  /* === Spacing, Radius, Shadows === */
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-xl:  24px;
+
+  --shadow-glass: 0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-glow:  0 0 20px var(--color-accent-glow);
+
+  --blur-glass:   blur(24px) saturate(180%);
+}
+
+/* === Glass Utility Classes === */
+
+.glass-surface {
+  background: var(--color-glass-medium);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+}
+
+.glass-nav {
+  background: rgba(15, 20, 25, 0.85);
+  backdrop-filter: var(--blur-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  border-right: 1px solid var(--color-glass-border);
+}
+
+.glass-card {
+  background: var(--color-glass-light);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.glass-card:hover {
+  border-color: var(--color-accent-glow);
+  box-shadow: var(--shadow-glass), var(--shadow-glow);
+}
+
+.glass-modal {
+  background: rgba(15, 20, 25, 0.92);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-xl);
+}
+
+/* === Base Styles === */
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg-deep);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-glass-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* Global tap feedback */
+button, a, [role="button"] {
+  transition: transform 0.1s;
+}
+
+button:active, a:active, [role="button"]:active {
+  transform: scale(0.97);
+}
