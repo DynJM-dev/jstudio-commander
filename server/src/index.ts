@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { getDb, closeDb } from './db/connection.js';
+import { sessionRoutes } from './routes/session.routes.js';
+import { systemRoutes } from './routes/system.routes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -33,10 +35,9 @@ if (existsSync(clientDist)) {
 // Initialize database
 getDb();
 
-// Health check route
-app.get('/api/system/health', async () => {
-  return { status: 'ok', timestamp: new Date().toISOString() };
-});
+// Register routes
+await app.register(systemRoutes);
+await app.register(sessionRoutes);
 
 // Graceful shutdown
 const shutdown = async () => {
