@@ -3,6 +3,7 @@ import type { Session, SessionStatus } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
+import { eventBus } from '../ws/event-bus.js';
 
 // Auto-slug generator: adjective-noun
 const ADJECTIVES = [
@@ -72,7 +73,9 @@ export const sessionService = {
       VALUES (?, 'created', ?)
     `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath }));
 
-    return this.getSession(id)!;
+    const session = this.getSession(id)!;
+    eventBus.emitSessionCreated(session);
+    return session;
   },
 
   listSessions(): Session[] {
@@ -151,6 +154,7 @@ export const sessionService = {
 
     session.status = 'stopped';
     session.stoppedAt = now;
+    eventBus.emitSessionDeleted(id);
     return session;
   },
 
@@ -206,7 +210,9 @@ export const sessionService = {
 
     db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
 
-    return this.getSession(id);
+    const updated = this.getSession(id);
+    if (updated) eventBus.emitSessionUpdated(updated);
+    return updated;
   },
 
   getSessionStatus(id: string): { status: SessionStatus } | null {

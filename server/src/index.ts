@@ -13,6 +13,9 @@ import { projectRoutes } from './routes/project.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
 import { projectScannerService } from './services/project-scanner.service.js';
 import { fileWatcherService } from './services/file-watcher.service.js';
+import { statusPollerService } from './services/status-poller.service.js';
+import { setupWebSocket, stopWebSocketTimers } from './ws/index.js';
+import { setupWatcherBridge } from './services/watcher-bridge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -40,6 +43,9 @@ if (existsSync(clientDist)) {
 // Initialize database
 getDb();
 
+// WebSocket server (must register before routes that need it)
+await setupWebSocket(app);
+
 // Register routes
 await app.register(systemRoutes);
 await app.register(sessionRoutes);
@@ -50,12 +56,18 @@ await app.register(analyticsRoutes);
 // Initial project scan
 projectScannerService.runInitialScan();
 
-// Start file watchers
+// Start file watchers + bridge to event bus
 fileWatcherService.start();
+setupWatcherBridge();
+
+// Start status poller
+statusPollerService.start();
 
 // Graceful shutdown
 const shutdown = async () => {
   console.log('\n[server] Shutting down...');
+  statusPollerService.stop();
+  stopWebSocketTimers();
   fileWatcherService.stop();
   closeDb();
   await app.close();
