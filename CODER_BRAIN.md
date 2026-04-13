@@ -20,7 +20,7 @@
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
 | `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
 | `6b2c6e1` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
-| `TBD` | Phase 8 | Project dashboard: cards, phase timeline, module map, STATE.md viewer |
+| `26eff2b` | Phase 8 | Project dashboard: cards, phase timeline, module map, STATE.md viewer |
 
 ## File Inventory
 
