@@ -19,7 +19,7 @@
 | `37e7fd1` | Phase 4 | WebSocket server, event bus, rooms, status poller, watcher bridge |
 | `3a9baaf` | Phase 5 | App shell, sidebar, mobile nav, routing, shared UI primitives |
 | `bbaf055` | Phase 6 | Session management UI: cards, create modal, command input, real-time updates |
-| `TBD` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
+| `6b2c6e1` | Phase 7 | Chat conversation view: bubbles, tool calls, code blocks, thinking, Shiki |
 
 ## File Inventory
 
