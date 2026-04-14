@@ -1,8 +1,8 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
-import { UserBubble } from './UserBubble';
-import { AssistantBubble } from './AssistantBubble';
+import { UserMessage } from './UserMessage';
+import { AssistantMessage } from './AssistantMessage';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -112,7 +112,6 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
 
     await onLoadMore();
 
-    // Preserve scroll position after prepending older messages
     requestAnimationFrame(() => {
       if (el) {
         const newScrollHeight = el.scrollHeight;
@@ -124,12 +123,12 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
 
   const renderMessage = (message: ChatMessage) => {
     if (message.role === 'user') {
-      return <UserBubble key={message.id} message={message} />;
+      return <UserMessage key={message.id} message={message} />;
     }
 
     if (message.role === 'assistant') {
       return (
-        <AssistantBubble
+        <AssistantMessage
           key={message.id}
           message={message}
           toolResults={toolResultMap}
@@ -137,7 +136,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
       );
     }
 
-    // System messages (compact boundaries, etc.)
+    // System messages
     if (message.role === 'system') {
       const text = message.content[0]?.type === 'system_note'
         ? message.content[0].text
@@ -195,11 +194,10 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex flex-col gap-3">
+        {/* Messages with turn separators */}
+        <div className="flex flex-col">
           {messages.map((message, index) => {
             const elements: React.ReactNode[] = [];
-
             const prevMsg = index > 0 ? messages[index - 1] : undefined;
 
             // Add timestamp separator for 5min+ gaps
@@ -215,7 +213,6 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
 
             // Add model-change separator
             if (message.model && prevMsg) {
-              // Find previous assistant message's model
               let prevModel: string | undefined;
               for (let j = index - 1; j >= 0; j--) {
                 const m = messages[j];
@@ -229,6 +226,13 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
                   <ModelChangeSeparator key={`model-${message.id}`} model={message.model} />
                 );
               }
+            }
+
+            // Turn separator between different roles (not first message)
+            if (prevMsg && prevMsg.role !== message.role && message.role !== 'system') {
+              elements.push(
+                <div key={`turn-${message.id}`} className="turn-separator" />
+              );
             }
 
             elements.push(renderMessage(message));

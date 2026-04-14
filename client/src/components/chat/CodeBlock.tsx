@@ -6,6 +6,7 @@ const M = 'Montserrat, sans-serif';
 interface CodeBlockProps {
   code: string;
   language?: string;
+  filePath?: string;
 }
 
 // Lazy shiki singleton
@@ -25,7 +26,7 @@ const getHighlighter = () => {
   return highlighterPromise;
 };
 
-export const CodeBlock = ({ code, language }: CodeBlockProps) => {
+export const CodeBlock = ({ code, language, filePath }: CodeBlockProps) => {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,11 +76,15 @@ export const CodeBlock = ({ code, language }: CodeBlockProps) => {
     };
   }, []);
 
+  const displayLabel = filePath
+    ? filePath.replace(/^\/Users\/[^/]+/, '~')
+    : lang;
+
   return (
     <div
       className="rounded-lg overflow-hidden my-2 transition-shadow duration-200"
       style={{ background: 'rgba(0, 0, 0, 0.3)' }}
-      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 0 12px rgba(14, 124, 123, 0.1)'; }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 0 12px rgba(14, 124, 123, 0.08)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
     >
       {/* Header */}
@@ -88,10 +93,10 @@ export const CodeBlock = ({ code, language }: CodeBlockProps) => {
         style={{ background: 'rgba(0, 0, 0, 0.2)' }}
       >
         <span
-          className="text-xs"
+          className="text-xs font-mono-stats truncate"
           style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
         >
-          {lang}
+          {displayLabel}
         </span>
         <button
           onClick={handleCopy}

@@ -1,14 +1,15 @@
 import { useMemo } from 'react';
-import { Bot } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { MessageMeta } from './MessageMeta';
+import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
 
-interface AssistantBubbleProps {
+interface AssistantMessageProps {
   message: ChatMessage;
   toolResults: Map<string, { content: string; isError?: boolean }>;
 }
@@ -23,7 +24,7 @@ const renderBlock = (
       return (
         <div
           key={index}
-          className="text-sm lg:text-base leading-relaxed"
+          className="text-sm leading-relaxed py-0.5"
           style={{ color: 'var(--color-text-primary)' }}
         >
           {renderTextContent(block.text)}
@@ -62,40 +63,46 @@ const renderBlock = (
   }
 };
 
-export const AssistantBubble = ({ message, toolResults }: AssistantBubbleProps) => {
+export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps) => {
   const totalTokens = useMemo(() => {
     if (!message.usage) return undefined;
     return message.usage.inputTokens + message.usage.outputTokens;
   }, [message.usage]);
 
   return (
-    <div className="flex justify-start items-start gap-2">
-      {/* Avatar */}
-      <div
-        className="shrink-0 w-6 h-6 lg:w-8 lg:h-8 rounded-full flex items-center justify-center mt-1"
-        style={{
-          background: 'linear-gradient(135deg, #0E7C7B, #12A5A4)',
-        }}
-      >
-        <Bot size={14} color="#fff" className="hidden lg:block" />
-        <Bot size={12} color="#fff" className="lg:hidden" />
+    <div style={{ fontFamily: M }}>
+      {/* Header: Claude icon + "Claude" + timestamp */}
+      <div className="flex items-center gap-2 mb-1">
+        <Sparkles
+          size={18}
+          style={{ color: '#0E7C7B' }}
+          className="shrink-0 lg:w-[18px] lg:h-[18px] w-4 h-4"
+        />
+        <span
+          className="text-sm font-semibold"
+          style={{ color: 'var(--color-accent-light)' }}
+        >
+          Claude
+        </span>
+        <span className="flex-1" />
+        <span
+          className="text-xs"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          {formatTime(message.timestamp)}
+        </span>
       </div>
 
-      <div
-        className="max-w-[82%] lg:max-w-[72%] px-3.5 py-2.5 lg:px-4 lg:py-3"
-        style={{
-          fontFamily: M,
-          background: 'var(--color-glass-light)',
-          border: '1px solid var(--color-glass-border)',
-          borderRadius: '16px 16px 16px 4px',
-        }}
-      >
-        {message.content.map((block, i) => renderBlock(block, i, toolResults))}
+      {/* Timeline bar + content blocks */}
+      <div className="timeline-line-accent">
+        <div className="space-y-1.5">
+          {message.content.map((block, i) => renderBlock(block, i, toolResults))}
+        </div>
 
+        {/* Turn footer: model · tokens · duration */}
         <MessageMeta
           model={message.model}
           tokens={totalTokens}
-          timestamp={message.timestamp}
         />
       </div>
     </div>

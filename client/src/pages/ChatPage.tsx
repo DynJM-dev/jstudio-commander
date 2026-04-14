@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MessageSquare, Loader2, SendHorizontal, Check } from 'lucide-react';
+import { MessageSquare, Loader2, SendHorizontal, Check, Paperclip } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import type { ChatMessage } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
@@ -23,7 +23,7 @@ export const ChatPage = () => {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [localCommands, setLocalCommands] = useState<ChatMessage[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const sendCommand = useCallback(async () => {
     if (!sessionId || !command.trim() || sending) return;
@@ -32,7 +32,6 @@ export const ChatPage = () => {
     try {
       await api.post(`/sessions/${sessionId}/command`, { command: cmdText });
 
-      // Add as a local message so it appears immediately in chat
       const localMsg: ChatMessage = {
         id: `local-${Date.now()}`,
         parentId: null,
@@ -45,6 +44,8 @@ export const ChatPage = () => {
 
       setCommand('');
       setSent(true);
+      // Reset textarea height
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
       setTimeout(() => setSent(false), 1500);
     } catch {
       // silently fail
@@ -67,11 +68,29 @@ export const ChatPage = () => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
 
+  // Auto-resize textarea
+  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setCommand(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendCommand();
+    }
+  }, [sendCommand]);
+
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
 
-  // Merge JSONL messages with local commands
-  const allMessages = [...messages, ...localCommands];
+  // Clear local commands once real JSONL messages arrive
+  const allMessages = messages.length > 0 ? messages : localCommands;
+
+  // Estimate context usage (rough approximation based on total tokens)
+  const contextPercent = totalTokens > 0 ? Math.min(Math.round((totalTokens / 200000) * 100), 100) : 0;
 
   // No session selected
   if (!sessionId) {
@@ -161,50 +180,112 @@ export const ChatPage = () => {
         <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
       )}
 
-      {/* Command input bar */}
+      {/* VS Code-style input bar */}
       {session && session.status !== 'stopped' && (
         <div
           className="shrink-0 px-3 lg:px-6 py-2.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
-          <div className="flex items-center gap-2">
-            <input
-              ref={inputRef}
-              type="text"
+          {/* Input row */}
+          <div
+            className="flex items-end gap-2 rounded-lg px-3 py-2 transition-colors"
+            style={{
+              background: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+            }}
+          >
+            {/* Paperclip button (placeholder for v2 image upload) */}
+            <button
+              className="shrink-0 flex items-center justify-center rounded p-1 mb-0.5 transition-colors"
+              style={{ color: 'var(--color-text-tertiary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+              title="Image upload coming in v2"
+              onClick={() => {}}
+            >
+              <Paperclip size={16} />
+            </button>
+
+            {/* Auto-growing textarea */}
+            <textarea
+              ref={textareaRef}
               value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendCommand();
-                }
-              }}
-              placeholder="Type your prompt..."
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Type your message..."
               disabled={sending}
-              className="flex-1 rounded-lg px-4 py-2.5 text-base outline-none transition-colors"
+              rows={1}
+              className="chat-input flex-1 text-base outline-none bg-transparent leading-relaxed"
               style={{
                 fontFamily: M,
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
                 color: 'var(--color-text-primary)',
               }}
-              onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'; }}
             />
+
+            {/* Send button */}
             <button
               onClick={sendCommand}
               disabled={!command.trim() || sending}
-              className="shrink-0 flex items-center justify-center rounded-lg transition-all"
+              className="shrink-0 flex items-center justify-center rounded-lg transition-all mb-0.5"
               style={{
-                width: 42,
-                height: 42,
-                background: command.trim() ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.04)',
+                width: 36,
+                height: 36,
+                background: command.trim() ? 'var(--color-accent)' : 'transparent',
                 color: command.trim() ? '#fff' : 'var(--color-text-tertiary)',
                 cursor: command.trim() ? 'pointer' : 'default',
               }}
             >
-              {sent ? <Check size={18} /> : <SendHorizontal size={18} />}
+              {sent ? <Check size={16} /> : <SendHorizontal size={16} />}
             </button>
+          </div>
+
+          {/* Status bar */}
+          <div className="flex items-center gap-3 mt-1.5 px-1">
+            <span
+              className="font-mono-stats text-xs"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              {session.model?.replace('claude-', '') ?? 'Unknown'}
+            </span>
+            <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
+            <span
+              className="font-mono-stats text-xs"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              {formatTokens(totalTokens)} tokens
+            </span>
+
+            {/* Context usage mini bar */}
+            <div className="flex items-center gap-1.5 ml-auto">
+              <span
+                className="font-mono-stats text-xs"
+                style={{ color: 'var(--color-text-tertiary)' }}
+              >
+                Context:
+              </span>
+              <div
+                className="w-16 h-1.5 rounded-full overflow-hidden"
+                style={{ background: 'rgba(255, 255, 255, 0.06)' }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${contextPercent}%`,
+                    background: contextPercent > 80
+                      ? 'var(--color-error)'
+                      : contextPercent > 50
+                        ? 'var(--color-idle)'
+                        : 'var(--color-accent)',
+                  }}
+                />
+              </div>
+              <span
+                className="font-mono-stats text-xs"
+                style={{ color: 'var(--color-text-tertiary)' }}
+              >
+                {contextPercent}%
+              </span>
+            </div>
           </div>
         </div>
       )}
