@@ -122,11 +122,20 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename 
           ) : (
             <>
               <h3
-                className="text-lg font-semibold leading-tight cursor-pointer flex-1"
+                className="text-lg font-semibold leading-tight cursor-pointer flex-1 min-w-0 truncate"
                 style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
                 onClick={handleCardClick}
+                title={session.teamName ? `${session.name} · ${session.teamName}` : session.name}
               >
                 {session.name}
+                {session.teamName && (
+                  <span
+                    className="ml-1.5 font-normal text-sm"
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  >
+                    · {session.teamName}
+                  </span>
+                )}
               </h3>
               <button
                 onClick={(e) => {
