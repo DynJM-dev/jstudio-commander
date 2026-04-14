@@ -1,10 +1,36 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { Teammate } from '@commander/shared';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
+import { tmuxService } from './tmux.service.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LIVE_JSONL_MS = 10 * 60_000;
+
+const projectDirFromCwd = (cwd: string): string =>
+  join(homedir(), '.claude', 'projects', cwd.replace(/\//g, '-'));
+
+// True iff we have real evidence this team member is alive:
+//   (a) the tmuxPaneId from the config still resolves to a live tmux pane, OR
+//   (b) a JSONL whose basename matches the member's Claude UUID has been
+//       modified within the last LIVE_JSONL_MS (default 10 min).
+// Config membership alone is NOT evidence — teams get edited and never
+// cleaned up, so killed processes must stay stopped until something
+// independently signals they're back.
+const hasLiveEvidence = (opts: { tmuxPaneId?: string; claudeSessionId?: string; cwd?: string }): boolean => {
+  if (opts.tmuxPaneId && tmuxService.hasSession(opts.tmuxPaneId)) return true;
+  if (opts.claudeSessionId && opts.cwd) {
+    const jsonl = join(projectDirFromCwd(opts.cwd), `${opts.claudeSessionId}.jsonl`);
+    try {
+      const stat = statSync(jsonl);
+      if (Date.now() - stat.mtime.getTime() < LIVE_JSONL_MS) return true;
+    } catch { /* missing file → not live */ }
+  }
+  return false;
+};
 
 interface TeamMember {
   agentId: string;
@@ -80,6 +106,13 @@ const reconcile = (path: string): void => {
   // config (it's whatever launched the team) — store agentId as a placeholder.
   const lead = config.members.find((m) => m.agentId === config.leadAgentId);
   if (lead) {
+    // For the lead, leadSessionId IS the Claude UUID when set.
+    const leadClaudeId = UUID_RE.test(parentSessionId) ? parentSessionId : undefined;
+    const leadLive = hasLiveEvidence({
+      tmuxPaneId: lead.tmuxPaneId,
+      claudeSessionId: leadClaudeId,
+      cwd: lead.cwd,
+    });
     sessionService.upsertTeammateSession({
       sessionId: parentSessionId,
       name: lead.name,
@@ -89,6 +122,7 @@ const reconcile = (path: string): void => {
       teamName,
       parentSessionId: null,
       model: lead.model,
+      live: leadLive,
     });
   }
 
@@ -101,6 +135,15 @@ const reconcile = (path: string): void => {
     next.add(member.agentId);
 
     if (!seen.has(member.agentId)) {
+      // Teammate agentIds look like "name@team" — not Claude UUIDs. Without
+      // a pane or prior claude_session_id link, we can't verify liveness,
+      // so live defaults to false (honest: "we don't know yet"). The hook
+      // event route will flip it to idle/working once Claude emits.
+      const memberLive = hasLiveEvidence({
+        tmuxPaneId: member.tmuxPaneId,
+        claudeSessionId: UUID_RE.test(member.agentId) ? member.agentId : undefined,
+        cwd: member.cwd,
+      });
       sessionService.upsertTeammateSession({
         sessionId: member.agentId,
         name: member.name,
@@ -110,9 +153,10 @@ const reconcile = (path: string): void => {
         teamName,
         parentSessionId,
         model: member.model,
+        live: memberLive,
       });
       const teammate = buildTeammate(member, parentSessionId, teamName);
-      console.log(`[team-config] spawned ${teammate.sessionName} (${teammate.role}) in ${teamName}`);
+      console.log(`[team-config] reconciled ${teammate.sessionName} (${teammate.role}) in ${teamName}${memberLive ? ' [live]' : ' [no live evidence — not resurrecting]'}`);
       eventBus.emitTeammateSpawned(teammate);
     }
   }

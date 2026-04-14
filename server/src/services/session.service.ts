@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { Session, SessionStatus } from '@commander/shared';
 import { getDb } from '../db/connection.js';
@@ -117,6 +117,11 @@ export const sessionService = {
   // "tmux session" is actually a pane ID (e.g. "%35") — tmux send-keys -t <pane>
   // works identically to send-keys -t <session>, so we store it directly.
   // Idempotent: called on every config file mutation; upserts.
+  //
+  // `live` controls resurrection semantics: true = flip stopped → idle
+  // (there's evidence the underlying Claude process is alive), false =
+  // preserve whatever status the row currently has. Callers (team-config)
+  // decide liveness via tmux pane check or recent JSONL/hook activity.
   upsertTeammateSession(opts: {
     sessionId: string;
     name: string;
@@ -126,22 +131,28 @@ export const sessionService = {
     teamName: string;
     parentSessionId: string | null;
     model?: string;
+    live: boolean;
   }): Session {
     const db = getDb();
     const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(opts.sessionId) as { id: string } | undefined;
     const now = new Date().toISOString();
 
     if (existing) {
-      // If the session was previously stopped but the team config still lists
-      // them, flip back to idle — the config is the source of truth for
-      // "is this teammate currently alive?", not whatever state the poller
-      // wrote before the fix for pane-ID targets landed.
+      // When live=true we resurrect a stopped row to idle (the config +
+      // evidence agree the member is alive again). When live=false we
+      // preserve status so killed-but-still-in-config sessions stay dead.
+      const statusExpr = opts.live
+        ? "CASE WHEN status = 'stopped' THEN 'idle' ELSE status END"
+        : 'status';
+      const stoppedAtExpr = opts.live
+        ? "CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END"
+        : 'stopped_at';
       db.prepare(`
         UPDATE sessions
         SET name = ?, tmux_session = ?, project_path = ?, agent_role = ?,
             team_name = ?, parent_session_id = ?, updated_at = ?,
-            status = CASE WHEN status = 'stopped' THEN 'idle' ELSE status END,
-            stopped_at = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END
+            status = ${statusExpr},
+            stopped_at = ${stoppedAtExpr}
         WHERE id = ?
       `).run(
         opts.name,
@@ -154,23 +165,27 @@ export const sessionService = {
         opts.sessionId,
       );
     } else {
-      // New teammate row — default to idle, not working. We don't know if
-      // Claude is mid-generation; let the poller discover that on its next
-      // pass. 'idle' is the safer assumption for fresh rows.
+      // Fresh row — default to idle iff the caller has evidence the member
+      // is alive. Otherwise start stopped and let a later hook/tmux probe
+      // promote the session.
+      const initialStatus = opts.live ? 'idle' : 'stopped';
+      const initialStoppedAt = opts.live ? null : now;
       db.prepare(`
         INSERT INTO sessions (
           id, name, tmux_session, project_path, status, model, effort_level,
-          agent_role, team_name, parent_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'idle', ?, 'medium', ?, ?, ?, ?, ?)
+          agent_role, team_name, parent_session_id, stopped_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, ?, ?, ?, ?)
       `).run(
         opts.sessionId,
         opts.name,
         opts.tmuxTarget,
         opts.projectPath,
+        initialStatus,
         opts.model ?? 'claude-opus-4-6',
         opts.role,
         opts.teamName,
         opts.parentSessionId,
+        initialStoppedAt,
         now,
         now,
       );
@@ -253,22 +268,18 @@ export const sessionService = {
 
     const session = rowToSession(row);
 
-    // Kill tmux session if it exists
+    // Team-linked rows: hard-delete + archive or mutate the team config so
+    // the next reconcile pass doesn't resurrect them.
+    if (session.teamName) return this.purgeTeamSession(session);
+
     if (tmuxService.hasSession(session.tmuxSession)) {
-      try {
-        tmuxService.killSession(session.tmuxSession);
-      } catch {
-        // Session may already be gone
-      }
+      try { tmuxService.killSession(session.tmuxSession); } catch { /* gone */ }
     }
 
-    // Update database
     const now = new Date().toISOString();
     db.prepare(`
       UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?
     `).run(now, now, id);
-
-    // Log event
     db.prepare(`
       INSERT INTO session_events (session_id, event, detail)
       VALUES (?, 'killed', ?)
@@ -277,6 +288,59 @@ export const sessionService = {
     session.status = 'stopped';
     session.stoppedAt = now;
     eventBus.emitSessionDeleted(id);
+    return session;
+  },
+
+  // Delete a team-linked session row. If this row is the team's lead,
+  // archive the whole team config to ~/.claude/teams/.trash/<name>-<ts>/
+  // so reconciliation stops picking it up. Otherwise remove just this
+  // member from the team config's members array.
+  purgeTeamSession(session: Session): Session {
+    if (!session.teamName) return session;
+    const db = getDb();
+    const configPath = join(homedir(), '.claude', 'teams', session.teamName, 'config.json');
+
+    try {
+      if (existsSync(configPath)) {
+        const raw = readFileSync(configPath, 'utf-8');
+        const config = JSON.parse(raw) as {
+          leadAgentId?: string;
+          leadSessionId?: string;
+          members?: Array<{ agentId?: string }>;
+        };
+        const isLead =
+          (config.leadSessionId && session.id === config.leadSessionId) ||
+          (config.leadAgentId && session.id === config.leadAgentId);
+
+        if (isLead) {
+          // Archive the whole team directory
+          const teamDir = dirname(configPath);
+          const trashRoot = join(homedir(), '.claude', 'teams', '.trash');
+          mkdirSync(trashRoot, { recursive: true });
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const target = join(trashRoot, `${session.teamName}-${ts}`);
+          renameSync(teamDir, target);
+          console.log(`[sessions] archived team ${session.teamName} → ${target}`);
+        } else {
+          // Remove just this member from members[]
+          config.members = (config.members ?? []).filter((m) => m.agentId !== session.id);
+          writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+          console.log(`[sessions] removed member ${session.id} from team ${session.teamName}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[sessions] team cleanup failed for ${session.id}:`, (err as Error).message);
+    }
+
+    // Kill tmux if real pane, then drop DB rows.
+    if (session.tmuxSession && !session.tmuxSession.startsWith('agent:') && tmuxService.hasSession(session.tmuxSession)) {
+      try { tmuxService.killSession(session.tmuxSession); } catch { /* gone */ }
+    }
+    db.prepare('DELETE FROM agent_relationships WHERE parent_session_id = ? OR child_session_id = ?').run(session.id, session.id);
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(session.id);
+
+    eventBus.emitSessionDeleted(session.id);
+    session.status = 'stopped';
     return session;
   },
 
