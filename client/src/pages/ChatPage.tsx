@@ -128,7 +128,7 @@ export const ChatPage = () => {
   const allMessages = [...messages, ...pendingLocal];
 
   // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
-  const { prompt, terminalHint, clearPrompt } = usePromptDetection(
+  const { prompt, terminalHint, messagesQueued, clearPrompt } = usePromptDetection(
     sessionId,
     session?.status,
     allMessages.length,
@@ -191,6 +191,7 @@ export const ChatPage = () => {
         sessionStatus={session?.status}
         terminalHint={terminalHint}
         hasPrompt={!!prompt}
+        messagesQueued={messagesQueued}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}
@@ -323,7 +324,7 @@ export const ChatPage = () => {
             </button>
           </div>
 
-          {/* Sent confirmation */}
+          {/* Sent confirmation — shows "Queued" when Claude is busy */}
           <AnimatePresence>
             {sent && (
               <motion.div
@@ -333,12 +334,12 @@ export const ChatPage = () => {
                 transition={{ duration: 0.15 }}
                 className="flex items-center gap-1 mt-1.5 ml-1"
               >
-                <Check size={12} style={{ color: 'var(--color-working)' }} />
+                <Check size={12} style={{ color: session?.status === 'working' ? 'var(--color-idle)' : 'var(--color-working)' }} />
                 <span
                   className="text-xs"
-                  style={{ color: 'var(--color-working)', fontFamily: M }}
+                  style={{ color: session?.status === 'working' ? 'var(--color-idle)' : 'var(--color-working)', fontFamily: M }}
                 >
-                  Sent
+                  {session?.status === 'working' ? 'Queued — Claude is still working' : 'Sent'}
                 </span>
               </motion.div>
             )}

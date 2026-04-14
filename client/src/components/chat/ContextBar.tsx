@@ -123,9 +123,10 @@ interface ContextBarProps {
   sessionStatus?: string;
   terminalHint?: string | null;
   hasPrompt?: boolean;
+  messagesQueued?: boolean;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint, hasPrompt = false }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint, hasPrompt = false, messagesQueued = false }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -145,7 +146,10 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
   const actionLabel = jsonlAction ?? (isWorking ? terminalHint : null) ?? null;
 
   // Status info (always shown)
-  const status = getStatusInfo(sessionStatus, actionLabel, hasPrompt);
+  const statusInfo = getStatusInfo(sessionStatus, actionLabel, hasPrompt);
+  const status = messagesQueued && isWorking
+    ? { ...statusInfo, label: `${statusInfo.label} (queued)` }
+    : statusInfo;
 
   // Track response start time
   const responseStartRef = useRef<number>(0);

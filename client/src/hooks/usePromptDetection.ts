@@ -18,6 +18,7 @@ interface OutputResponse {
 interface UsePromptDetectionReturn {
   prompt: DetectedPrompt | null;
   terminalHint: string | null;
+  messagesQueued: boolean;
   clearPrompt: () => void;
 }
 
@@ -69,6 +70,7 @@ export const usePromptDetection = (
 ): UsePromptDetectionReturn => {
   const [prompt, setPrompt] = useState<DetectedPrompt | null>(null);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
+  const [messagesQueued, setMessagesQueued] = useState(false);
   const prevMessageCountRef = useRef(messageCount);
   const dismissedUntilRef = useRef(0);
 
@@ -77,6 +79,7 @@ export const usePromptDetection = (
     if (sessionStatus === 'idle' || sessionStatus === 'stopped') {
       setPrompt(null);
       setTerminalHint(null);
+      setMessagesQueued(false);
     }
   }, [sessionStatus]);
 
@@ -118,6 +121,10 @@ export const usePromptDetection = (
         // Terminal hint for ContextBar action status
         const hint = parseTerminalHint(res.lines);
         setTerminalHint(hint);
+
+        // Detect queued messages
+        const rawText = res.lines.join(' ');
+        setMessagesQueued(rawText.includes('queued') || rawText.includes('Press up to edit'));
       } catch {
         // Silently fail
       }
@@ -128,5 +135,5 @@ export const usePromptDetection = (
     return () => clearInterval(interval);
   }, [sessionId, sessionStatus]);
 
-  return { prompt, terminalHint, clearPrompt };
+  return { prompt, terminalHint, messagesQueued, clearPrompt };
 };
