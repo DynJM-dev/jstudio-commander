@@ -52,7 +52,7 @@ const STATUS_CONFIG = {
 } as const;
 
 const StatusIcon = ({ status }: { status: PlanTask['status'] }) => {
-  const config = STATUS_CONFIG[status];
+  const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
   const Icon = config.icon;
   const reduced = prefersReducedMotion();
 
@@ -76,6 +76,7 @@ const TaskRow = ({ task, depth = 0, index = 0 }: { task: PlanTask; depth?: numbe
   const [expanded, setExpanded] = useState(false);
   const hasSubtasks = task.subtasks && task.subtasks.length > 0;
   const reduced = prefersReducedMotion();
+  const statusConfig = STATUS_CONFIG[task.status] ?? STATUS_CONFIG.pending;
 
   return (
     <motion.div
@@ -125,11 +126,11 @@ const TaskRow = ({ task, depth = 0, index = 0 }: { task: PlanTask; depth?: numbe
             className="text-xs px-1.5 py-0.5 rounded shrink-0"
             style={{
               fontFamily: M,
-              color: STATUS_CONFIG[task.status].color,
-              background: `color-mix(in srgb, ${STATUS_CONFIG[task.status].color} 10%, transparent)`,
+              color: statusConfig.color,
+              background: `color-mix(in srgb, ${statusConfig.color} 10%, transparent)`,
             }}
           >
-            {STATUS_CONFIG[task.status].label}
+            {statusConfig.label}
           </span>
         )}
       </div>

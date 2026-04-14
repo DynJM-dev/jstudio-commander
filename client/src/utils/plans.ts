@@ -64,11 +64,17 @@ export const buildPlanFromMessages = (
       if (block.name === 'TaskUpdate') {
         const input = block.input as { taskId?: string; status?: string; subject?: string };
         const taskId = input.taskId;
-        if (taskId && tasks.has(taskId)) {
-          const task = tasks.get(taskId)!;
-          if (input.status) task.status = input.status as PlanTask['status'];
-          if (input.subject) task.title = input.subject;
+        if (!taskId || !tasks.has(taskId)) continue;
+        // Claude Code emits 'deleted' when a task is permanently removed —
+        // drop it from the plan so it never hits the renderer (which only
+        // knows about the PlanTask['status'] union).
+        if (input.status === 'deleted') {
+          tasks.delete(taskId);
+          continue;
         }
+        const task = tasks.get(taskId)!;
+        if (input.status) task.status = input.status as PlanTask['status'];
+        if (input.subject) task.title = input.subject;
       }
     }
   }

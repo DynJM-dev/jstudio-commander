@@ -200,7 +200,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
                 >
                   <div className="py-1 max-h-60 overflow-y-auto">
                     {plan.map((task) => {
-                      const cfg = STATUS_CONFIG[task.status];
+                      const cfg = STATUS_CONFIG[task.status] ?? STATUS_CONFIG.pending;
                       const Icon = cfg.icon;
                       return (
                         <div
