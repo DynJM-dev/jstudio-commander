@@ -49,7 +49,6 @@ const getToolPath = (name: string, input: Record<string, unknown>): string => {
   const filePath = input.file_path ?? input.path ?? input.command;
   if (typeof filePath === 'string') {
     const short = filePath.replace(/^\/Users\/[^/]+/, '~');
-    // Truncate long paths/commands
     return short.length > 60 ? short.slice(0, 57) + '...' : short;
   }
   if (name === 'Grep' && typeof input.pattern === 'string') {
@@ -116,10 +115,22 @@ const RenderEditContent = ({ input, result }: { input: Record<string, unknown>; 
           style={{ background: 'rgba(0, 0, 0, 0.25)' }}
         >
           {oldStr && oldStr.split('\n').map((line, i) => (
-            <div key={`old${i}`} style={{ color: 'rgba(239, 68, 68, 0.8)' }}>- {line}</div>
+            <div
+              key={`old${i}`}
+              className="px-1"
+              style={{ color: 'rgba(239, 68, 68, 0.8)', background: 'rgba(239, 68, 68, 0.15)' }}
+            >
+              - {line}
+            </div>
           ))}
           {newStr && newStr.split('\n').map((line, i) => (
-            <div key={`new${i}`} style={{ color: 'rgba(34, 197, 94, 0.8)' }}>+ {line}</div>
+            <div
+              key={`new${i}`}
+              className="px-1"
+              style={{ color: 'rgba(34, 197, 94, 0.8)', background: 'rgba(34, 197, 94, 0.15)' }}
+            >
+              + {line}
+            </div>
           ))}
         </div>
       )}
@@ -185,7 +196,6 @@ export const ToolCallBlock = ({ name, input, result, isError, duration }: ToolCa
   const path = getToolPath(name, input);
   const hasResult = result !== undefined;
 
-  // Status icon
   const StatusIcon = isError
     ? XCircle
     : hasResult
@@ -204,15 +214,19 @@ export const ToolCallBlock = ({ name, input, result, isError, duration }: ToolCa
         return <RenderBashContent input={input} result={result} isError={isError} />;
       case 'Edit':
         return <RenderEditContent input={input} result={result} />;
-      case 'Write':
-        return <RenderGenericContent input={input} result={result} />;
       default:
         return <RenderGenericContent input={input} result={result} />;
     }
   };
 
   return (
-    <div className="my-0.5">
+    <div
+      className="my-0.5"
+      style={{
+        borderLeft: '2px solid rgba(245, 158, 11, 0.3)',
+        paddingLeft: 8,
+      }}
+    >
       {/* Collapsed single-line header */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -273,11 +287,11 @@ export const ToolCallBlock = ({ name, input, result, isError, duration }: ToolCa
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15, ease: 'easeOut' as const }}
+            transition={{ duration: 0.2, ease: 'easeOut' as const }}
             className="overflow-hidden"
           >
             <div
-              className="ml-5 mt-1 mb-2 rounded-lg p-3"
+              className="mt-1 mb-2 rounded-lg p-3"
               style={{ background: 'rgba(0, 0, 0, 0.15)' }}
             >
               {renderContent()}

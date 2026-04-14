@@ -1,9 +1,14 @@
-import { Crown } from 'lucide-react';
+import { User } from 'lucide-react';
+import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 interface UserMessageProps {
   message: ChatMessage;
@@ -17,18 +22,30 @@ export const UserMessage = ({ message }: UserMessageProps) => {
   const isToolResultOnly = textBlocks.length === 0 && toolResults.length > 0;
   if (isToolResultOnly) return null;
 
+  const reduced = prefersReducedMotion();
+
   return (
-    <div style={{ fontFamily: M }}>
-      {/* Header: Crown + "You" + timestamp */}
-      <div className="flex items-center gap-2 mb-1">
-        <Crown
-          size={18}
-          style={{ color: '#F59E0B' }}
-          className="shrink-0 lg:w-[18px] lg:h-[18px] w-4 h-4"
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: 'easeOut' as const }}
+      className="w-full py-3 px-4 pl-5"
+      style={{
+        fontFamily: M,
+        background: 'rgba(14, 124, 123, 0.04)',
+        borderLeft: '2px solid rgba(14, 124, 123, 0.6)',
+      }}
+    >
+      {/* Header: User icon + "You" + timestamp */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <User
+          size={14}
+          className="shrink-0"
+          style={{ color: 'var(--color-text-tertiary)' }}
         />
         <span
-          className="text-sm font-semibold"
-          style={{ color: 'var(--color-text-primary)' }}
+          className="text-xs font-semibold"
+          style={{ color: 'var(--color-text-secondary)' }}
         >
           You
         </span>
@@ -41,21 +58,19 @@ export const UserMessage = ({ message }: UserMessageProps) => {
         </span>
       </div>
 
-      {/* Timeline bar + message content */}
-      <div className="timeline-line">
-        {textBlocks.map((block, i) => {
-          if (block.type !== 'text') return null;
-          return (
-            <div
-              key={i}
-              className="text-sm leading-relaxed"
-              style={{ color: 'var(--color-text-primary)' }}
-            >
-              {renderTextContent(block.text)}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+      {/* Message text */}
+      {textBlocks.map((block, i) => {
+        if (block.type !== 'text') return null;
+        return (
+          <div
+            key={i}
+            className="text-sm leading-relaxed"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            {renderTextContent(block.text)}
+          </div>
+        );
+      })}
+    </motion.div>
   );
 };

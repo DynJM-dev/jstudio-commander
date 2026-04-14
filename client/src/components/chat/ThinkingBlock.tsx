@@ -34,19 +34,18 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
   const [expanded, setExpanded] = useState(false);
   const isRedacted = !text || text.trim().length === 0;
 
-  // Redacted thinking
+  // Redacted thinking — static, not expandable
   if (isRedacted && !isActive) {
     return (
       <div
-        className="flex items-center gap-2 py-2 px-3 rounded-lg"
+        className="flex items-center gap-2 py-2 px-3 my-1"
         style={{
           fontFamily: M,
-          background: 'rgba(14, 124, 123, 0.04)',
           color: 'var(--color-text-tertiary)',
         }}
       >
-        <BrainCircuit size={14} className="shrink-0" />
-        <span className="text-sm italic">Extended thinking (redacted)</span>
+        <BrainCircuit size={14} className="shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+        <span className="text-xs italic">Extended thinking (redacted)</span>
       </div>
     );
   }
@@ -55,7 +54,7 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
   if (isActive) {
     return (
       <div
-        className="rounded-lg overflow-hidden"
+        className="my-1 rounded-lg overflow-hidden"
         style={{
           background: 'rgba(14, 124, 123, 0.04)',
           borderLeft: '3px solid var(--color-accent)',
@@ -65,13 +64,18 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
           className="flex items-center gap-2 py-2.5 px-3"
           style={{ fontFamily: M }}
         >
+          {/* Pulsing teal dot */}
+          <div
+            className="w-2 h-2 rounded-full shrink-0 status-pulse"
+            style={{ background: 'var(--color-accent)' }}
+          />
           <BrainCircuit
             size={14}
             className="brain-glow shrink-0"
             style={{ color: 'var(--color-accent)' }}
           />
           <span
-            className="text-sm text-pulse"
+            className="text-sm italic text-pulse"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             Thinking...
@@ -79,6 +83,7 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
           <span className="flex-1" />
           {startTime && <LiveDuration startTime={startTime} />}
         </div>
+        {/* Shimmer bar */}
         <div className="mx-3 mb-2.5 h-1.5 rounded-full thinking-shimmer" />
       </div>
     );
@@ -86,18 +91,12 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
 
   // Completed thinking (expandable)
   return (
-    <div
-      className="rounded-lg overflow-hidden"
-      style={{
-        background: 'rgba(14, 124, 123, 0.04)',
-        borderLeft: '3px solid var(--color-accent)',
-      }}
-    >
+    <div className="my-1">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full py-2.5 px-3 text-sm cursor-pointer transition-colors"
-        style={{ color: 'var(--color-text-secondary)', fontFamily: M }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(14, 124, 123, 0.06)'; }}
+        className="flex items-center gap-2 w-full py-1.5 px-1 text-xs cursor-pointer transition-colors rounded"
+        style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(14, 124, 123, 0.04)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
       >
         <BrainCircuit
@@ -120,12 +119,17 @@ export const ThinkingBlock = ({ text, isActive, startTime }: ThinkingBlockProps)
             className="overflow-hidden"
           >
             <div
-              className="px-3 pb-3 text-sm italic max-h-[300px] overflow-y-auto"
+              className="px-3 pb-3 text-xs italic max-h-[300px] overflow-y-auto"
               style={{
                 fontFamily: M,
                 color: 'var(--color-text-tertiary)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
+                background: 'rgba(14, 124, 123, 0.02)',
+                borderLeft: '2px solid rgba(14, 124, 123, 0.15)',
+                marginLeft: 2,
+                paddingLeft: 12,
+                paddingTop: 8,
               }}
             >
               {text}

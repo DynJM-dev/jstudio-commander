@@ -3,6 +3,7 @@ import { ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
+import { ResponseSummary } from './ResponseSummary';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -52,7 +53,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
   const [loadingMore, setLoadingMore] = useState(false);
   const prevLengthRef = useRef(messages.length);
 
-  // Build tool_result lookup: map tool_use_id → { content, isError }
+  // Build tool_result lookup: map tool_use_id -> { content, isError }
   const toolResultMap = useMemo(() => {
     const map = new Map<string, { content: string; isError?: boolean }>();
     for (const msg of messages) {
@@ -123,13 +124,12 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
 
   const renderMessage = (message: ChatMessage) => {
     if (message.role === 'user') {
-      return <UserMessage key={message.id} message={message} />;
+      return <UserMessage message={message} />;
     }
 
     if (message.role === 'assistant') {
       return (
         <AssistantMessage
-          key={message.id}
           message={message}
           toolResults={toolResultMap}
         />
@@ -143,10 +143,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
         : 'System event';
 
       return (
-        <div
-          key={message.id}
-          className="flex justify-center py-2"
-        >
+        <div className="flex justify-center py-2">
           <span
             className="text-xs px-3 py-1 rounded-full"
             style={{
@@ -170,7 +167,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-4 lg:px-6 py-4"
+        className="h-full overflow-y-auto px-2 lg:px-4 py-4"
       >
         {/* Load more */}
         {hasMore && (
@@ -194,24 +191,21 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
           </div>
         )}
 
-        {/* Messages with turn separators */}
+        {/* Messages — continuous flat thread */}
         <div className="flex flex-col">
           {messages.map((message, index) => {
-            const elements: React.ReactNode[] = [];
             const prevMsg = index > 0 ? messages[index - 1] : undefined;
 
-            // Add timestamp separator for 5min+ gaps
+            // Determine separators needed
+            let timestampSep = false;
+            let modelSep = false;
+
             if (prevMsg) {
               const prevTime = new Date(prevMsg.timestamp).getTime();
               const currTime = new Date(message.timestamp).getTime();
-              if (currTime - prevTime > FIVE_MINUTES) {
-                elements.push(
-                  <TimestampSeparator key={`sep-${message.id}`} timestamp={message.timestamp} />
-                );
-              }
+              timestampSep = currTime - prevTime > FIVE_MINUTES;
             }
 
-            // Add model-change separator
             if (message.model && prevMsg) {
               let prevModel: string | undefined;
               for (let j = index - 1; j >= 0; j--) {
@@ -221,22 +215,42 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
                   break;
                 }
               }
-              if (prevModel && prevModel !== message.model) {
-                elements.push(
-                  <ModelChangeSeparator key={`model-${message.id}`} model={message.model} />
-                );
-              }
+              modelSep = !!(prevModel && prevModel !== message.model);
             }
 
-            // Turn separator between different roles (not first message)
-            if (prevMsg && prevMsg.role !== message.role && message.role !== 'system') {
-              elements.push(
-                <div key={`turn-${message.id}`} className="turn-separator" />
-              );
-            }
+            // Show ResponseSummary after each completed assistant turn
+            // (when the next message is from user, or it's the last message and session isn't working)
+            const nextMsg = index < messages.length - 1 ? messages[index + 1] : undefined;
+            const showSummary = message.role === 'assistant' &&
+              message.usage &&
+              (nextMsg?.role === 'user' || (!nextMsg));
 
-            elements.push(renderMessage(message));
-            return elements;
+            const uid = `${index}-${message.id}`;
+
+            return (
+              <div key={uid}>
+                {timestampSep && <TimestampSeparator timestamp={message.timestamp} />}
+                {modelSep && message.model && <ModelChangeSeparator model={message.model} />}
+
+                {/* Subtle divider between messages */}
+                {prevMsg && !timestampSep && (
+                  <div
+                    className="my-1"
+                    style={{ borderTop: '0.5px solid rgba(255, 255, 255, 0.04)' }}
+                  />
+                )}
+
+                {renderMessage(message)}
+
+                {/* Response summary after complete assistant turns */}
+                {showSummary && (
+                  <ResponseSummary
+                    message={message}
+                    prevTimestamp={prevMsg?.timestamp}
+                  />
+                )}
+              </div>
+            );
           })}
         </div>
       </div>

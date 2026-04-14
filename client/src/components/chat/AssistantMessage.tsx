@@ -1,13 +1,16 @@
-import { useMemo } from 'react';
 import { Sparkles } from 'lucide-react';
+import { motion } from 'framer-motion';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCallBlock } from './ToolCallBlock';
-import { MessageMeta } from './MessageMeta';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 interface AssistantMessageProps {
   message: ChatMessage;
@@ -64,22 +67,25 @@ const renderBlock = (
 };
 
 export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps) => {
-  const totalTokens = useMemo(() => {
-    if (!message.usage) return undefined;
-    return message.usage.inputTokens + message.usage.outputTokens;
-  }, [message.usage]);
+  const reduced = prefersReducedMotion();
 
   return (
-    <div style={{ fontFamily: M }}>
-      {/* Header: Claude icon + "Claude" + timestamp */}
-      <div className="flex items-center gap-2 mb-1">
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: 'easeOut' as const }}
+      className="w-full py-3 px-4"
+      style={{ fontFamily: M }}
+    >
+      {/* Header: Sparkles icon + "Claude" + timestamp */}
+      <div className="flex items-center gap-2 mb-1.5">
         <Sparkles
-          size={18}
-          style={{ color: '#0E7C7B' }}
-          className="shrink-0 lg:w-[18px] lg:h-[18px] w-4 h-4"
+          size={16}
+          className="shrink-0 lg:w-4 lg:h-4 w-3.5 h-3.5"
+          style={{ color: 'var(--color-accent)' }}
         />
         <span
-          className="text-sm font-semibold"
+          className="text-xs font-semibold"
           style={{ color: 'var(--color-accent-light)' }}
         >
           Claude
@@ -93,18 +99,10 @@ export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps
         </span>
       </div>
 
-      {/* Timeline bar + content blocks */}
-      <div className="timeline-line-accent">
-        <div className="space-y-1.5">
-          {message.content.map((block, i) => renderBlock(block, i, toolResults))}
-        </div>
-
-        {/* Turn footer: model · tokens · duration */}
-        <MessageMeta
-          model={message.model}
-          tokens={totalTokens}
-        />
+      {/* Content blocks — flat, no timeline bar */}
+      <div className="space-y-1">
+        {message.content.map((block, i) => renderBlock(block, i, toolResults))}
       </div>
-    </div>
+    </motion.div>
   );
 };

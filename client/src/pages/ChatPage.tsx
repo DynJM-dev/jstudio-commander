@@ -1,17 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MessageSquare, Loader2, SendHorizontal, Check, Paperclip } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import type { ChatMessage } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { ChatThread } from '../components/chat/ChatThread';
+import { ContextBar } from '../components/chat/ContextBar';
+import { StatusStrip } from '../components/chat/StatusStrip';
 import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
-import { formatTokens, formatCost } from '../utils/format';
 
 const M = 'Montserrat, sans-serif';
+
+const SLASH_COMMANDS = [
+  { cmd: '/compact', desc: 'Compact conversation context' },
+  { cmd: '/help', desc: 'Show available commands' },
+  { cmd: '/clear', desc: 'Clear conversation' },
+];
 
 export const ChatPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -22,6 +30,7 @@ export const ChatPage = () => {
   const [command, setCommand] = useState('');
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [localCommands, setLocalCommands] = useState<ChatMessage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,8 +52,8 @@ export const ChatPage = () => {
       setLocalCommands((prev) => [...prev, localMsg]);
 
       setCommand('');
+      setShowSlashMenu(false);
       setSent(true);
-      // Reset textarea height
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
       setTimeout(() => setSent(false), 1500);
     } catch {
@@ -64,16 +73,33 @@ export const ChatPage = () => {
     api.get<Session>(`/sessions/${sessionId}`).then(setSession).catch(() => {});
   }, [sessionId]);
 
+  // Poll session status
+  useEffect(() => {
+    if (!sessionId) return;
+    const poll = async () => {
+      try {
+        const s = await api.get<Session>(`/sessions/${sessionId}`);
+        setSession(s);
+      } catch { /* ignore */ }
+    };
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
+
   useEffect(() => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
 
   // Auto-resize textarea
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setCommand(e.target.value);
+    const val = e.target.value;
+    setCommand(val);
     const el = e.target;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+
+    // Show slash menu when typing /
+    setShowSlashMenu(val === '/' || (val.startsWith('/') && val.length < 10 && !val.includes(' ')));
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -88,9 +114,6 @@ export const ChatPage = () => {
 
   // Clear local commands once real JSONL messages arrive
   const allMessages = messages.length > 0 ? messages : localCommands;
-
-  // Estimate context usage (rough approximation based on total tokens)
-  const contextPercent = totalTokens > 0 ? Math.min(Math.round((totalTokens / 200000) * 100), 100) : 0;
 
   // No session selected
   if (!sessionId) {
@@ -125,12 +148,6 @@ export const ChatPage = () => {
           {session && (
             <>
               <StatusBadge status={session.status} showLabel size="sm" />
-              <span
-                className="text-xs px-2 py-0.5 rounded-full hidden sm:inline-block"
-                style={{ background: 'rgba(255, 255, 255, 0.06)', color: 'var(--color-text-tertiary)' }}
-              >
-                {session.model?.replace('claude-', '')}
-              </span>
               {session.projectPath && (
                 <span
                   className="font-mono-stats text-xs truncate max-w-[250px] hidden md:inline-block"
@@ -142,19 +159,16 @@ export const ChatPage = () => {
             </>
           )}
         </div>
-
-        {stats && (
-          <div className="flex items-center gap-3 font-mono-stats text-xs shrink-0">
-            <span style={{ color: 'var(--color-accent-light)' }}>
-              {formatTokens(totalTokens)} tokens
-            </span>
-            <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-            <span style={{ color: 'var(--color-working)' }}>
-              {formatCost(stats.totalCostUsd)}
-            </span>
-          </div>
-        )}
       </div>
+
+      {/* Context bar — fixed top */}
+      {stats && (
+        <ContextBar
+          model={session?.model}
+          totalTokens={totalTokens}
+          totalCost={stats.totalCostUsd}
+        />
+      )}
 
       {/* Chat area */}
       {loading ? (
@@ -180,27 +194,78 @@ export const ChatPage = () => {
         <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
       )}
 
-      {/* VS Code-style input bar */}
+      {/* Status strip — above input when working */}
+      <StatusStrip messages={allMessages} sessionStatus={session?.status} />
+
+      {/* Input area — glass surface, fixed bottom */}
       {session && session.status !== 'stopped' && (
         <div
           className="shrink-0 px-3 lg:px-6 py-2.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
+          {/* Slash command dropdown */}
+          <AnimatePresence>
+            {showSlashMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={{ duration: 0.15 }}
+                className="mb-2 rounded-lg overflow-hidden"
+                style={{
+                  background: 'rgba(15, 20, 25, 0.95)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                }}
+              >
+                {SLASH_COMMANDS
+                  .filter((c) => c.cmd.startsWith(command))
+                  .map((c) => (
+                    <button
+                      key={c.cmd}
+                      className="flex items-center gap-3 w-full px-3 py-2 text-left transition-colors"
+                      style={{ fontFamily: M }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      onClick={() => {
+                        setCommand(c.cmd + ' ');
+                        setShowSlashMenu(false);
+                        textareaRef.current?.focus();
+                      }}
+                    >
+                      <span
+                        className="font-mono-stats text-xs font-medium"
+                        style={{ color: 'var(--color-accent-light)' }}
+                      >
+                        {c.cmd}
+                      </span>
+                      <span
+                        className="text-xs"
+                        style={{ color: 'var(--color-text-tertiary)' }}
+                      >
+                        {c.desc}
+                      </span>
+                    </button>
+                  ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Input row */}
           <div
-            className="flex items-end gap-2 rounded-lg px-3 py-2 transition-colors"
+            className="flex items-end gap-2 rounded-lg px-3 py-2 transition-colors glass-surface"
             style={{
-              background: 'rgba(255, 255, 255, 0.04)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: 12,
             }}
           >
-            {/* Paperclip button (placeholder for v2 image upload) */}
+            {/* Paperclip button */}
             <button
               className="shrink-0 flex items-center justify-center rounded p-1 mb-0.5 transition-colors"
               style={{ color: 'var(--color-text-tertiary)' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
-              title="Image upload coming in v2"
+              title="Image upload — coming in v2"
               onClick={() => {}}
             >
               <Paperclip size={16} />
@@ -222,6 +287,16 @@ export const ChatPage = () => {
               }}
             />
 
+            {/* Character count (only when > 100 chars, hidden on mobile) */}
+            {command.length > 100 && (
+              <span
+                className="text-xs shrink-0 mb-1 hidden sm:inline-block"
+                style={{ color: 'var(--color-text-tertiary)' }}
+              >
+                {command.length}
+              </span>
+            )}
+
             {/* Send button */}
             <button
               onClick={sendCommand}
@@ -230,62 +305,16 @@ export const ChatPage = () => {
               style={{
                 width: 36,
                 height: 36,
+                minWidth: 36,
+                minHeight: 36,
                 background: command.trim() ? 'var(--color-accent)' : 'transparent',
                 color: command.trim() ? '#fff' : 'var(--color-text-tertiary)',
                 cursor: command.trim() ? 'pointer' : 'default',
+                boxShadow: command.trim() ? '0 0 12px rgba(14, 124, 123, 0.3)' : 'none',
               }}
             >
               {sent ? <Check size={16} /> : <SendHorizontal size={16} />}
             </button>
-          </div>
-
-          {/* Status bar */}
-          <div className="flex items-center gap-3 mt-1.5 px-1">
-            <span
-              className="font-mono-stats text-xs"
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              {session.model?.replace('claude-', '') ?? 'Unknown'}
-            </span>
-            <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-            <span
-              className="font-mono-stats text-xs"
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              {formatTokens(totalTokens)} tokens
-            </span>
-
-            {/* Context usage mini bar */}
-            <div className="flex items-center gap-1.5 ml-auto">
-              <span
-                className="font-mono-stats text-xs"
-                style={{ color: 'var(--color-text-tertiary)' }}
-              >
-                Context:
-              </span>
-              <div
-                className="w-16 h-1.5 rounded-full overflow-hidden"
-                style={{ background: 'rgba(255, 255, 255, 0.06)' }}
-              >
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${contextPercent}%`,
-                    background: contextPercent > 80
-                      ? 'var(--color-error)'
-                      : contextPercent > 50
-                        ? 'var(--color-idle)'
-                        : 'var(--color-accent)',
-                  }}
-                />
-              </div>
-              <span
-                className="font-mono-stats text-xs"
-                style={{ color: 'var(--color-text-tertiary)' }}
-              >
-                {contextPercent}%
-              </span>
-            </div>
           </div>
         </div>
       )}
