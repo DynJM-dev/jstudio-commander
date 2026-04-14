@@ -9,6 +9,7 @@ import { LoadingSkeleton } from './components/shared/LoadingSkeleton';
 
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })));
+const SplitChatLayout = lazy(() => import('./pages/SplitChatLayout').then(m => ({ default: m.SplitChatLayout })));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ default: m.ProjectsPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));
 const TerminalPage = lazy(() => import('./pages/TerminalPage').then(m => ({ default: m.TerminalPage })));
@@ -38,7 +39,7 @@ const AnimatedRoutes = () => {
             <Route element={<DashboardLayout />}>
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/chat" element={<ChatPage />} />
-              <Route path="/chat/:sessionId" element={<ChatPage />} />
+              <Route path="/chat/:sessionId" element={<SplitChatLayout />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
               <Route path="/terminal" element={<TerminalPage />} />

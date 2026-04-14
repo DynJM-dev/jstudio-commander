@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { Teammate } from '@commander/shared';
 import { eventBus } from '../ws/event-bus.js';
@@ -24,7 +24,19 @@ interface TeamConfig {
   members?: TeamMember[];
 }
 
-const TEAMS_GLOB = join(homedir(), '.claude', 'teams', '*', 'config.json');
+const TEAMS_DIR = join(homedir(), '.claude', 'teams');
+
+const listConfigPaths = (): string[] => {
+  if (!existsSync(TEAMS_DIR)) return [];
+  const entries = readdirSync(TEAMS_DIR, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const p = join(TEAMS_DIR, entry.name, 'config.json');
+    if (existsSync(p)) paths.push(p);
+  }
+  return paths;
+};
 
 // Tracks which non-lead members we've already announced per team file. Used to
 // diff on subsequent file mutations and emit only delta events.
@@ -119,8 +131,15 @@ const reconcile = (path: string): void => {
 export const teamConfigService = {
   start(): void {
     if (watcher) return;
-    watcher = chokidar.watch(TEAMS_GLOB, {
-      ignoreInitial: false,
+
+    // Reconcile every existing config once at boot.
+    for (const p of listConfigPaths()) reconcile(p);
+
+    // Then watch for subsequent changes. Chokidar 4 dropped glob support, so
+    // we watch the known config paths directly. Rescan on add to pick up new
+    // team directories created after boot.
+    watcher = chokidar.watch(listConfigPaths(), {
+      ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
     });
 
@@ -128,7 +147,24 @@ export const teamConfigService = {
     watcher.on('add', onChange);
     watcher.on('change', onChange);
 
-    console.log(`[team-config] watching ${TEAMS_GLOB}`);
+    // Poll every 10s for newly-created team directories and add them to the
+    // watcher. Cheap because listConfigPaths is just two readdirs.
+    setInterval(() => {
+      const paths = listConfigPaths();
+      const watched = watcher?.getWatched() ?? {};
+      const watchedFlat = new Set<string>();
+      for (const dir of Object.keys(watched)) {
+        for (const f of watched[dir] ?? []) watchedFlat.add(join(dir, f));
+      }
+      for (const p of paths) {
+        if (!watchedFlat.has(p)) {
+          watcher?.add(p);
+          reconcile(p);
+        }
+      }
+    }, 10_000).unref();
+
+    console.log(`[team-config] watching ${TEAMS_DIR}/*/config.json (${listConfigPaths().length} teams)`);
   },
 
   stop(): void {

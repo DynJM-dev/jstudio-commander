@@ -23,8 +23,16 @@ const SLASH_COMMANDS = [
   { cmd: '/clear', desc: 'Clear conversation' },
 ];
 
-export const ChatPage = () => {
-  const { sessionId } = useParams<{ sessionId: string }>();
+interface ChatPageProps {
+  // Force a specific session instead of reading from the URL. Used when
+  // rendering the page inside a split layout where the right pane's session
+  // is a teammate, not whatever is in /chat/:sessionId.
+  sessionIdOverride?: string;
+}
+
+export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
+  const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
+  const sessionId = sessionIdOverride ?? urlSessionId;
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const { messages, loading, error, hasMore, stats, loadMore } = useChat(sessionId, session?.status);
