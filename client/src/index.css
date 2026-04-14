@@ -26,7 +26,9 @@
   /* === Status Colors === */
   --color-working:        #22C55E;
   --color-idle:           #F59E0B;
-  --color-waiting:        #3B82F6;
+  /* Yellow — signals "paused awaiting human input". Matches idle intentionally;
+     the glow + pulse treatment is what distinguishes it visually. */
+  --color-waiting:        #F59E0B;
   --color-error:          #EF4444;
   --color-stopped:        #6B7280;
 
@@ -151,6 +153,25 @@ button:active, a:active, [role="button"]:active {
 
 .animate-pulse-slow {
   animation: pulse-slow 2.5s ease-in-out infinite;
+}
+
+/* Waiting-state glow — yellow halo with slow pulse. Applied to session
+   cards, tabs, and dots when a session is paused awaiting human input. */
+@keyframes waiting-glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 10px color-mix(in srgb, var(--color-idle) 28%, transparent);
+    border-color: color-mix(in srgb, var(--color-idle) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 16px color-mix(in srgb, var(--color-idle) 50%, transparent);
+    border-color: color-mix(in srgb, var(--color-idle) 70%, transparent);
+  }
+}
+
+.waiting-glow {
+  animation: waiting-glow-pulse 2s ease-in-out infinite;
+  border: 1px solid color-mix(in srgb, var(--color-idle) 50%, transparent);
+  border-radius: 20px;
 }
 
 /* Slide-up animation for mobile drawer */

@@ -44,6 +44,7 @@ const shortenPath = (path: string | null): string => {
 export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionCardProps) => {
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
+  const isWaiting = session.status === 'waiting';
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,7 +69,10 @@ export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionC
   };
 
   return (
-    <div style={{ opacity: isStopped ? 0.6 : 1 }}>
+    <div
+      className={isWaiting ? 'waiting-glow' : ''}
+      style={{ opacity: isStopped ? 0.6 : 1 }}
+    >
       <GlassCard
         hover={!isStopped}
         padding="p-5 sm:p-6"

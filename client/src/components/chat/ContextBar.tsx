@@ -236,7 +236,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
       <div className="flex items-center gap-2 shrink-0 min-w-0">
         <div
           className={`w-2 h-2 rounded-full shrink-0 ${status.pulse ? 'animate-pulse' : ''}`}
-          style={{ background: status.dotColor }}
+          style={{
+            background: status.dotColor,
+            boxShadow: effectiveStatus === 'waiting' || effectiveStatus === 'working'
+              ? `0 0 6px ${status.dotColor}`
+              : undefined,
+          }}
         />
         <span
           className="text-sm font-medium truncate max-w-[220px]"

@@ -5,7 +5,9 @@ export const SESSION_STATUSES: SessionStatus[] = ['idle', 'working', 'waiting', 
 export const STATUS_COLORS: Record<SessionStatus, string> = {
   working: '#22C55E',
   idle:    '#F59E0B',
-  waiting: '#3B82F6',
+  // Yellow — same hex as idle. Distinguished at render time by the glow +
+  // pulse treatment applied when status === 'waiting'.
+  waiting: '#F59E0B',
   error:   '#EF4444',
   stopped: '#6B7280',
 };

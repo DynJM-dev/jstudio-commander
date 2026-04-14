@@ -30,7 +30,9 @@ export const StatusBadge = ({ status, showLabel = false, size = 'md' }: StatusBa
           width: dotSize,
           height: dotSize,
           backgroundColor: color,
-          boxShadow: status === 'working' ? `0 0 8px ${color}` : undefined,
+          boxShadow: status === 'working' || status === 'waiting'
+            ? `0 0 8px ${color}`
+            : undefined,
         }}
       />
       {showLabel && (

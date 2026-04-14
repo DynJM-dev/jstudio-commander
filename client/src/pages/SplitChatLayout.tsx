@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { X, GripVertical } from 'lucide-react';
 import { ChatPage } from './ChatPage';
+import { StatusBadge } from '../components/shared/StatusBadge';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
 import type { Session } from '@commander/shared';
@@ -42,6 +43,7 @@ export const SplitChatLayout = () => {
   const { sessionId: pmSessionId } = useParams<{ sessionId: string }>();
   const { lastEvent, subscribe } = useWebSocket();
   const [coderSessionId, setCoderSessionId] = useState<string | null>(null);
+  const [coderSession, setCoderSession] = useState<Session | null>(null);
   const [percent, setPercent] = useState<number>(DEFAULT_PERCENT);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -86,9 +88,11 @@ export const SplitChatLayout = () => {
       );
       const active = teammates.find((t) => t.status !== 'stopped');
       setCoderSessionId((prev) => {
-        if (!active) return null;
+        if (!active) { setCoderSession(null); return null; }
         // Prefer keeping the currently-shown teammate if still active
-        if (prev && teammates.some((t) => t.id === prev && t.status !== 'stopped')) return prev;
+        const keep = prev && teammates.find((t) => t.id === prev && t.status !== 'stopped');
+        if (keep) { setCoderSession(keep); return prev; }
+        setCoderSession(active);
         return active.id;
       });
     } catch { /* transient failure — next WS event will retry */ }
@@ -105,7 +109,12 @@ export const SplitChatLayout = () => {
     if (lastEvent.type === 'teammate:spawned' || lastEvent.type === 'teammate:dismissed') {
       refreshTeammates();
     }
-  }, [lastEvent, refreshTeammates]);
+    // Keep the teammate's status fresh so the tab dot can reflect working →
+    // waiting transitions without waiting for the next poll.
+    if (lastEvent.type === 'session:status' && coderSessionId === lastEvent.sessionId) {
+      setCoderSession((prev) => (prev ? { ...prev, status: lastEvent.status } : prev));
+    }
+  }, [lastEvent, refreshTeammates, coderSessionId]);
 
   // Drag-handle resize
   const onMouseDown = useCallback((e: React.MouseEvent) => {
@@ -170,7 +179,37 @@ export const SplitChatLayout = () => {
         />
       </div>
 
-      <div className="relative h-full min-h-0 overflow-hidden" style={{ width: `${100 - percent}%` }}>
+      <div className={`relative h-full min-h-0 overflow-hidden ${coderSession?.status === 'waiting' ? 'waiting-glow' : ''}`} style={{ width: `${100 - percent}%` }}>
+        {/* Teammate tab strip — name, role, and status dot. Yellow-glows the
+            whole pane (via waiting-glow) when the teammate is paused. */}
+        <div
+          className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md px-2 py-1"
+          style={{
+            background: 'rgba(0, 0, 0, 0.25)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            fontFamily: M,
+          }}
+        >
+          {coderSession && <StatusBadge status={coderSession.status} size="sm" />}
+          <span
+            className="text-xs font-semibold"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            {coderSession?.name ?? 'Teammate'}
+          </span>
+          {coderSession?.agentRole && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded"
+              style={{
+                color: 'var(--color-accent-light)',
+                background: 'rgba(14, 124, 123, 0.08)',
+              }}
+            >
+              {coderSession.agentRole}
+            </span>
+          )}
+        </div>
+
         <button
           onClick={closeCoderPane}
           className="absolute top-2 right-2 z-10 flex items-center justify-center rounded-md p-1 transition-colors"
