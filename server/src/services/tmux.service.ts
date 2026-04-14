@@ -59,8 +59,12 @@ export const tmuxService = {
   },
 
   sendKeys(name: string, keys: string): void {
-    // Use send-keys with literal text + Enter as separate args to avoid injection
-    exec(['send-keys', '-t', name, keys, 'Enter']);
+    // Send literal text with -l flag (prevents special key interpretation),
+    // then send Enter separately to ensure reliable delivery
+    if (keys) {
+      exec(['send-keys', '-t', name, '-l', keys]);
+    }
+    exec(['send-keys', '-t', name, 'Enter']);
   },
 
   sendRawKey(name: string, key: string): void {
