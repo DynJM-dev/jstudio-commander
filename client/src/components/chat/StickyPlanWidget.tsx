@@ -67,7 +67,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
         const entry = entries[0];
         if (entry) setInlineVisible(entry.isIntersecting);
       },
-      { threshold: 0.1 },
+      { threshold: 0.5 },
     );
     observer.observe(target);
     observerRef.current = observer;
