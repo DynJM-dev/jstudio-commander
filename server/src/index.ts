@@ -117,6 +117,32 @@ teamConfigService.start();
     }
   }
 
+  // 1b. Heal UUID-shaped session IDs (the PM/lead pattern): when a row's id
+  // is a Claude UUID and claude_session_id is empty, backfill it so future
+  // hook events match via the fast path instead of fighting over cwd.
+  const uuidShaped = db.prepare(
+    "SELECT id FROM sessions WHERE claude_session_id IS NULL AND id LIKE '________-____-____-____-____________'"
+  ).all() as Array<{ id: string }>;
+  for (const row of uuidShaped) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id)) continue;
+    db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ? AND claude_session_id IS NULL')
+      .run(row.id, row.id);
+  }
+
+  // 1c. Clear stale transcript_path entries that point to a JSONL whose
+  // UUID doesn't match the row's claude_session_id — collateral damage from
+  // the old cwd-matching hook route. Cleared rows will re-link on next hook.
+  const misaligned = db.prepare(
+    "SELECT id, claude_session_id, transcript_path FROM sessions WHERE transcript_path IS NOT NULL AND claude_session_id IS NOT NULL"
+  ).all() as Array<{ id: string; claude_session_id: string; transcript_path: string }>;
+  for (const row of misaligned) {
+    const name = row.transcript_path.split('/').pop()?.replace(/\.jsonl$/, '') ?? '';
+    if (name !== row.claude_session_id) {
+      db.prepare('UPDATE sessions SET transcript_path = NULL WHERE id = ?').run(row.id);
+      console.log(`[startup] cleared stale transcript_path on ${row.id.slice(0, 30)}`);
+    }
+  }
+
   // 2. Discover orphaned jsc- tmux sessions not in the DB
   const liveTmuxSessions = tmux.listSessions().filter((s) => s.name.startsWith('jsc-'));
   const knownTmuxNames = new Set(

@@ -15,8 +15,9 @@ export const chatRoutes = async (app: FastifyInstance) => {
     const offset = parseInt(request.query.offset ?? '0', 10);
 
     const db = getDb();
-    const session = db.prepare('SELECT project_path, transcript_path, created_at FROM sessions WHERE id = ?')
-      .get(sessionId) as { project_path: string | null; transcript_path: string | null; created_at: string } | undefined;
+    const session = db.prepare(
+      'SELECT project_path, transcript_path, created_at, parent_session_id FROM sessions WHERE id = ?'
+    ).get(sessionId) as { project_path: string | null; transcript_path: string | null; created_at: string; parent_session_id: string | null } | undefined;
 
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });
@@ -29,16 +30,15 @@ export const chatRoutes = async (app: FastifyInstance) => {
     // Use stored transcript_path from hooks (exact JSONL file for THIS session)
     let jsonlFile = session.transcript_path;
 
-    // If no transcript_path yet (hook hasn't fired), try to find a JSONL file
-    // that was modified AFTER this session was created — catches new sessions
-    // before the first hook fires
-    if (!jsonlFile) {
-      const sessionCreated = new Date(session.created_at).getTime() - 5000; // 5s buffer
+    // Teammates share their parent's cwd, so the recent-file heuristic would
+    // mis-attribute the parent's JSONL to the teammate. Skip the fallback for
+    // teammate rows; wait for the hook to link the real transcript_path.
+    if (!jsonlFile && !session.parent_session_id) {
+      const sessionCreated = new Date(session.created_at).getTime() - 5000;
       const files = jsonlDiscoveryService.findSessionFiles(session.project_path);
       const recentFile = files.find((f) => f.modifiedAt.getTime() >= sessionCreated);
       if (recentFile) {
         jsonlFile = recentFile.filePath;
-        // Store it so future requests don't need to scan
         db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ?')
           .run(recentFile.filePath, sessionId);
       }
@@ -69,27 +69,30 @@ export const chatRoutes = async (app: FastifyInstance) => {
       const { sessionId } = request.params;
 
       const db = getDb();
-      const session = db.prepare('SELECT id, project_path, transcript_path, created_at FROM sessions WHERE id = ?')
-        .get(sessionId) as { id: string; project_path: string | null; transcript_path: string | null; created_at: string } | undefined;
+      const session = db.prepare(
+        'SELECT id, project_path, transcript_path, created_at, parent_session_id FROM sessions WHERE id = ?'
+      ).get(sessionId) as { id: string; project_path: string | null; transcript_path: string | null; created_at: string; parent_session_id: string | null } | undefined;
 
       if (!session) {
         return reply.status(404).send({ error: 'Session not found' });
       }
 
       if (!session.project_path) {
-        return { totalTokens: 0, totalCost: 0, byModel: {} };
+        return { totalTokens: 0, totalCost: 0, contextTokens: 0, contextCost: 0, byModel: {} };
       }
 
-      // Use stored transcript_path, or discover recent file
+      // Use stored transcript_path, or discover recent file — but skip the
+      // discovery for teammates (would return the parent's JSONL, since they
+      // share a cwd). Wait for the hook-event to link the real path.
       let jsonlFile = session.transcript_path;
-      if (!jsonlFile) {
+      if (!jsonlFile && !session.parent_session_id) {
         const sessionCreated = new Date(session.created_at).getTime() - 5000;
         const files = jsonlDiscoveryService.findSessionFiles(session.project_path);
         const recentFile = files.find((f) => f.modifiedAt.getTime() >= sessionCreated);
         jsonlFile = recentFile?.filePath ?? null;
       }
       if (!jsonlFile) {
-        return { totalTokens: 0, totalCost: 0, byModel: {} };
+        return { totalTokens: 0, totalCost: 0, contextTokens: 0, contextCost: 0, byModel: {} };
       }
 
       const allMessages = jsonlParserService.parseFile(jsonlFile);
