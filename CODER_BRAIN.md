@@ -1,7 +1,30 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — pre-compaction dump, 42 Coder-7 commits
+> Last updated: 2026-04-14 — Coder-7 shutdown, 48 commits total
 > Coder: Coder-7 (Opus 4.6, 1M context)
+
+## NOTES FOR CODER-8 (READ FIRST)
+
+### Verification sweep was started but NOT executed
+PM requested a 50-item verification sweep right before shutdown. I created the task but did NOT run the tests before being asked for the brain dump. Coder-8 should:
+1. Run the full 50-item verification sweep (see PM's message with all 50 items)
+2. Restart the server first (`lsof -ti:3002 | xargs kill -9 && cd server && npx tsx src/index.ts &>/tmp/jsc-server.log &`)
+3. Test each item with actual curl/browser checks, not just code reading
+4. Fix anything that fails
+
+### What was just committed that needs manual server restart to take effect
+- `fa6380d` — **Chat API pagination fix** (last 28 messages were missing when total > 200)
+- `fa6380d` — **Agent/Skill tool_use rendering** in AssistantMessage
+- `fa6380d` — **Richer terminal hints** (Explore, Agent, Skill, deep thinking with duration)
+- `fb25ec4` — **8s idle cooldown** + more active indicators
+- `fb25ec4` — **Long message truncation** (300 chars + Show more/less)
+
+### Most recent active session
+- ID: `5482eb18-096c-4fdd-a6f9-7c2a4c6cf4bf`
+- Name: GG1
+- Project: ~/Desktop/Projects/GrandGaming
+- tmux: `jsc-5482eb18`
+- This session has hooks firing (PostToolUse events in logs)
 
 ## CRITICAL LESSONS
 
@@ -68,6 +91,11 @@ lsof -ti:3002 | xargs kill -9; cd server && npx tsx src/index.ts &>/tmp/jsc-serv
 | `453beb1` | sendKeys uses -l flag for literal text + separate Enter call |
 | `c56e40d` | Polling dedup: ID set comparison (replaced next commit) |
 | `1459423` | Simplified polling: count + last ID compare, server is source of truth |
+| `d350e39` | Pre-compaction state dump |
+| `a1a0a9d` | Live activity indicator at bottom of ChatThread |
+| `e2b7f77` | userJustSent no longer clears prematurely when session is working |
+| `fb25ec4` | Long message truncation (300 chars) + 8s idle cooldown + more active indicators |
+| `fa6380d` | **CRITICAL: Chat API pagination fix** (last N not first N) + richer terminal hints + Agent/Skill rendering |
 
 ## File Inventory
 
@@ -134,6 +162,9 @@ lsof -ti:3002 | xargs kill -9; cd server && npx tsx src/index.ts &>/tmp/jsc-serv
 10. **Effort command collision** — /effort concatenated with next message → await before allowing next send
 11. **Raw XML in chat** — <command-name> tags from /effort → filtered in ChatThread grouping
 12. **First message not appearing** — local message created after API await → moved before API call
+13. **Newest messages missing from chat** — `slice(offset, offset+limit)` with offset=0 returned FIRST 200 not LAST 200. With >200 messages, newest ones never rendered. Fixed in chat.routes.ts: `offset === 0 && total > limit ? slice(total - limit) : slice(offset, offset+limit)`
+14. **userJustSent clearing too early** — was clearing when session was already working, making "Queued" flash and disappear. Now only clears when new assistant messages arrive.
+15. **Status flashing idle during edits** — Claude pauses briefly between tool calls, status poller detected idle. Increased cooldown to 8s (2 poll cycles). Added more active indicators (Hullaballoo, Cogitat, Brewed, Crunching, ⏺, ✶).
 
 ## Notes for Next Coder
 
