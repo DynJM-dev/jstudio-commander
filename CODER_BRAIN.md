@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — full state audit after post-v1 polish (Coder-3 through Coder-6 + PM fixes)
+> Last updated: 2026-04-14 — 6 chat view fixes (spacing, StatusStrip, ContextBar, user icon, timeline dots)
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -30,6 +30,8 @@
 | `9f87287` | Coder-4 | Fix chat layout overflow (sidebar stays fixed), avatars, thinking animations, tool call status icons |
 | `eab3d3d` | Coder-5 | First chat redesign: flat timeline layout, no bubbles |
 | `a1dd129` | Coder-6 | Final chat rebuild: UserMessage, AssistantMessage, StatusStrip, ContextBar, ResponseSummary, glass code blocks, compact tool calls, rich input |
+| `e768815` | Coder-7 | State files audit, CSS @import fix |
+| `6af9ae5` | Coder-7 | 6 chat fixes: spacing, StatusStrip auto-clear, varied status text, ContextBar model limits, Crown icon, timeline dots |
 
 ## File Inventory
 
