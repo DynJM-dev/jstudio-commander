@@ -1,16 +1,19 @@
-import type { ReactNode, ReactElement } from 'react';
-import { cloneElement, isValidElement } from 'react';
+import type { ReactNode } from 'react';
 import { CodeBlock } from '../components/chat/CodeBlock';
 
+const M = 'Montserrat, sans-serif';
+
 const CODE_FENCE_RE = /```(\w*)\n([\s\S]*?)```/g;
+const NUMBERED_LIST_RE = /^(\d+)\.\s+/;
 
 interface TextSegment {
-  type: 'text' | 'code_block';
+  type: 'text' | 'code_block' | 'plan';
   content: string;
   language?: string;
+  items?: string[];
 }
 
-const splitCodeBlocks = (text: string): TextSegment[] => {
+const splitSegments = (text: string): TextSegment[] => {
   const segments: TextSegment[] = [];
   let lastIndex = 0;
 
@@ -34,7 +37,71 @@ const splitCodeBlocks = (text: string): TextSegment[] => {
     segments.push({ type: 'text', content: text.slice(lastIndex) });
   }
 
-  return segments;
+  // Post-process text segments to extract numbered plans
+  const result: TextSegment[] = [];
+  for (const seg of segments) {
+    if (seg.type !== 'text') {
+      result.push(seg);
+      continue;
+    }
+
+    // Split text segment into plan blocks and non-plan text
+    const lines = seg.content.split('\n');
+    let planItems: string[] = [];
+    let textLines: string[] = [];
+
+    const flushText = () => {
+      if (textLines.length > 0) {
+        const content = textLines.join('\n');
+        if (content.trim()) result.push({ type: 'text', content });
+        textLines = [];
+      }
+    };
+
+    const flushPlan = () => {
+      if (planItems.length > 0) {
+        result.push({ type: 'plan', content: '', items: planItems });
+        planItems = [];
+      }
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (NUMBERED_LIST_RE.test(trimmed)) {
+        // Check if this starts or continues a numbered list (3+ items = plan)
+        flushText();
+        planItems.push(trimmed.replace(NUMBERED_LIST_RE, '').trim());
+      } else if (planItems.length > 0 && trimmed === '') {
+        // Empty line after numbered items — could be end of plan
+        continue;
+      } else if (planItems.length > 0 && !NUMBERED_LIST_RE.test(trimmed)) {
+        // Non-numbered line after items — flush plan if 3+ items, else dump as text
+        if (planItems.length >= 3) {
+          flushPlan();
+        } else {
+          // Not enough items — treat as regular text
+          textLines.push(...planItems.map((item, i) => `${i + 1}. ${item}`));
+          planItems = [];
+        }
+        textLines.push(line);
+      } else {
+        textLines.push(line);
+      }
+    }
+
+    // Flush remaining
+    if (planItems.length >= 3) {
+      flushText();
+      flushPlan();
+    } else if (planItems.length > 0) {
+      textLines.push(...planItems.map((item, i) => `${i + 1}. ${item}`));
+      flushText();
+    } else {
+      flushText();
+    }
+  }
+
+  return result;
 };
 
 const renderInlineFormatting = (text: string, keyPrefix: string): ReactNode[] => {
@@ -87,14 +154,54 @@ const renderTextSegment = (text: string, keyPrefix: string): ReactNode[] => {
   return nodes;
 };
 
+const PlanCard = ({ items, keyPrefix }: { items: string[]; keyPrefix: string }) => (
+  <div
+    className="rounded-lg my-2 overflow-hidden"
+    style={{
+      fontFamily: M,
+      background: 'rgba(14, 124, 123, 0.06)',
+      border: '1px solid rgba(14, 124, 123, 0.15)',
+    }}
+  >
+    <div
+      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold"
+      style={{
+        color: 'var(--color-accent-light)',
+        borderBottom: '1px solid rgba(14, 124, 123, 0.1)',
+      }}
+    >
+      Plan
+    </div>
+    <div className="px-3 py-2 space-y-1">
+      {items.map((item, i) => (
+        <div
+          key={`${keyPrefix}-pi${i}`}
+          className="flex items-start gap-2 text-sm"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          <span
+            className="shrink-0 mt-1 w-1.5 h-1.5 rounded-full"
+            style={{ background: 'var(--color-accent)' }}
+          />
+          <span>{renderInlineFormatting(item, `${keyPrefix}-pi${i}`)}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 export const renderTextContent = (text: string): ReactNode[] => {
-  const segments = splitCodeBlocks(text);
+  const segments = splitSegments(text);
   const nodes: ReactNode[] = [];
 
   segments.forEach((seg, i) => {
     if (seg.type === 'code_block') {
       nodes.push(
         <CodeBlock key={`cb${i}`} code={seg.content} language={seg.language} />
+      );
+    } else if (seg.type === 'plan' && seg.items) {
+      nodes.push(
+        <PlanCard key={`pl${i}`} items={seg.items} keyPrefix={`pl${i}`} />
       );
     } else {
       nodes.push(

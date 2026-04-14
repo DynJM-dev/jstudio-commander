@@ -107,18 +107,21 @@ export const fileWatcherService = {
     jsonlWatcher.on('add', handleJsonlEvent);
 
     // Watch project directories for STATE.md / PM_HANDOFF.md changes
-    const projectGlobs = config.projectDirs.map((d) => `${d}/*/{STATE,PM_HANDOFF}.md`);
-    if (projectGlobs.length > 0) {
+    // Watch each project dir with depth:1 to avoid scanning node_modules/dist/etc
+    if (config.projectDirs.length > 0) {
       console.log(`[watcher] Watching project files in ${config.projectDirs.join(', ')}`);
 
-      projectWatcher = watch(projectGlobs, {
+      projectWatcher = watch(config.projectDirs, {
         persistent: true,
         ignoreInitial: true,
+        depth: 1,
+        ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
         awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
       });
 
       projectWatcher.on('change', (filePath: string) => {
         const name = basename(filePath);
+        if (name !== 'STATE.md' && name !== 'PM_HANDOFF.md') return;
         const type = name === 'STATE.md' ? 'state' : 'handoff';
         for (const handler of projectHandlers) {
           try {
