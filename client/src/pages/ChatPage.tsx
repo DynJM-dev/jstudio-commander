@@ -24,8 +24,8 @@ const SLASH_COMMANDS = [
 export const ChatPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
-  const { messages, loading, error, hasMore, stats, loadMore } = useChat(sessionId);
   const [session, setSession] = useState<Session | null>(null);
+  const { messages, loading, error, hasMore, stats, loadMore } = useChat(sessionId, session?.status);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [command, setCommand] = useState('');
   const [sent, setSent] = useState(false);
@@ -122,7 +122,7 @@ export const ChatPage = () => {
   const allMessages = [...messages, ...pendingLocal];
 
   // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
-  const { prompt, clearPrompt } = usePromptDetection(
+  const { prompt, terminalHint, clearPrompt } = usePromptDetection(
     sessionId,
     session?.status,
     allMessages.length,
@@ -183,6 +183,7 @@ export const ChatPage = () => {
         totalCost={stats?.totalCost ?? 0}
         messages={allMessages}
         sessionStatus={session?.status}
+        terminalHint={terminalHint}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

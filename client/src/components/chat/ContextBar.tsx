@@ -89,9 +89,10 @@ interface ContextBarProps {
   totalCost: number;
   messages: ChatMessage[];
   sessionStatus?: string;
+  terminalHint?: string | null;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -106,8 +107,10 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
   const showWarning = contextPercent > 85;
 
   // Derive action status when session is working
+  // Priority: JSONL-derived action > terminal hint > null
   const isWorking = sessionStatus === 'working';
-  const actionLabel = isWorking ? getActionLabel(messages) : null;
+  const jsonlAction = isWorking ? getActionLabel(messages) : null;
+  const actionLabel = jsonlAction ?? (isWorking ? terminalHint : null) ?? null;
 
   // Track when the current response started (last user message timestamp)
   const responseStartRef = useRef<number>(0);

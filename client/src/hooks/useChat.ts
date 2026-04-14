@@ -25,7 +25,7 @@ interface ChatResponse {
 
 const PAGE_SIZE = 200;
 
-export const useChat = (sessionId: string | undefined): UseChatReturn => {
+export const useChat = (sessionId: string | undefined, sessionStatus?: string): UseChatReturn => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -120,9 +120,12 @@ export const useChat = (sessionId: string | undefined): UseChatReturn => {
     }
   }, [lastEvent, sessionId]);
 
-  // Polling fallback — fetch new messages + stats every 3s
+  // Adaptive polling — fast when working (1.5s), slow when idle (5s)
   useEffect(() => {
     if (!sessionId || loading) return;
+
+    const isActive = sessionStatus === 'working' || sessionStatus === 'waiting';
+    const pollInterval = isActive ? 1500 : 5000;
 
     const poll = async () => {
       try {
@@ -143,9 +146,12 @@ export const useChat = (sessionId: string | undefined): UseChatReturn => {
       }
     };
 
-    const interval = setInterval(poll, 3000);
+    // Fire immediately on status change to working
+    if (isActive) poll();
+
+    const interval = setInterval(poll, pollInterval);
     return () => clearInterval(interval);
-  }, [sessionId, loading]);
+  }, [sessionId, loading, sessionStatus]);
 
   const hasMore = messages.length < total;
 
