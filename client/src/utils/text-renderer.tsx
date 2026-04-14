@@ -1,9 +1,8 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, ReactElement } from 'react';
+import { cloneElement, isValidElement } from 'react';
 import { CodeBlock } from '../components/chat/CodeBlock';
 
 const CODE_FENCE_RE = /```(\w*)\n([\s\S]*?)```/g;
-const INLINE_CODE_RE = /`([^`\n]+)`/g;
-const BOLD_RE = /\*\*(.+?)\*\*/g;
 
 interface TextSegment {
   type: 'text' | 'code_block';
@@ -38,9 +37,8 @@ const splitCodeBlocks = (text: string): TextSegment[] => {
   return segments;
 };
 
-const renderInlineFormatting = (text: string): ReactNode[] => {
+const renderInlineFormatting = (text: string, keyPrefix: string): ReactNode[] => {
   const nodes: ReactNode[] = [];
-  // Combined pass: split on bold and inline code patterns
   const COMBINED_RE = /(\*\*(.+?)\*\*)|(`([^`\n]+)`)/g;
   let lastIdx = 0;
   let idx = 0;
@@ -50,16 +48,14 @@ const renderInlineFormatting = (text: string): ReactNode[] => {
 
   while (m) {
     if (m.index > lastIdx) {
-      nodes.push(<span key={`t${idx++}`}>{text.slice(lastIdx, m.index)}</span>);
+      nodes.push(<span key={`${keyPrefix}-t${idx++}`}>{text.slice(lastIdx, m.index)}</span>);
     }
     if (m[2]) {
-      // Bold
-      nodes.push(<strong key={`b${idx++}`}>{m[2]}</strong>);
+      nodes.push(<strong key={`${keyPrefix}-b${idx++}`}>{m[2]}</strong>);
     } else if (m[4]) {
-      // Inline code
       nodes.push(
         <code
-          key={`c${idx++}`}
+          key={`${keyPrefix}-c${idx++}`}
           className="font-mono-stats text-[0.9em] px-1 py-0.5 rounded"
           style={{ background: 'rgba(255, 255, 255, 0.06)' }}
         >
@@ -72,10 +68,10 @@ const renderInlineFormatting = (text: string): ReactNode[] => {
   }
 
   if (lastIdx < text.length) {
-    nodes.push(<span key={`t${idx}`}>{text.slice(lastIdx)}</span>);
+    nodes.push(<span key={`${keyPrefix}-t${idx}`}>{text.slice(lastIdx)}</span>);
   }
 
-  return nodes.length > 0 ? nodes : [<span key="raw">{text}</span>];
+  return nodes;
 };
 
 const renderTextSegment = (text: string, keyPrefix: string): ReactNode[] => {
@@ -84,11 +80,8 @@ const renderTextSegment = (text: string, keyPrefix: string): ReactNode[] => {
 
   lines.forEach((line, i) => {
     if (i > 0) nodes.push(<br key={`${keyPrefix}-br${i}`} />);
-    const inline = renderInlineFormatting(line);
-    nodes.push(...inline.map((n, j) => {
-      if (typeof n === 'string') return <span key={`${keyPrefix}-${i}-${j}`}>{n}</span>;
-      return n;
-    }));
+    const inline = renderInlineFormatting(line, `${keyPrefix}-${i}`);
+    nodes.push(...inline);
   });
 
   return nodes;

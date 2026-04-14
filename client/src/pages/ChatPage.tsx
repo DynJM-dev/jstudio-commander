@@ -5,7 +5,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import type { ChatMessage } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
-import { StatusBadge } from '../components/shared/StatusBadge';
 import { ChatThread } from '../components/chat/ChatThread';
 import { ContextBar } from '../components/chat/ContextBar';
 
@@ -145,38 +144,7 @@ export const ChatPage = () => {
   return (
     <div className="flex flex-col h-full pb-24 lg:pb-0 overflow-hidden" style={{ fontFamily: M }}>
 
-      {/* Session info bar */}
-      <div
-        className="shrink-0 flex items-center justify-between px-4 lg:px-6 py-2"
-        style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          {session && (
-            <>
-              <StatusBadge status={session.status} showLabel size="sm" />
-              {session.projectPath && (
-                <span
-                  className="font-mono-stats text-xs truncate max-w-[250px] hidden md:inline-block"
-                  style={{ color: 'var(--color-text-tertiary)' }}
-                >
-                  {session.projectPath.replace(/^\/Users\/[^/]+\//, '~/')}
-                </span>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Context bar — fixed top: model, action status, tokens, cost, elapsed time, context % */}
-      <ContextBar
-        model={session?.model}
-        totalTokens={totalTokens}
-        totalCost={stats?.totalCostUsd ?? 0}
-        messages={allMessages}
-        sessionStatus={session?.status}
-      />
-
-      {/* Chat area */}
+      {/* Chat area — full height, no header bars */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <Loader2 size={24} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
@@ -200,11 +168,19 @@ export const ChatPage = () => {
         <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
       )}
 
+      {/* ContextBar — above input */}
+      <ContextBar
+        model={session?.model}
+        totalTokens={totalTokens}
+        totalCost={stats?.totalCostUsd ?? 0}
+        messages={allMessages}
+        sessionStatus={session?.status}
+      />
+
       {/* Input area — glass surface, fixed bottom */}
       {session && session.status !== 'stopped' && (
         <div
           className="shrink-0 px-3 lg:px-6 py-2.5"
-          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         >
           {/* Slash command dropdown */}
           <AnimatePresence>
