@@ -8,6 +8,10 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 // In-memory cache of last known statuses to avoid unnecessary DB writes
 const lastKnownStatus = new Map<string, SessionStatus>();
+// Cooldown: when transitioning working → idle, wait before committing
+// Prevents flickering when Claude pauses briefly between tool calls
+const idleSince = new Map<string, number>();
+const IDLE_COOLDOWN_MS = 8000; // 8 seconds (2 poll cycles) before confirming idle
 
 const poll = (): void => {
   const db = getDb();
@@ -25,6 +29,25 @@ const poll = (): void => {
     if (!newStatus) continue;
 
     const cachedStatus = lastKnownStatus.get(session.id) ?? session.status;
+
+    // Cooldown: working → idle/waiting requires sustained idle state
+    if (cachedStatus === 'working' && (newStatus === 'idle' || newStatus === 'waiting')) {
+      const now = Date.now();
+      if (!idleSince.has(session.id)) {
+        // First detection of idle — start the cooldown
+        idleSince.set(session.id, now);
+        continue; // Don't update yet
+      }
+      const elapsed = now - idleSince.get(session.id)!;
+      if (elapsed < IDLE_COOLDOWN_MS) {
+        continue; // Still in cooldown — keep showing working
+      }
+      // Cooldown passed — commit the idle transition
+      idleSince.delete(session.id);
+    } else {
+      // Not a working→idle transition — clear any pending cooldown
+      idleSince.delete(session.id);
+    }
 
     if (newStatus !== cachedStatus) {
       // Update DB

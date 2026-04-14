@@ -1,11 +1,13 @@
 import type { SessionStatus } from '@commander/shared';
 import { tmuxService } from './tmux.service.js';
 
-const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻';
+const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✶⏺';
 const ACTIVE_INDICATORS = [
   /Thinking/i, /Nesting/i, /Running \d+/i, /\d+%/,
   /Reading \d+/i, /Searching/i, /Editing/i, /Writing/i,
   /esc to interrupt/i, /ctrl\+b/i,
+  /Hullaballoo/i, /Cogitat/i, /Brewed/i, /Crunching/i, // Claude thinking verbs
+  /tool uses?/i, /tokens?\)/i, // "35 tool uses · 108.4k tokens"
   /\.{3}$/, // trailing "..." indicates in-progress
 ];
 const IDLE_INDICATORS = [
