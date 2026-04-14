@@ -34,6 +34,14 @@ export const getDb = (): Database.Database => {
     db.exec("ALTER TABLE sessions ADD COLUMN effort_level TEXT DEFAULT 'medium'");
     console.log('[db] Migration: added effort_level column to sessions');
   }
+  if (!cols.some((c) => c.name === 'parent_session_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN parent_session_id TEXT');
+    console.log('[db] Migration: added parent_session_id column to sessions');
+  }
+  if (!cols.some((c) => c.name === 'team_name')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN team_name TEXT');
+    console.log('[db] Migration: added team_name column to sessions');
+  }
 
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;

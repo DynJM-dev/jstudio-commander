@@ -15,6 +15,8 @@ import { terminalRoutes } from './routes/terminal.routes.js';
 import { tunnelRoutes } from './routes/tunnel.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { hookEventRoutes } from './routes/hook-event.routes.js';
+import { teammatesRoutes } from './routes/teammates.routes.js';
+import { teamConfigService } from './services/team-config.service.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
 import { pinAuthMiddleware } from './middleware/pin-auth.js';
@@ -66,6 +68,7 @@ await app.register(terminalRoutes);
 await app.register(tunnelRoutes);
 await app.register(authRoutes);
 await app.register(hookEventRoutes);
+await app.register(teammatesRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
@@ -76,6 +79,9 @@ setupWatcherBridge();
 
 // Start status poller
 statusPollerService.start();
+
+// Watch team config files and emit teammate:spawned / teammate:dismissed
+teamConfigService.start();
 
 // Startup recovery — fix stale statuses, mark gone sessions, discover orphans
 {
@@ -131,6 +137,7 @@ statusPollerService.start();
 const shutdown = async () => {
   console.log('\n[server] Shutting down...');
   statusPollerService.stop();
+  teamConfigService.stop();
   stopWebSocketTimers();
   fileWatcherService.stop();
   terminalService.cleanup();

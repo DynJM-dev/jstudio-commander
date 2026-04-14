@@ -62,6 +62,8 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   stationId: row.station_id as string | null,
   agentRole: row.agent_role as string | null,
   effortLevel: (row.effort_level as string) ?? 'medium',
+  parentSessionId: (row.parent_session_id as string | null) ?? null,
+  teamName: (row.team_name as string | null) ?? null,
 });
 
 export const sessionService = {
@@ -109,6 +111,95 @@ export const sessionService = {
     const session = this.getSession(id)!;
     eventBus.emitSessionCreated(session);
     return session;
+  },
+
+  // Register a teammate discovered from a team config file. The teammate's
+  // "tmux session" is actually a pane ID (e.g. "%35") — tmux send-keys -t <pane>
+  // works identically to send-keys -t <session>, so we store it directly.
+  // Idempotent: called on every config file mutation; upserts.
+  upsertTeammateSession(opts: {
+    sessionId: string;
+    name: string;
+    tmuxTarget: string;
+    projectPath: string | null;
+    role: string;
+    teamName: string;
+    parentSessionId: string | null;
+    model?: string;
+  }): Session {
+    const db = getDb();
+    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(opts.sessionId) as { id: string } | undefined;
+    const now = new Date().toISOString();
+
+    if (existing) {
+      db.prepare(`
+        UPDATE sessions
+        SET name = ?, tmux_session = ?, project_path = ?, agent_role = ?,
+            team_name = ?, parent_session_id = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        opts.name,
+        opts.tmuxTarget,
+        opts.projectPath,
+        opts.role,
+        opts.teamName,
+        opts.parentSessionId,
+        now,
+        opts.sessionId,
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO sessions (
+          id, name, tmux_session, project_path, status, model, effort_level,
+          agent_role, team_name, parent_session_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'working', ?, 'medium', ?, ?, ?, ?, ?)
+      `).run(
+        opts.sessionId,
+        opts.name,
+        opts.tmuxTarget,
+        opts.projectPath,
+        opts.model ?? 'claude-opus-4-6',
+        opts.role,
+        opts.teamName,
+        opts.parentSessionId,
+        now,
+        now,
+      );
+    }
+
+    // Record the parent/child edge in agent_relationships (idempotent).
+    if (opts.parentSessionId && opts.parentSessionId !== opts.sessionId) {
+      db.prepare(`
+        INSERT OR IGNORE INTO agent_relationships (parent_session_id, child_session_id, relationship)
+        VALUES (?, ?, 'spawned_by')
+      `).run(opts.parentSessionId, opts.sessionId);
+    }
+
+    const session = this.getSession(opts.sessionId)!;
+    eventBus.emitSessionUpdated(session);
+    return session;
+  },
+
+  markTeammateDismissed(sessionId: string): void {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?
+    `).run(now, now, sessionId);
+    db.prepare(`
+      UPDATE agent_relationships SET ended_at = ? WHERE child_session_id = ? AND ended_at IS NULL
+    `).run(now, sessionId);
+  },
+
+  listTeammates(parentSessionId: string): Session[] {
+    const db = getDb();
+    const rows = db.prepare(`
+      SELECT s.* FROM sessions s
+      INNER JOIN agent_relationships r ON r.child_session_id = s.id
+      WHERE r.parent_session_id = ? AND r.ended_at IS NULL
+      ORDER BY s.created_at ASC
+    `).all(parentSessionId) as Record<string, unknown>[];
+    return rows.map((row) => rowToSession(row));
   },
 
   listSessions(): Session[] {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, ChatMessage, Project, TokenUsageEntry } from '@commander/shared';
+import type { Session, SessionStatus, ChatMessage, Project, TokenUsageEntry, Teammate } from '@commander/shared';
 
 class CommanderEventBus extends EventEmitter {
   // Session events
@@ -49,6 +49,15 @@ class CommanderEventBus extends EventEmitter {
 
   emitTunnelStopped(): void {
     this.emit('tunnel:stopped');
+  }
+
+  // Teammate events
+  emitTeammateSpawned(teammate: Teammate): void {
+    this.emit('teammate:spawned', teammate);
+  }
+
+  emitTeammateDismissed(sessionId: string): void {
+    this.emit('teammate:dismissed', sessionId);
   }
 
   // System events

@@ -1,4 +1,4 @@
-import type { Session, SessionStatus } from './session.js';
+import type { Session, SessionStatus, Teammate } from './session.js';
 import type { ChatMessage } from './chat.js';
 import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
@@ -20,7 +20,9 @@ export type WSEvent =
   | { type: 'tunnel:stopped' }
   | { type: 'tunnel:error'; error: string }
   | { type: 'system:error'; error: string }
-  | { type: 'system:heartbeat'; timestamp: string };
+  | { type: 'system:heartbeat'; timestamp: string }
+  | { type: 'teammate:spawned'; teammate: Teammate }
+  | { type: 'teammate:dismissed'; sessionId: string };
 
 export type WSCommand =
   | { type: 'terminal:input'; sessionId: string; data: string }

@@ -14,6 +14,18 @@ export interface Session {
   stationId: string | null;
   agentRole: string | null;
   effortLevel: string;
+  parentSessionId: string | null;
+  teamName: string | null;
+}
+
+export interface Teammate {
+  sessionId: string;
+  sessionName: string;
+  role: string;
+  teamName: string;
+  parentSessionId: string;
+  color?: string;
+  tmuxPaneId?: string;
 }
 
 export interface SessionEvent {

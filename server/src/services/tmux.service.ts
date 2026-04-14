@@ -78,8 +78,14 @@ export const tmuxService = {
 
   hasSession(name: string): boolean {
     try {
-      const output = exec(['has-session', '-t', name]);
-      // has-session returns empty on success, throws on failure
+      // Pane IDs (e.g. "%35") are targets for send-keys but not valid for
+      // has-session. Verify them via display-message instead; it accepts any
+      // tmux target and prints the pane_id on success.
+      if (name.startsWith('%')) {
+        const out = exec(['display-message', '-p', '-t', name, '#{pane_id}']);
+        return out === name;
+      }
+      exec(['has-session', '-t', name]);
       return true;
     } catch {
       return false;

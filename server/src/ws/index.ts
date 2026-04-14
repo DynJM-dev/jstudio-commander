@@ -64,5 +64,13 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcastAll({ type: 'system:error', error });
   });
 
+  eventBus.on('teammate:spawned', (teammate) => {
+    rooms.broadcast('sessions', { type: 'teammate:spawned', teammate });
+  });
+
+  eventBus.on('teammate:dismissed', (sessionId) => {
+    rooms.broadcast('sessions', { type: 'teammate:dismissed', sessionId });
+  });
+
   console.log('[ws] WebSocket server ready at /ws');
 };
