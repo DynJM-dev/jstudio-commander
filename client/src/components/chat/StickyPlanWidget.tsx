@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, CheckCircle2, Circle, CircleDotDashed, CircleAlert, CircleX } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PlanTask } from './AgentPlan';
@@ -30,15 +30,12 @@ interface StickyPlanWidgetProps {
 
 export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: StickyPlanWidgetProps) => {
   const [expanded, setExpanded] = useState(false);
-  const [inlineVisible, setInlineVisible] = useState(false);
   const [hiddenAfterDone, setHiddenAfterDone] = useState(false);
-  const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Reset UI state when a new plan appears.
   useEffect(() => {
     setExpanded(false);
     setHiddenAfterDone(false);
-    setInlineVisible(false);
   }, [planKey]);
 
   // Auto-hide 3s after all steps complete.
@@ -51,31 +48,6 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     return () => clearTimeout(t);
   }, [allDone, planKey]);
 
-  // Watch the inline plan card for visibility. When it scrolls into view the
-  // sticky version hides to avoid duplicating what the user is already reading.
-  useEffect(() => {
-    observerRef.current?.disconnect();
-    const target = document.querySelector<HTMLElement>(
-      `[data-plan-group-key="${CSS.escape(planKey)}"]`,
-    );
-    if (!target) {
-      setInlineVisible(false);
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry) setInlineVisible(entry.isIntersecting);
-      },
-      { threshold: 0.5 },
-    );
-    observer.observe(target);
-    observerRef.current = observer;
-    return () => observer.disconnect();
-    // Re-run when plan length changes too — the inline card mounts with the
-    // first TaskCreate, so the selector may not resolve on the first render.
-  }, [planKey, plan.length]);
-
   const completed = useMemo(() => plan.filter((t) => t.status === 'completed').length, [plan]);
   const total = plan.length;
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -84,7 +56,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     [plan],
   );
 
-  const visible = !inlineVisible && !hiddenAfterDone && total > 0;
+  const visible = !hiddenAfterDone && total > 0;
   const reduced = prefersReducedMotion();
 
   return (
