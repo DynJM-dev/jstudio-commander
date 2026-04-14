@@ -46,6 +46,28 @@ const TimestampSeparator = ({ timestamp }: { timestamp: string }) => (
   </div>
 );
 
+const SystemNote = ({ group }: { group: MessageGroup }) => {
+  const firstBlock = group.messages[0]?.content[0];
+  const text = firstBlock?.type === 'system_note'
+    ? firstBlock.text
+    : firstBlock?.type === 'text' && /interrupt/i.test(firstBlock.text)
+      ? 'Interrupted'
+      : 'System event';
+
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <div className="flex-1" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.04)' }} />
+      <span
+        className="text-xs shrink-0"
+        style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}
+      >
+        {text}
+      </span>
+      <div className="flex-1" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.04)' }} />
+    </div>
+  );
+};
+
 interface ChatThreadProps {
   messages: ChatMessage[];
   hasMore: boolean;
@@ -94,9 +116,23 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
         b.type === 'text' && /^[\s]*<(command-name|command-message|command-args|local-command-stdout)>/m.test(b.text)
       );
 
+    // Interrupt messages — render as system note, not user message
+    const isInterruptMessage = (msg: ChatMessage) =>
+      msg.role === 'user' &&
+      msg.content.length > 0 &&
+      msg.content.every((b) =>
+        b.type === 'text' && /interrupt/i.test(b.text)
+      );
+
     for (const msg of messages) {
       // Skip internal command messages (raw XML from /effort, /compact, etc.)
       if (isInternalCommand(msg)) continue;
+
+      // Convert interrupt messages to system notes
+      if (isInterruptMessage(msg)) {
+        result.push({ role: 'system', messages: [msg], timestamp: msg.timestamp });
+        continue;
+      }
 
       // Skip tool_result-only user messages — fold into current assistant group
       if (isToolResultOnly(msg)) {
@@ -287,21 +323,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
                 )}
 
                 {group.role === 'system' && (
-                  <div className="flex justify-center py-2">
-                    <span
-                      className="text-xs px-3 py-1 rounded-full"
-                      style={{
-                        fontFamily: M,
-                        background: 'rgba(255, 255, 255, 0.04)',
-                        color: 'var(--color-text-tertiary)',
-                        border: '1px solid rgba(255, 255, 255, 0.04)',
-                      }}
-                    >
-                      {group.messages[0]?.content[0]?.type === 'system_note'
-                        ? group.messages[0].content[0].text
-                        : 'System event'}
-                    </span>
-                  </div>
+                  <SystemNote group={group} />
                 )}
               </div>
             );
