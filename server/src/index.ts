@@ -96,6 +96,11 @@ teamConfigService.start();
   ).all() as Array<{ id: string; tmux_session: string; status: string }>;
 
   for (const row of activeSessions) {
+    // Teammate sessions without a real tmux target (agent: sentinel) can't
+    // be probed — leave them alone here; teamConfigService.reconcile owns
+    // their lifecycle.
+    if (row.tmux_session.startsWith('agent:')) continue;
+
     if (!tmux.hasSession(row.tmux_session)) {
       // Tmux session gone — mark as stopped
       db.prepare("UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?")

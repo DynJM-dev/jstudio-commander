@@ -132,10 +132,16 @@ export const sessionService = {
     const now = new Date().toISOString();
 
     if (existing) {
+      // If the session was previously stopped but the team config still lists
+      // them, flip back to idle — the config is the source of truth for
+      // "is this teammate currently alive?", not whatever state the poller
+      // wrote before the fix for pane-ID targets landed.
       db.prepare(`
         UPDATE sessions
         SET name = ?, tmux_session = ?, project_path = ?, agent_role = ?,
-            team_name = ?, parent_session_id = ?, updated_at = ?
+            team_name = ?, parent_session_id = ?, updated_at = ?,
+            status = CASE WHEN status = 'stopped' THEN 'idle' ELSE status END,
+            stopped_at = CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END
         WHERE id = ?
       `).run(
         opts.name,
@@ -148,11 +154,14 @@ export const sessionService = {
         opts.sessionId,
       );
     } else {
+      // New teammate row — default to idle, not working. We don't know if
+      // Claude is mid-generation; let the poller discover that on its next
+      // pass. 'idle' is the safer assumption for fresh rows.
       db.prepare(`
         INSERT INTO sessions (
           id, name, tmux_session, project_path, status, model, effort_level,
           agent_role, team_name, parent_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'working', ?, 'medium', ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, 'idle', ?, 'medium', ?, ?, ?, ?, ?)
       `).run(
         opts.sessionId,
         opts.name,
@@ -167,11 +176,14 @@ export const sessionService = {
       );
     }
 
-    // Record the parent/child edge in agent_relationships (idempotent).
+    // Record the parent/child edge. If the row already exists with an
+    // ended_at (previous dismissal), clear it — this teammate is being
+    // respawned and the listTeammates query filters on ended_at IS NULL.
     if (opts.parentSessionId && opts.parentSessionId !== opts.sessionId) {
       db.prepare(`
-        INSERT OR IGNORE INTO agent_relationships (parent_session_id, child_session_id, relationship)
+        INSERT INTO agent_relationships (parent_session_id, child_session_id, relationship)
         VALUES (?, ?, 'spawned_by')
+        ON CONFLICT(parent_session_id, child_session_id) DO UPDATE SET ended_at = NULL
       `).run(opts.parentSessionId, opts.sessionId);
     }
 

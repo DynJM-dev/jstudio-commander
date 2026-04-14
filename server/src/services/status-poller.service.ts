@@ -21,7 +21,14 @@ const poll = (): void => {
 
   if (activeSessions.length === 0) return;
 
-  const tmuxNames = activeSessions.map((s) => s.tmux_session);
+  // Teammates with no discoverable tmux target (config had an empty
+  // tmuxPaneId) are stored with an "agent:" sentinel. There's nothing to
+  // probe via tmux so the poller must NOT touch them — leave their status
+  // to whatever hook events or explicit API calls set.
+  const pollable = activeSessions.filter((s) => !s.tmux_session.startsWith('agent:'));
+  if (pollable.length === 0) return;
+
+  const tmuxNames = pollable.map((s) => s.tmux_session);
   const statuses = agentStatusService.detectStatusBatch(tmuxNames);
 
   for (const session of activeSessions) {
