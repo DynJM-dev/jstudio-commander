@@ -1,9 +1,12 @@
+import { useMemo } from 'react';
 import { Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCallBlock } from './ToolCallBlock';
+import { AgentPlan } from './AgentPlan';
+import type { PlanTask } from './AgentPlan';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -38,6 +41,9 @@ const renderBlock = (
       return <ThinkingBlock key={key} text={block.text} />;
 
     case 'tool_use': {
+      // TaskCreate/TaskUpdate are rendered as AgentPlan — skip here
+      if (block.name === 'TaskCreate' || block.name === 'TaskUpdate') return null;
+
       const result = toolResults.get(block.id);
       return (
         <ToolCallBlock
@@ -66,10 +72,70 @@ const renderBlock = (
   }
 };
 
+// Build a task plan from TaskCreate/TaskUpdate tool calls in the message group
+const buildPlanTasks = (messages: ChatMessage[]): PlanTask[] => {
+  const tasks = new Map<string, PlanTask>();
+  let autoId = 1;
+
+  for (const msg of messages) {
+    for (const block of msg.content) {
+      if (block.type !== 'tool_use') continue;
+
+      if (block.name === 'TaskCreate') {
+        const id = String(autoId++);
+        const input = block.input as { subject?: string; description?: string };
+        tasks.set(id, {
+          id,
+          title: input.subject ?? 'Task',
+          description: input.description,
+          status: 'pending',
+        });
+      }
+
+      if (block.name === 'TaskUpdate') {
+        const input = block.input as { taskId?: string; status?: string; subject?: string };
+        const taskId = input.taskId;
+        if (taskId && tasks.has(taskId)) {
+          const task = tasks.get(taskId)!;
+          if (input.status) {
+            task.status = input.status as PlanTask['status'];
+          }
+          if (input.subject) {
+            task.title = input.subject;
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(tasks.values());
+};
+
 export const AssistantMessage = ({ messages, toolResults }: AssistantMessageGroupProps) => {
   const reduced = prefersReducedMotion();
   const firstMsg = messages[0];
   if (!firstMsg) return null;
+
+  // Build plan from TaskCreate/TaskUpdate calls
+  const planTasks = useMemo(() => buildPlanTasks(messages), [messages]);
+  const hasPlan = planTasks.length > 0;
+
+  // Find where to insert the plan (after the first TaskCreate block)
+  const firstTaskCreateIdx = useMemo(() => {
+    let blockCount = 0;
+    for (const msg of messages) {
+      for (const block of msg.content) {
+        if (block.type === 'tool_use' && block.name === 'TaskCreate') {
+          return blockCount;
+        }
+        blockCount++;
+      }
+    }
+    return -1;
+  }, [messages]);
+
+  let planInserted = false;
+  let globalBlockIdx = 0;
 
   return (
     <motion.div
@@ -104,9 +170,20 @@ export const AssistantMessage = ({ messages, toolResults }: AssistantMessageGrou
       {/* All content blocks from all messages in the group */}
       <div className="space-y-0.5">
         {messages.map((msg, mi) =>
-          msg.content.map((block, bi) =>
-            renderBlock(block, `${mi}-${bi}`, toolResults)
-          )
+          msg.content.map((block, bi) => {
+            const idx = globalBlockIdx++;
+            const rendered = renderBlock(block, `${mi}-${bi}`, toolResults);
+
+            // Insert AgentPlan at the first TaskCreate position
+            if (hasPlan && !planInserted && idx === firstTaskCreateIdx) {
+              planInserted = true;
+              return (
+                <AgentPlan key={`plan-${mi}-${bi}`} tasks={planTasks} title="Tasks" />
+              );
+            }
+
+            return rendered;
+          })
         )}
       </div>
     </motion.div>

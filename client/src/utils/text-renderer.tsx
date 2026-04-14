@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { CodeBlock } from '../components/chat/CodeBlock';
+import { AgentPlan } from '../components/chat/AgentPlan';
+import type { PlanTask } from '../components/chat/AgentPlan';
 
 const M = 'Montserrat, sans-serif';
 
@@ -154,109 +156,26 @@ const renderTextSegment = (text: string, keyPrefix: string): ReactNode[] => {
   return nodes;
 };
 
-interface PlanItem {
-  text: string;
-  done: boolean;
-}
-
-const parsePlanItem = (raw: string): PlanItem => {
-  // Check for completion markers
+const parsePlanStatus = (raw: string): { text: string; done: boolean } => {
   const trimmed = raw.trim();
-
-  // ✅ or ✓ prefix
-  if (/^[✅✓]/.test(trimmed)) {
-    return { text: trimmed.replace(/^[✅✓]\s*/, ''), done: true };
-  }
-
-  // ~~strikethrough~~ anywhere
-  if (/~~.+~~/.test(trimmed)) {
-    return { text: trimmed.replace(/~~/g, ''), done: true };
-  }
-
-  // Trailing " ✓", " ✅", " — done", " — complete", " (done)", " (complete)"
+  if (/^[✅✓]/.test(trimmed)) return { text: trimmed.replace(/^[✅✓]\s*/, ''), done: true };
+  if (/~~.+~~/.test(trimmed)) return { text: trimmed.replace(/~~/g, ''), done: true };
   if (/\s*[✓✅]\s*$/.test(trimmed) || /\s*[—-]\s*(done|complete|completed)\s*$/i.test(trimmed) || /\s*\((done|complete|completed)\)\s*$/i.test(trimmed)) {
-    const cleaned = trimmed
-      .replace(/\s*[✓✅]\s*$/, '')
-      .replace(/\s*[—-]\s*(done|complete|completed)\s*$/i, '')
-      .replace(/\s*\((done|complete|completed)\)\s*$/i, '');
+    const cleaned = trimmed.replace(/\s*[✓✅]\s*$/, '').replace(/\s*[—-]\s*(done|complete|completed)\s*$/i, '').replace(/\s*\((done|complete|completed)\)\s*$/i, '');
     return { text: cleaned, done: true };
   }
-
   return { text: trimmed, done: false };
 };
 
-const PlanCard = ({ items, keyPrefix }: { items: string[]; keyPrefix: string }) => {
-  const parsed = items.map(parsePlanItem);
-  const doneCount = parsed.filter((p) => p.done).length;
-  const total = parsed.length;
-  const progressPercent = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-
-  return (
-    <div
-      className="rounded-lg my-2 overflow-hidden"
-      style={{
-        fontFamily: M,
-        background: 'rgba(14, 124, 123, 0.06)',
-        border: '1px solid rgba(14, 124, 123, 0.15)',
-      }}
-    >
-      {/* Header with progress */}
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold"
-        style={{
-          color: 'var(--color-accent-light)',
-          borderBottom: '1px solid rgba(14, 124, 123, 0.1)',
-        }}
-      >
-        <span>Plan</span>
-        <span className="flex-1" />
-        {doneCount > 0 && (
-          <>
-            <span
-              className="font-mono-stats text-xs"
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              {doneCount}/{total}
-            </span>
-            <div
-              className="w-12 h-1.5 rounded-full overflow-hidden"
-              style={{ background: 'rgba(255, 255, 255, 0.08)' }}
-            >
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${progressPercent}%`,
-                  background: progressPercent === 100 ? 'var(--color-working)' : 'var(--color-accent)',
-                }}
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Items */}
-      <div className="px-3 py-2 space-y-1">
-        {parsed.map((item, i) => (
-          <div
-            key={`${keyPrefix}-pi${i}`}
-            className="flex items-start gap-2 text-sm"
-            style={{ color: item.done ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)' }}
-          >
-            {item.done ? (
-              <span className="shrink-0 text-xs mt-px" style={{ color: 'var(--color-working)' }}>✓</span>
-            ) : (
-              <span
-                className="shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full border"
-                style={{ borderColor: 'var(--color-text-tertiary)' }}
-              />
-            )}
-            <span>{renderInlineFormatting(item.text, `${keyPrefix}-pi${i}`)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
+const itemsToTasks = (items: string[]): PlanTask[] =>
+  items.map((raw, i) => {
+    const parsed = parsePlanStatus(raw);
+    return {
+      id: `plan-${i}`,
+      title: parsed.text,
+      status: parsed.done ? 'completed' as const : 'pending' as const,
+    };
+  });
 
 export const renderTextContent = (text: string): ReactNode[] => {
   const segments = splitSegments(text);
@@ -269,7 +188,7 @@ export const renderTextContent = (text: string): ReactNode[] => {
       );
     } else if (seg.type === 'plan' && seg.items) {
       nodes.push(
-        <PlanCard key={`pl${i}`} items={seg.items} keyPrefix={`pl${i}`} />
+        <AgentPlan key={`pl${i}`} tasks={itemsToTasks(seg.items)} />
       );
     } else {
       nodes.push(
