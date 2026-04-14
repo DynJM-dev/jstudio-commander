@@ -1,41 +1,64 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — Coder-8 verification sweep PASS
-> Coders: Coder-7 (48 polish commits) → Coder-8 (verified)
+> Last updated: 2026-04-14 — Coder-8 post-verification + plan-attach
+> Coders: Coder-7 (48 polish commits) → Coder-8 (verified + UX polish)
 
-## Verification Sweep (Coder-8, 2026-04-14) — 50/50 PASS
+## HEAD of main
 
-All 50 items verified against running server (port 3002, uptime 39m) and code.
-**No fixes required. Branch clean at commit `fa6380d`.**
+```
+fb32b50 feat(chat): attach plan card to user message instead of assistant response
+b3f6d73 docs: coder-8 verification sweep — 50/50 PASS, no fixes required
+7ffdeaa docs: pre-shutdown brain dump for coder-8
+fa6380d feat: show all Claude activity in real-time — agents, tools, thinking
+fb25ec4 feat: long message truncation + fix idle flashing during edits
+```
 
-Evidence highlights (for future regression hunts):
+## Coder-8 Output (2026-04-14)
+
+### `b3f6d73` — Verification sweep: 50/50 PASS
+All 50 items verified against running server (port 3002) and code. No fixes required.
+
+Evidence highlights:
 - Health: `/api/system/health` → `{status:ok, dbConnected:true, tmuxAvailable:true}`
-- Full session CRUD lifecycle green (create → PATCH → /command → /key Escape → DELETE)
+- Session CRUD lifecycle green (create → PATCH → /command → /key Escape → DELETE)
 - Effort inherits from `~/.claude/settings.json` on create (returned `effortLevel:"max"`)
 - Chat pagination: `?limit=3&offset=0` on 241-msg session returns last 3 (chat.routes.ts:57-59)
 - Stats real from JSONL (164K tokens / $41.61 / byModel on GG1 session)
-- Hook endpoint `/api/hook-event` returns `{ok:true}`, populates transcript_path
+- Hook endpoint `/api/hook-event` → `{ok:true}`, populates transcript_path
 - Server log streams `[watcher] JSONL change:` during active sessions
-- All UI items verified by code inspection (Shiki+Copy, AgentPlan, teal Agent card, etc.)
+- UI items verified by code inspection (Shiki+Copy, AgentPlan, teal Agent card, etc.)
 
-### Stale-but-kept note from Coder-7's handoff
-Coder-7's last commits (`fa6380d`, `fb25ec4`) needed a manual server restart to
-take effect. At verification time the running server already had them loaded
-(pagination + Agent/Skill rendering + 8s cooldown all confirmed live).
+### `fb32b50` — Plan card moved to user message
+VS-Code-Claude style: the plan belongs to the user's request, not Claude's response.
+- `UserMessage.tsx` — new `plan?: PlanTask[]` prop renders `<AgentPlan title="Plan" />` below text with `mt-2`
+- `ChatThread.tsx` — new helper `buildPlanFromAssistantGroup(groups[gi+1])` pulls the plan from the next assistant group and feeds it to the preceding user message
+- `AssistantMessage.tsx` — dropped inline AgentPlan + `buildPlanTasks` + `useMemo`/`AgentPlan`/`PlanTask` imports; TaskCreate/TaskUpdate blocks stay filtered out of the render loop so nothing double-renders
+- Real-time: TaskUpdate events stream through polling → ChatThread re-groups → plan rebuilds → progress bar animates
+- `tsc --noEmit` → exit 0; client-only (no server restart needed)
 
-### What was just committed that needs manual server restart to take effect
-- `fa6380d` — **Chat API pagination fix** (last 28 messages were missing when total > 200)
-- `fa6380d` — **Agent/Skill tool_use rendering** in AssistantMessage
-- `fa6380d` — **Richer terminal hints** (Explore, Agent, Skill, deep thinking with duration)
-- `fb25ec4` — **8s idle cooldown** + more active indicators
-- `fb25ec4` — **Long message truncation** (300 chars + Show more/less)
+### `§` character investigation — NOT a code bug (closed)
+The user's reported "`§5` where it should just be `5`" is genuine AI-authored content or user keyboard input, not a rendering artifact.
+- `grep -rn '§' client/src server/src packages` → zero hits (only `client/dist/*.js` xterm minified bytes coincidentally match)
+- No CSS `::before`/`::after` pseudo-elements inject characters
+- No regex in `text-renderer.tsx`, `usePromptDetection.ts`, or tmux pipeline prepends anything
+- Live `/output` endpoint capture contains no `§`
+- Hits in `~/.claude/projects/**/*.jsonl` are legitimate: the assistant has used `§1`…`§7` as section markers in other projects (elementti-ERP); commander JSONL hits are all the team-lead's report + my investigation
+- macOS Option+6 = `§` — user input is the likely source
 
-### Most recent active session
-- ID: `5482eb18-096c-4fdd-a6f9-7c2a4c6cf4bf`
-- Name: GG1
-- Project: ~/Desktop/Projects/GrandGaming
+If a reproducible case ever surfaces, paste the raw JSONL line and re-trace.
+
+### CTO_BRIEF.md exists at project root
+332 lines, authored earlier in this session. Canonical reference for the CTO's view of the project. Keep in sync with major arch/ship events.
+
+### Latest active session (reference)
+- ID: `5482eb18-096c-4fdd-a6f9-7c2a4c6cf4bf` (GG1)
+- Project: `~/Desktop/Projects/GrandGaming`
 - tmux: `jsc-5482eb18`
-- This session has hooks firing (PostToolUse events in logs)
+- Hooks firing (PostToolUse events in logs)
+
+### Outstanding notes / no-op zones
+- Uncommitted working-tree edits exist in `client/src/components/sessions/SessionActions.tsx`, `SessionCard.tsx`, `client/src/services/api.ts`, `server/src/routes/analytics.routes.ts`, `server/src/routes/session.routes.ts` — these pre-date Coder-8 (survived from Coder-7's workspace). Intentionally NOT committed; verify intent before merging.
+- No open bugs. No FAIL items. No regressions.
 
 ## CRITICAL LESSONS
 
