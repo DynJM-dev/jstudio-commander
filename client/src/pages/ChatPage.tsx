@@ -84,7 +84,7 @@ export const ChatPage = () => {
         setSession(s);
       } catch { /* ignore */ }
     };
-    const interval = setInterval(poll, 3000);
+    const interval = setInterval(poll, 1500);
     return () => clearInterval(interval);
   }, [sessionId]);
 
@@ -92,20 +92,16 @@ export const ChatPage = () => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
 
-  // Clear optimistic "working" state when new messages arrive or session goes idle
+  // Clear optimistic "userJustSent" when Claude starts responding to our message
   useEffect(() => {
     if (!userJustSent) return;
-    // Clear if session confirmed working (real status caught up)
-    if (session?.status === 'working') {
-      setUserJustSent(false);
-      return;
-    }
-    // Clear if we got new assistant messages since sending
+    // Clear when new assistant messages arrive after our send
     if (messages.length > msgCountAtSendRef.current) {
-      const hasNewAssistant = messages.slice(msgCountAtSendRef.current).some((m) => m.role === 'assistant');
+      const newMsgs = messages.slice(msgCountAtSendRef.current);
+      const hasNewAssistant = newMsgs.some((m) => m.role === 'assistant');
       if (hasNewAssistant) setUserJustSent(false);
     }
-  }, [userJustSent, session?.status, messages.length]);
+  }, [userJustSent, messages.length]);
 
   // Auto-resize textarea
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
