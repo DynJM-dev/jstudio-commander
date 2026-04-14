@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { sessionService } from '../services/session.service.js';
+import { tmuxService } from '../services/tmux.service.js';
 
 export const sessionRoutes = async (app: FastifyInstance) => {
   // List all sessions
@@ -44,7 +45,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     '/api/sessions/:id/command',
     async (request, reply) => {
       const { command } = request.body ?? {};
-      if (!command) {
+      if (command === undefined || command === null) {
         return reply.status(400).send({ error: 'command is required' });
       }
 
@@ -65,6 +66,57 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     }
     return result;
   });
+
+  // Get raw terminal output from tmux pane (polled frequently — suppress request logs)
+  app.get<{ Params: { id: string }; Querystring: { lines?: string } }>(
+    '/api/sessions/:id/output',
+    { logLevel: 'warn' as const },
+    async (request, reply) => {
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+
+      const lines = parseInt(request.query.lines ?? '30', 10);
+
+      if (!tmuxService.hasSession(session.tmuxSession)) {
+        return { output: '', lines: [], alive: false };
+      }
+
+      const raw = tmuxService.capturePane(session.tmuxSession, lines);
+      const outputLines = raw.split('\n');
+
+      // Detect interactive prompts
+      const prompts: { type: string; message: string; options?: string[] }[] = [];
+
+      if (raw.includes('trust this folder') || raw.includes('Yes, I trust')) {
+        prompts.push({
+          type: 'trust',
+          message: 'Claude Code is asking if you trust this workspace folder.',
+          options: ['Yes, I trust this folder', 'No, exit'],
+        });
+      }
+      if (raw.includes('(y/n)') || raw.includes('(Y/n)') || raw.includes('(y/N)')) {
+        const lastYn = outputLines.filter((l) => l.includes('(y/n)') || l.includes('(Y/n)') || l.includes('(y/N)')).pop();
+        if (lastYn) {
+          prompts.push({ type: 'confirm', message: lastYn.trim() });
+        }
+      }
+      if (raw.includes('permission') && (raw.includes('Allow') || raw.includes('Deny'))) {
+        const permLine = outputLines.filter((l) => l.includes('Allow') || l.includes('permission')).pop();
+        if (permLine) {
+          prompts.push({ type: 'permission', message: permLine.trim(), options: ['Allow', 'Deny'] });
+        }
+      }
+
+      return {
+        output: raw,
+        lines: outputLines,
+        alive: true,
+        prompts,
+      };
+    },
+  );
 
   // Update session (rename, change model)
   app.patch<{ Params: { id: string }; Body: { name?: string; model?: string } }>(

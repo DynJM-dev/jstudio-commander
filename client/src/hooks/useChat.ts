@@ -121,6 +121,30 @@ export const useChat = (sessionId: string | undefined): UseChatReturn => {
     }
   }, [lastEvent, sessionId]);
 
+  // Polling fallback — fetch new messages every 3s in case WebSocket pipeline misses updates
+  useEffect(() => {
+    if (!sessionId || loading) return;
+
+    const poll = async () => {
+      try {
+        const res = await api.get<ChatResponse>(`/chat/${sessionId}?limit=${PAGE_SIZE}`);
+        setMessages((prev) => {
+          // Only update if there are genuinely new messages
+          if (res.messages.length <= prev.length) return prev;
+          const existingIds = new Set(prev.map((m) => m.id));
+          const newMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+          return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
+        });
+        setTotal(res.total);
+      } catch {
+        // Silently fail on poll
+      }
+    };
+
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [sessionId, loading]);
+
   const hasMore = messages.length < total;
 
   const loadMore = useCallback(async () => {

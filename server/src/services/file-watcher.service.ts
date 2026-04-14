@@ -69,26 +69,28 @@ export const fileWatcherService = {
     const claudeProjectsDir = config.claudeProjectsDir;
     console.log(`[watcher] Watching JSONL files in ${claudeProjectsDir}`);
 
-    jsonlWatcher = watch(`${claudeProjectsDir}/**/*.jsonl`, {
+    // Watch the directory itself — chokidar v4 glob matching fails on directory
+    // names starting with '-' (Claude's encoded project paths like
+    // -Users-jose-Desktop-Projects-Foo). Filtering for .jsonl in handlers instead.
+    jsonlWatcher = watch(claudeProjectsDir, {
       persistent: true,
       ignoreInitial: true,
+      depth: 2,
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
     });
 
-    jsonlWatcher.on('change', (filePath: string) => {
-      const newLines = getIncrementalLines(filePath);
-      if (newLines.length > 0) {
-        for (const handler of jsonlHandlers) {
-          try {
-            handler(filePath, newLines);
-          } catch (err) {
-            console.error('[watcher] JSONL handler error:', err);
-          }
-        }
-      }
+    jsonlWatcher.on('ready', () => {
+      console.log('[watcher] JSONL watcher ready');
     });
 
-    jsonlWatcher.on('add', (filePath: string) => {
+    jsonlWatcher.on('error', (err: Error) => {
+      console.error('[watcher] JSONL watcher error:', err.message);
+    });
+
+    const handleJsonlEvent = (filePath: string) => {
+      if (!filePath.endsWith('.jsonl')) return;
+      console.log(`[watcher] JSONL change: ${basename(filePath)}`);
+
       const newLines = getIncrementalLines(filePath);
       if (newLines.length > 0) {
         for (const handler of jsonlHandlers) {
@@ -99,7 +101,10 @@ export const fileWatcherService = {
           }
         }
       }
-    });
+    };
+
+    jsonlWatcher.on('change', handleJsonlEvent);
+    jsonlWatcher.on('add', handleJsonlEvent);
 
     // Watch project directories for STATE.md / PM_HANDOFF.md changes
     const projectGlobs = config.projectDirs.map((d) => `${d}/*/{STATE,PM_HANDOFF}.md`);

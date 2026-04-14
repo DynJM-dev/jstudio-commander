@@ -1,6 +1,7 @@
 import { dirname, basename } from 'node:path';
 import { fileWatcherService } from './file-watcher.service.js';
 import { jsonlParserService } from './jsonl-parser.service.js';
+import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 import { projectScannerService } from './project-scanner.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
@@ -16,20 +17,32 @@ export const setupWatcherBridge = (): void => {
     const jsonlFilename = basename(filePath, '.jsonl');
     const encodedProjectDir = basename(dirname(filePath));
 
-    // Look up session by claude_session_id or by matching project path
+    // Look up session by claude_session_id first
     const db = getDb();
     let session = db.prepare('SELECT id FROM sessions WHERE claude_session_id = ?')
       .get(jsonlFilename) as { id: string } | undefined;
 
     if (!session) {
-      // Try to match via project path — decode the encoded path
-      const decodedPath = '/' + encodedProjectDir.slice(1).replace(/-/g, '/');
-      session = db.prepare('SELECT id FROM sessions WHERE project_path = ?')
-        .get(decodedPath) as { id: string } | undefined;
+      // Match by encoding each session's project_path and comparing to the
+      // encoded directory name. This avoids the broken reverse-decoding that
+      // fails for project names containing hyphens.
+      const rows = db.prepare('SELECT id, project_path FROM sessions WHERE project_path IS NOT NULL AND status != \'stopped\'')
+        .all() as { id: string; project_path: string }[];
+
+      for (const row of rows) {
+        const encoded = jsonlDiscoveryService.encodeProjectPath(row.project_path);
+        if (encoded === encodedProjectDir) {
+          session = { id: row.id };
+          break;
+        }
+      }
     }
 
     if (session) {
+      console.log(`[bridge] JSONL change → session ${session.id}, ${messages.length} new messages`);
       eventBus.emitChatMessages(session.id, messages);
+    } else {
+      console.log(`[bridge] JSONL change at ${encodedProjectDir} — no matching session found`);
     }
   });
 
