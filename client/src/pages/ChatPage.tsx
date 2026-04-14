@@ -189,6 +189,7 @@ export const ChatPage = () => {
         totalCost={stats?.totalCost ?? 0}
         messages={allMessages}
         sessionStatus={session?.status}
+        sessionId={sessionId}
         terminalHint={terminalHint}
         hasPrompt={!!prompt}
         messagesQueued={messagesQueued}

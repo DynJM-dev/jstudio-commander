@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { CircleGauge } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
+import { api } from '../../services/api';
 
 const M = 'Montserrat, sans-serif';
 
@@ -115,18 +117,30 @@ const getStatusInfo = (
   };
 };
 
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const;
+type EffortLevel = typeof EFFORT_LEVELS[number];
+
+const EFFORT_LABELS: Record<EffortLevel, string> = {
+  low: 'low',
+  medium: 'med',
+  high: 'high',
+  max: 'max',
+};
+
 interface ContextBarProps {
   model?: string;
   totalTokens: number;
   totalCost: number;
   messages: ChatMessage[];
   sessionStatus?: string;
+  sessionId?: string;
   terminalHint?: string | null;
   hasPrompt?: boolean;
   messagesQueued?: boolean;
+  effortLevel?: string;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint, hasPrompt = false, messagesQueued = false }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium' }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -139,6 +153,35 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
       : 'var(--color-accent)';
 
   const showWarning = contextPercent > 85;
+
+  // Effort level selector
+  const [effort, setEffort] = useState<EffortLevel>((effortLevel as EffortLevel) || 'medium');
+  const [effortOpen, setEffortOpen] = useState(false);
+  const effortRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (effortLevel) setEffort(effortLevel as EffortLevel);
+  }, [effortLevel]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!effortOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (effortRef.current && !effortRef.current.contains(e.target as Node)) setEffortOpen(false);
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [effortOpen]);
+
+  const changeEffort = useCallback(async (level: EffortLevel) => {
+    setEffort(level);
+    setEffortOpen(false);
+    if (sessionId) {
+      try {
+        await api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` });
+      } catch { /* ignore */ }
+    }
+  }, [sessionId]);
 
   // Derive action label
   const isWorking = sessionStatus === 'working';
@@ -255,6 +298,57 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
           consider /compact
         </span>
       )}
+
+      {/* Effort level selector */}
+      <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
+      <div ref={effortRef} className="relative shrink-0 hidden sm:block">
+        <button
+          onClick={() => setEffortOpen(!effortOpen)}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors"
+          style={{
+            color: 'var(--color-text-secondary)',
+            background: effortOpen ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'; }}
+          onMouseLeave={(e) => { if (!effortOpen) e.currentTarget.style.background = 'transparent'; }}
+        >
+          <CircleGauge size={12} style={{ color: 'var(--color-text-tertiary)' }} />
+          <span className="text-xs font-mono-stats">{EFFORT_LABELS[effort]}</span>
+        </button>
+
+        {/* Dropdown */}
+        {effortOpen && (
+          <div
+            className="absolute bottom-full right-0 mb-1 rounded-lg overflow-hidden py-1"
+            style={{
+              fontFamily: M,
+              background: 'rgba(15, 20, 25, 0.95)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              minWidth: 100,
+            }}
+          >
+            {EFFORT_LEVELS.map((level) => (
+              <button
+                key={level}
+                onClick={() => changeEffort(level)}
+                className="flex items-center gap-2 w-full px-3 py-1.5 text-left text-xs transition-colors"
+                style={{
+                  fontFamily: M,
+                  color: level === effort ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
+                  background: level === effort ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = level === effort ? 'rgba(14, 124, 123, 0.15)' : 'rgba(255, 255, 255, 0.04)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = level === effort ? 'rgba(14, 124, 123, 0.1)' : 'transparent'; }}
+              >
+                <span className="font-mono-stats">{level}</span>
+                {level === effort && <span style={{ color: 'var(--color-accent)' }}>•</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
