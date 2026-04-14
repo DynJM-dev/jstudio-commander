@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MessageSquare, Loader2, SendHorizontal, Check, Paperclip } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -9,9 +9,11 @@ import { ChatThread } from '../components/chat/ChatThread';
 import { ContextBar } from '../components/chat/ContextBar';
 import { PermissionPrompt } from '../components/chat/PermissionPrompt';
 import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
+import { StickyPlanWidget } from '../components/chat/StickyPlanWidget';
 import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { api } from '../services/api';
+import { getActivePlan } from '../utils/plans';
 
 const M = 'Montserrat, sans-serif';
 
@@ -152,6 +154,10 @@ export const ChatPage = () => {
   );
   const allMessages = [...messages, ...pendingLocal];
 
+  // Active plan — drives the sticky plan widget. Rebuilt on every messages
+  // change so it stays in sync with the inline plan card rendered in ChatThread.
+  const activePlan = useMemo(() => getActivePlan(allMessages), [allMessages]);
+
   // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
   const { prompt, terminalHint, messagesQueued, clearPrompt } = usePromptDetection(
     sessionId,
@@ -211,6 +217,17 @@ export const ChatPage = () => {
           onLoadMore={loadMore}
           isWorking={session?.status === 'working' || userJustSent}
           actionLabel={terminalHint}
+        />
+      )}
+
+      {/* Sticky plan widget — pinned above ContextBar when an active plan exists.
+          Shares plan state with the inline AgentPlan card (getActivePlan reads
+          the same JSONL) and auto-hides when that inline card scrolls into view. */}
+      {activePlan && (
+        <StickyPlanWidget
+          plan={activePlan.plan}
+          planKey={activePlan.key}
+          allDone={activePlan.allDone}
         />
       )}
 

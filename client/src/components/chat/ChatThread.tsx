@@ -4,69 +4,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
-import type { PlanTask } from './AgentPlan';
 import { formatTime } from '../../utils/format';
+import {
+  buildPlanFromAssistantGroup,
+  buildToolResultMap,
+  groupMessages,
+  type MessageGroup,
+} from '../../utils/plans';
 
 const M = 'Montserrat, sans-serif';
 
 const FIVE_MINUTES = 5 * 60 * 1000;
-
-interface MessageGroup {
-  role: 'user' | 'assistant' | 'system';
-  messages: ChatMessage[];
-  timestamp: string;
-  model?: string;
-}
-
-// Walk an assistant group's TaskCreate/TaskUpdate tool calls to produce a plan.
-// Plans are Claude-authored (TodoWrite output) and render inside the assistant
-// message that produced them. Task IDs are monotonic across the whole session,
-// so we key each task by the real ID parsed from TaskCreate's tool_result
-// ("Task #N created successfully: ..."), not a per-group auto-counter.
-const TASK_ID_FROM_RESULT = /Task #(\d+) created/;
-
-const buildPlanFromAssistantGroup = (
-  group: MessageGroup,
-  toolResults: Map<string, { content: string; isError?: boolean }>,
-): PlanTask[] => {
-  if (group.role !== 'assistant') return [];
-  const tasks = new Map<string, PlanTask>();
-
-  for (const msg of group.messages) {
-    for (const block of msg.content) {
-      if (block.type !== 'tool_use') continue;
-
-      if (block.name === 'TaskCreate') {
-        const input = block.input as { subject?: string; description?: string };
-        const result = toolResults.get(block.id);
-        const match = result?.content.match(TASK_ID_FROM_RESULT);
-        // Without a tool_result we can't resolve the real ID yet — skip and let
-        // the next poll pick it up once the result arrives. Rendering an
-        // unkeyed task would cause later TaskUpdate calls to never find it.
-        if (!match) continue;
-        const id = match[1]!;
-        tasks.set(id, {
-          id,
-          title: input.subject ?? 'Task',
-          description: input.description,
-          status: 'pending',
-        });
-      }
-
-      if (block.name === 'TaskUpdate') {
-        const input = block.input as { taskId?: string; status?: string; subject?: string };
-        const taskId = input.taskId;
-        if (taskId && tasks.has(taskId)) {
-          const task = tasks.get(taskId)!;
-          if (input.status) task.status = input.status as PlanTask['status'];
-          if (input.subject) task.title = input.subject;
-        }
-      }
-    }
-  }
-
-  return Array.from(tasks.values());
-};
 
 const ModelChangeSeparator = ({ model }: { model: string }) => (
   <div className="flex items-center gap-3 py-1.5">
@@ -135,86 +83,8 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
   const [loadingMore, setLoadingMore] = useState(false);
   const prevLengthRef = useRef(messages.length);
 
-  // Build tool_result lookup: map tool_use_id -> { content, isError }
-  const toolResultMap = useMemo(() => {
-    const map = new Map<string, { content: string; isError?: boolean }>();
-    for (const msg of messages) {
-      for (const block of msg.content) {
-        if (block.type === 'tool_result') {
-          map.set(block.toolUseId, {
-            content: block.content,
-            isError: block.isError,
-          });
-        }
-      }
-    }
-    return map;
-  }, [messages]);
-
-  // Group consecutive messages by role
-  // tool_result-only user messages are folded into the preceding assistant group
-  // (they're system bookkeeping, not real user messages)
-  const groups = useMemo<MessageGroup[]>(() => {
-    const result: MessageGroup[] = [];
-
-    const isToolResultOnly = (msg: ChatMessage) =>
-      msg.role === 'user' &&
-      msg.content.length > 0 &&
-      msg.content.every((b) => b.type === 'tool_result');
-
-    // Claude Code internal messages (XML tags: <command-name>, <local-command-stdout>, etc.)
-    const isInternalCommand = (msg: ChatMessage) =>
-      msg.role === 'user' &&
-      msg.content.length > 0 &&
-      msg.content.every((b) =>
-        b.type === 'text' && /^[\s]*<(command-name|command-message|command-args|local-command-stdout)>/m.test(b.text)
-      );
-
-    // Interrupt messages — render as system note, not user message
-    const isInterruptMessage = (msg: ChatMessage) =>
-      msg.role === 'user' &&
-      msg.content.length > 0 &&
-      msg.content.every((b) =>
-        b.type === 'text' && /interrupt/i.test(b.text)
-      );
-
-    for (const msg of messages) {
-      // Skip internal command messages (raw XML from /effort, /compact, etc.)
-      if (isInternalCommand(msg)) continue;
-
-      // Convert interrupt messages to system notes
-      if (isInterruptMessage(msg)) {
-        result.push({ role: 'system', messages: [msg], timestamp: msg.timestamp });
-        continue;
-      }
-
-      // Skip tool_result-only user messages — fold into current assistant group
-      if (isToolResultOnly(msg)) {
-        const last = result[result.length - 1];
-        if (last && last.role === 'assistant') {
-          // Add to the assistant group so tool results are available
-          last.messages.push(msg);
-        }
-        continue;
-      }
-
-      const last = result[result.length - 1];
-      if (last && last.role === msg.role && msg.role === 'assistant') {
-        // Extend existing assistant group
-        last.messages.push(msg);
-        if (!last.model && msg.model) last.model = msg.model;
-      } else {
-        // New group
-        result.push({
-          role: msg.role as 'user' | 'assistant' | 'system',
-          messages: [msg],
-          timestamp: msg.timestamp,
-          model: msg.model,
-        });
-      }
-    }
-    return result;
-  }, [messages]);
+  const toolResultMap = useMemo(() => buildToolResultMap(messages), [messages]);
+  const groups = useMemo<MessageGroup[]>(() => groupMessages(messages), [messages]);
 
   // Track scroll position
   const handleScroll = useCallback(() => {
@@ -388,6 +258,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
                     messages={group.messages}
                     toolResults={toolResultMap}
                     plan={assistantPlan}
+                    planKey={group.key}
                   />
                 )}
 

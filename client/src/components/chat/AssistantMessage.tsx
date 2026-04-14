@@ -18,6 +18,7 @@ interface AssistantMessageGroupProps {
   messages: ChatMessage[];
   toolResults: Map<string, { content: string; isError?: boolean }>;
   plan?: PlanTask[];
+  planKey?: string;
 }
 
 const renderBlock = (
@@ -124,7 +125,7 @@ const renderBlock = (
   }
 };
 
-export const AssistantMessage = ({ messages, toolResults, plan }: AssistantMessageGroupProps) => {
+export const AssistantMessage = ({ messages, toolResults, plan, planKey }: AssistantMessageGroupProps) => {
   const reduced = prefersReducedMotion();
   const firstMsg = messages[0];
   if (!firstMsg) return null;
@@ -163,7 +164,7 @@ export const AssistantMessage = ({ messages, toolResults, plan }: AssistantMessa
           typically arrive early in the stream. TaskCreate/TaskUpdate tool_use
           blocks are filtered out by renderBlock so they only show here. */}
       {plan && plan.length > 0 && (
-        <div className="mb-1.5">
+        <div className="mb-1.5" data-plan-group-key={planKey}>
           <AgentPlan tasks={plan} title="Plan" />
         </div>
       )}
