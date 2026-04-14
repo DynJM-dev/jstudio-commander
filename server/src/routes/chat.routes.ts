@@ -41,18 +41,47 @@ export const chatRoutes = async (app: FastifyInstance) => {
   // Token/cost stats for a session's conversation
   app.get<{ Params: { sessionId: string } }>(
     '/api/chat/:sessionId/stats',
+    { logLevel: 'warn' as const },
     async (request, reply) => {
       const { sessionId } = request.params;
 
       const db = getDb();
-      const session = db.prepare('SELECT id FROM sessions WHERE id = ?')
-        .get(sessionId) as { id: string } | undefined;
+      const session = db.prepare('SELECT id, project_path FROM sessions WHERE id = ?')
+        .get(sessionId) as { id: string; project_path: string | null } | undefined;
 
       if (!session) {
         return reply.status(404).send({ error: 'Session not found' });
       }
 
-      return tokenTrackerService.aggregateBySession(sessionId);
+      // Calculate stats directly from JSONL messages — always authoritative
+      if (!session.project_path) {
+        return { totalTokens: 0, totalCost: 0, byModel: {} };
+      }
+
+      const jsonlFile = jsonlDiscoveryService.findLatestSessionFile(session.project_path);
+      if (!jsonlFile) {
+        return { totalTokens: 0, totalCost: 0, byModel: {} };
+      }
+
+      const allMessages = jsonlParserService.parseFile(jsonlFile);
+      const usageEntries = tokenTrackerService.extractUsage(allMessages);
+
+      const byModel: Record<string, { tokens: number; cost: number }> = {};
+      let totalTokens = 0;
+      let totalCost = 0;
+
+      for (const entry of usageEntries) {
+        const tokens = entry.usage.inputTokens + entry.usage.outputTokens;
+        const cost = tokenTrackerService.calculateCost(entry.model, entry.usage);
+        totalTokens += tokens;
+        totalCost += cost;
+
+        if (!byModel[entry.model]) byModel[entry.model] = { tokens: 0, cost: 0 };
+        byModel[entry.model]!.tokens += tokens;
+        byModel[entry.model]!.cost += cost;
+      }
+
+      return { totalTokens, totalCost, byModel };
     },
   );
 };

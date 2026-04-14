@@ -2,6 +2,7 @@ import { dirname, basename } from 'node:path';
 import { fileWatcherService } from './file-watcher.service.js';
 import { jsonlParserService } from './jsonl-parser.service.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
+import { tokenTrackerService } from './token-tracker.service.js';
 import { projectScannerService } from './project-scanner.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
@@ -41,6 +42,13 @@ export const setupWatcherBridge = (): void => {
     if (session) {
       console.log(`[bridge] JSONL change → session ${session.id}, ${messages.length} new messages`);
       eventBus.emitChatMessages(session.id, messages);
+
+      // Track token usage from assistant messages
+      try {
+        tokenTrackerService.recordUsage(session.id, null, messages);
+      } catch (err) {
+        console.error('[bridge] Token tracking error:', err);
+      }
     } else {
       console.log(`[bridge] JSONL change at ${encodedProjectDir} — no matching session found`);
     }

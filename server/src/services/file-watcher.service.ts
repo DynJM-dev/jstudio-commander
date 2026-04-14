@@ -111,12 +111,15 @@ export const fileWatcherService = {
     if (config.projectDirs.length > 0) {
       console.log(`[watcher] Watching project files in ${config.projectDirs.join(', ')}`);
 
+      // Use polling to avoid EMFILE — FSEvent watchers exhaust file handles
+      // on large project directories. Polling every 10s is sufficient for STATE.md changes.
       projectWatcher = watch(config.projectDirs, {
         persistent: true,
         ignoreInitial: true,
         depth: 1,
-        ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
-        awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 200 },
+        ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/.next/**', '**/.vite/**'],
+        usePolling: true,
+        interval: 10000,
       });
 
       projectWatcher.on('change', (filePath: string) => {
