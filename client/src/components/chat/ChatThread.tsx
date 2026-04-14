@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
-import { formatTime } from '../../utils/format';
+import { formatTime, formatTokens } from '../../utils/format';
 import {
   buildToolResultMap,
   getActivePlan,
@@ -48,6 +48,29 @@ const TimestampSeparator = ({ timestamp }: { timestamp: string }) => (
 
 const SystemNote = ({ group }: { group: MessageGroup }) => {
   const firstBlock = group.messages[0]?.content[0];
+
+  // Compact boundary — dedicated banner with trigger + freed-token count
+  if (firstBlock?.type === 'compact_boundary') {
+    const { trigger, preTokens } = firstBlock;
+    return (
+      <div className="flex items-center gap-3 py-2">
+        <div className="flex-1" style={{ borderTop: '1px solid rgba(14, 124, 123, 0.18)' }} />
+        <span
+          className="text-xs px-2.5 py-0.5 rounded-full shrink-0"
+          style={{
+            fontFamily: M,
+            color: 'var(--color-accent-light)',
+            background: 'rgba(14, 124, 123, 0.08)',
+            border: '1px solid rgba(14, 124, 123, 0.15)',
+          }}
+        >
+          Compacted ({trigger}) — freed {formatTokens(preTokens)} tokens
+        </span>
+        <div className="flex-1" style={{ borderTop: '1px solid rgba(14, 124, 123, 0.18)' }} />
+      </div>
+    );
+  }
+
   const text = firstBlock?.type === 'system_note'
     ? firstBlock.text
     : firstBlock?.type === 'text' && /interrupt/i.test(firstBlock.text)

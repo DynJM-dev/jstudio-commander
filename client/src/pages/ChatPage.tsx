@@ -233,6 +233,8 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         model={session?.model}
         totalTokens={totalTokens}
         totalCost={stats?.totalCost ?? 0}
+        contextTokens={stats?.contextTokens}
+        contextCost={stats?.contextCost}
         messages={allMessages}
         sessionStatus={session?.status}
         sessionId={sessionId}

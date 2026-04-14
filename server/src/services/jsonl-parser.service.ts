@@ -33,6 +33,10 @@ interface RawRecord {
   subtype?: string;
   content?: string;
   slug?: string;
+  compactMetadata?: {
+    trigger?: 'manual' | 'auto';
+    preTokens?: number;
+  };
   [key: string]: unknown;
 }
 
@@ -242,21 +246,23 @@ export const jsonlParserService = {
   },
 
   parseSystemRecord(record: RawRecord): ChatMessage | null {
-    // Only show non-meta system records with meaningful content
-    const content = record.content;
-    if (!content || record.isMeta) return null;
-
-    // Compact boundaries are interesting to show
+    // Compact boundaries: emit a dedicated block so the client can render a
+    // separator AND reset the running context-token counter past this point.
     if (record.subtype === 'compact_boundary') {
+      const trigger = record.compactMetadata?.trigger === 'auto' ? 'auto' : 'manual';
+      const preTokens = record.compactMetadata?.preTokens ?? 0;
       return {
         id: record.uuid ?? uuidv4(),
         parentId: record.parentUuid ?? null,
         role: 'system',
         timestamp: record.timestamp ?? new Date().toISOString(),
-        content: [{ type: 'system_note', text: `Conversation compacted` }],
+        content: [{ type: 'compact_boundary', trigger, preTokens }],
         isSidechain: record.isSidechain ?? false,
       };
     }
+
+    // Other system records need meaningful content to surface at all.
+    if (!record.content || record.isMeta) return null;
 
     return null;
   },

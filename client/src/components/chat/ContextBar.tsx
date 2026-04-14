@@ -131,6 +131,11 @@ interface ContextBarProps {
   model?: string;
   totalTokens: number;
   totalCost: number;
+  // In-window tokens/cost post-compaction (equals totalTokens when none). If
+  // absent (older callers), we fall back to totalTokens — same behavior as
+  // before compaction support landed.
+  contextTokens?: number;
+  contextCost?: number;
   messages: ChatMessage[];
   sessionStatus?: string;
   sessionId?: string;
@@ -142,10 +147,13 @@ interface ContextBarProps {
   onInterrupt?: () => void;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
-  const contextPercent = totalTokens > 0
-    ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
+  const displayTokens = contextTokens ?? totalTokens;
+  const displayCost = contextCost ?? totalCost;
+  const compacted = contextTokens !== undefined && contextTokens !== totalTokens;
+  const contextPercent = displayTokens > 0
+    ? Math.min(Math.round((displayTokens / contextLimit) * 100), 100)
     : 0;
 
   const barColor = contextPercent > 85
@@ -265,12 +273,15 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
 
       <span className="flex-1" />
 
-      {/* Token count */}
+      {/* Token count — shows in-window after compaction; full total on hover. */}
       <span
         className="font-mono-stats text-xs shrink-0"
         style={{ color: 'var(--color-accent-light)' }}
+        title={compacted
+          ? `In-context: ${formatTokens(displayTokens)} · Total this session: ${formatTokens(totalTokens)}`
+          : undefined}
       >
-        {formatTokens(totalTokens)} tokens
+        {formatTokens(displayTokens)} tokens
       </span>
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
@@ -279,8 +290,11 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
       <span
         className="font-mono-stats text-xs shrink-0 hidden sm:inline"
         style={{ color: 'var(--color-working)' }}
+        title={compacted
+          ? `In-context: ${formatCost(displayCost)} · Total this session: ${formatCost(totalCost)}`
+          : undefined}
       >
-        {formatCost(totalCost)}
+        {formatCost(displayCost)}
       </span>
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>

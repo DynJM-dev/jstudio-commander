@@ -6,6 +6,11 @@ import { useWebSocket } from './useWebSocket';
 interface ChatStats {
   totalTokens: number;
   totalCost: number;
+  // Tokens/cost accumulated AFTER the most recent compact_boundary — what's
+  // currently sitting in Claude's context window. Equal to totalTokens when
+  // no compaction has occurred in this session.
+  contextTokens: number;
+  contextCost: number;
   byModel: Record<string, { tokens: number; cost: number }>;
 }
 

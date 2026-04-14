@@ -3,7 +3,8 @@ export type ContentBlock =
   | { type: 'thinking'; text: string; signature?: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
-  | { type: 'system_note'; text: string };
+  | { type: 'system_note'; text: string }
+  | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number };
 
 export interface ChatMessage {
   id: string;

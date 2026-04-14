@@ -93,24 +93,42 @@ export const chatRoutes = async (app: FastifyInstance) => {
       }
 
       const allMessages = jsonlParserService.parseFile(jsonlFile);
-      const usageEntries = tokenTrackerService.extractUsage(allMessages);
+
+      // Find the most recent compact_boundary. Usage from messages before it
+      // no longer sits in Claude's context window — only what followed counts
+      // toward "how close am I to the boundary?"
+      let lastCompactIdx = -1;
+      for (let i = allMessages.length - 1; i >= 0; i--) {
+        const msg = allMessages[i]!;
+        if (msg.role === 'system' && msg.content.some((b) => b.type === 'compact_boundary')) {
+          lastCompactIdx = i;
+          break;
+        }
+      }
 
       const byModel: Record<string, { tokens: number; cost: number }> = {};
       let totalTokens = 0;
       let totalCost = 0;
+      let contextTokens = 0;
+      let contextCost = 0;
 
-      for (const entry of usageEntries) {
-        const tokens = entry.usage.inputTokens + entry.usage.outputTokens;
-        const cost = tokenTrackerService.calculateCost(entry.model, entry.usage);
+      for (let i = 0; i < allMessages.length; i++) {
+        const msg = allMessages[i]!;
+        if (msg.role !== 'assistant' || !msg.usage || !msg.model) continue;
+        const tokens = msg.usage.inputTokens + msg.usage.outputTokens;
+        const cost = tokenTrackerService.calculateCost(msg.model, msg.usage);
         totalTokens += tokens;
         totalCost += cost;
-
-        if (!byModel[entry.model]) byModel[entry.model] = { tokens: 0, cost: 0 };
-        byModel[entry.model]!.tokens += tokens;
-        byModel[entry.model]!.cost += cost;
+        if (i > lastCompactIdx) {
+          contextTokens += tokens;
+          contextCost += cost;
+        }
+        if (!byModel[msg.model]) byModel[msg.model] = { tokens: 0, cost: 0 };
+        byModel[msg.model]!.tokens += tokens;
+        byModel[msg.model]!.cost += cost;
       }
 
-      return { totalTokens, totalCost, byModel };
+      return { totalTokens, totalCost, contextTokens, contextCost, byModel };
     },
   );
 };
