@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — moved ContextBar above input, fixed duplicate keys, cleaned layout
+> Last updated: 2026-04-14 — added permission prompt detection + inline action buttons in chat
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -34,6 +34,7 @@
 | `6af9ae5` | Coder-7 | 6 chat fixes: spacing, StatusStrip auto-clear, varied status text, ContextBar model limits, Crown icon, timeline dots |
 | `bde70fd` | Coder-7 | Consolidate stats into ContextBar (action + tokens + elapsed + context %), remove StatusStrip/ResponseSummary, fix Enter key + duplicate keys |
 | `6da7618` | Coder-7 | Move ContextBar above input (not above chat), remove session info bar, fix text-renderer duplicate keys with unique prefixes |
+| `452059b` | Coder-7 | Permission prompt detection: PermissionPrompt component, usePromptDetection hook, enhanced backend detection (numbered choices, Allow/Deny, y/n) |
 
 ## File Inventory
 
@@ -76,7 +77,8 @@
 - `components/chat/UserMessage.tsx` — flat left-aligned user message, skips tool_result-only messages, Framer Motion entry
 - `components/chat/AssistantMessage.tsx` — flat assistant message with content block rendering (text, thinking, tool calls)
 - `components/chat/ChatThread.tsx` — scrollable timeline, auto-scroll, "New messages ↓" pill, load older, groups messages into user→assistant turns
-- `components/chat/ContextBar.tsx` — unified top bar: model, action status (Cogitating/Reading/Editing/Running/Searching/Delegating/Composing), live token count, cost, elapsed timer, context % bar with color warnings
+- `components/chat/ContextBar.tsx` — unified bar (above input): model, action status (Cogitating/Reading/Editing/Running/Searching/Delegating/Composing), live token count, cost, elapsed timer, context % bar with color warnings
+- `components/chat/PermissionPrompt.tsx` — amber-tinted card for interactive prompts (numbered choices, Allow/Deny, y/n, trust), action buttons + custom response input
 - `components/chat/ToolCallBlock.tsx` — collapsible tool calls with icon mapping, special Bash/Edit/Write rendering, compact layout
 - `components/chat/CodeBlock.tsx` — Shiki syntax highlighting (lazy), copy button, language label, line numbers, glass styling
 - `components/chat/ThinkingBlock.tsx` — collapsible thinking with BrainCircuit icon, brain-glow animation, handles redacted
@@ -111,6 +113,7 @@
 - `hooks/useProjects.ts` — fetch projects, WS subscription, rescan
 - `hooks/useTerminal.ts` — xterm.js + WebSocket bridge to node-pty, resize handling
 - `hooks/useAnalytics.ts` — fetch today/daily/session/project analytics, WS subscription
+- `hooks/usePromptDetection.ts` — polls /output endpoint for interactive prompts when session is working/waiting
 - `services/api.ts` — fetch wrapper with ApiError, PIN header injection
 - `services/ws.ts` — WebSocket singleton, auto-reconnect, PIN injection
 - `utils/format.ts` — formatTokens, formatCost, formatDuration, formatTime, formatRelativeTime
