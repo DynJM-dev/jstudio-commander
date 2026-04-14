@@ -86,7 +86,18 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
       msg.content.length > 0 &&
       msg.content.every((b) => b.type === 'tool_result');
 
+    // Claude Code internal messages (XML tags: <command-name>, <local-command-stdout>, etc.)
+    const isInternalCommand = (msg: ChatMessage) =>
+      msg.role === 'user' &&
+      msg.content.length > 0 &&
+      msg.content.every((b) =>
+        b.type === 'text' && /^[\s]*<(command-name|command-message|command-args|local-command-stdout)>/m.test(b.text)
+      );
+
     for (const msg of messages) {
+      // Skip internal command messages (raw XML from /effort, /compact, etc.)
+      if (isInternalCommand(msg)) continue;
+
       // Skip tool_result-only user messages — fold into current assistant group
       if (isToolResultOnly(msg)) {
         const last = result[result.length - 1];

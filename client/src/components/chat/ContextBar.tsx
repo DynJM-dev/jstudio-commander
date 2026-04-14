@@ -179,8 +179,10 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
     setEffort(level);
     setEffortOpen(false);
     if (sessionId) {
-      // Send /effort command to current Claude session
-      api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` }).catch(() => {});
+      // Await the command send to prevent collision with next user message
+      try {
+        await api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` });
+      } catch { /* ignore */ }
       // Persist per session in our DB
       api.patch(`/sessions/${sessionId}`, { effortLevel: level }).catch(() => {});
     }
