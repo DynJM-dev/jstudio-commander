@@ -134,20 +134,13 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
           api.get<ChatStats>(`/chat/${sessionId}/stats`).catch(() => null),
         ]);
         setMessages((prev) => {
-          // The API returns the authoritative message list from JSONL.
-          // Replace entirely if content differs — don't try to merge/dedup
-          // which can miss updates when messages change underneath.
-          const apiIds = new Set(chatRes.messages.map((m) => m.id));
-          const prevIds = new Set(prev.map((m) => m.id));
-
-          // Check if there are any new messages the frontend doesn't have
-          const hasNew = chatRes.messages.some((m) => !prevIds.has(m.id));
-          // Check if frontend has stale messages not in the API (session changed)
-          const hasStale = prev.some((m) => !apiIds.has(m.id));
-
-          if (hasNew || hasStale || chatRes.messages.length !== prev.length) {
-            return chatRes.messages;
-          }
+          // Server response is source of truth — simple compare and replace
+          if (chatRes.messages.length === 0) return prev;
+          if (chatRes.messages.length !== prev.length) return chatRes.messages;
+          // Same count — check if last message changed
+          const lastNew = chatRes.messages[chatRes.messages.length - 1];
+          const lastOld = prev[prev.length - 1];
+          if (lastNew?.id !== lastOld?.id) return chatRes.messages;
           return prev;
         });
         setTotal(chatRes.total);
