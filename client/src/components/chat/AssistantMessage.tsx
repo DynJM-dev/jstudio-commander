@@ -1,4 +1,4 @@
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Brain, BookOpen, Users, UserMinus, Send, Search, ListChecks, ListTree } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
@@ -6,7 +6,32 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCallBlock } from './ToolCallBlock';
 import { AgentPlan } from './AgentPlan';
 import type { PlanTask } from './AgentPlan';
+import { ActivityChip } from './ActivityChip';
+import { AgentSpawnCard } from './AgentSpawnCard';
 import { formatTime } from '../../utils/format';
+
+// A Read is surfaced as a dedicated chip when its file_path matches one of
+// these patterns. Otherwise it renders as a generic ToolCallBlock so the
+// full path + result preview stays available.
+const SKILL_PATH_RE = /\/\.claude\/skills\//;
+const MEMORY_PATH_RE = /(\/\.claude\/(memory|projects\/[^/]+\/memory)\/)|\/memory\/[^/]+\.md$/;
+const PROJECT_DOC_NAMES = /\b(CODER_BRAIN|PM_HANDOFF|STATE|CLAUDE|MEMORY)\.md$/;
+
+const classifyRead = (filePath: string): { kind: 'skill' | 'memory' | 'project-doc' | 'generic'; label: string } => {
+  if (SKILL_PATH_RE.test(filePath)) {
+    const m = filePath.match(/\/skills\/([^/]+)/);
+    return { kind: 'skill', label: m?.[1] ?? 'skill' };
+  }
+  if (MEMORY_PATH_RE.test(filePath)) {
+    const name = filePath.split('/').pop() ?? filePath;
+    return { kind: 'memory', label: name };
+  }
+  if (PROJECT_DOC_NAMES.test(filePath)) {
+    const name = filePath.split('/').pop() ?? filePath;
+    return { kind: 'project-doc', label: name };
+  }
+  return { kind: 'generic', label: filePath };
+};
 
 const M = 'Montserrat, sans-serif';
 
@@ -45,59 +70,109 @@ const renderBlock = (
       // TaskCreate/TaskUpdate are rendered as AgentPlan — skip here
       if (block.name === 'TaskCreate' || block.name === 'TaskUpdate') return null;
 
-      // Agent spawns — special rendering
+      const result = toolResults.get(block.id);
+
+      // Agent spawns — rich card with live status
       if (block.name === 'Agent') {
         const input = block.input as { description?: string; prompt?: string; subagent_type?: string };
-        const desc = input.description ?? input.subagent_type ?? 'Subagent';
-        const result = toolResults.get(block.id);
         return (
-          <div
+          <AgentSpawnCard
             key={key}
-            className="flex items-start gap-2 py-1.5 px-2 my-1 rounded-md"
-            style={{
-              background: 'rgba(14, 124, 123, 0.06)',
-              border: '1px solid rgba(14, 124, 123, 0.1)',
-              fontFamily: M,
-            }}
-          >
-            <span className="text-xs mt-0.5" style={{ color: 'var(--color-accent)' }}>⚡</span>
-            <div className="min-w-0">
-              <span className="text-xs font-medium" style={{ color: 'var(--color-accent-light)' }}>
-                Agent: {desc}
-              </span>
-              {input.prompt && (
-                <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-tertiary)', maxWidth: 400 }}>
-                  {input.prompt.slice(0, 100)}{input.prompt.length > 100 ? '...' : ''}
-                </p>
-              )}
-              {result && (
-                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                  {result.content.slice(0, 80)}{result.content.length > 80 ? '...' : ''}
-                </p>
-              )}
-            </div>
-          </div>
+            description={input.description ?? input.subagent_type ?? 'Subagent'}
+            prompt={input.prompt}
+            result={result?.content}
+            isError={result?.isError}
+          />
         );
       }
 
-      // Skill loading — compact note
+      // Skill load
       if (block.name === 'Skill') {
         const input = block.input as { skill?: string };
         return (
-          <div
+          <ActivityChip
             key={key}
-            className="flex items-center gap-1.5 py-0.5"
-            style={{ fontFamily: M }}
-          >
-            <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>🧠</span>
-            <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              Loaded skill: {input.skill ?? 'unknown'}
-            </span>
-          </div>
+            icon={Brain}
+            tone="blue"
+            label="Loaded skill"
+            target={input.skill ?? 'unknown'}
+          />
         );
       }
 
-      const result = toolResults.get(block.id);
+      // Teammate messaging
+      if (block.name === 'SendMessage') {
+        const input = block.input as { to?: string; summary?: string; message?: string | Record<string, unknown> };
+        const msg = typeof input.message === 'string' ? input.message : input.summary ?? '';
+        return (
+          <ActivityChip
+            key={key}
+            icon={Send}
+            tone="cyan"
+            label={`Messaged ${input.to ?? 'teammate'}`}
+            target={input.summary ?? (msg ? `${msg.length} chars` : undefined)}
+          />
+        );
+      }
+
+      if (block.name === 'TeamCreate') {
+        const input = block.input as { name?: string };
+        return <ActivityChip key={key} icon={Users} tone="purple" label="Created team" target={input.name} />;
+      }
+      if (block.name === 'TeamDelete') {
+        const input = block.input as { name?: string };
+        return <ActivityChip key={key} icon={UserMinus} tone="purple" label="Dismissed team" target={input.name} />;
+      }
+
+      if (block.name === 'ToolSearch') {
+        const input = block.input as { query?: string };
+        return <ActivityChip key={key} icon={Search} tone="muted" label="Searched tools" target={input.query} />;
+      }
+
+      if (block.name === 'TaskList') {
+        const count = result?.content ? (result.content.match(/\bid\b/g) ?? []).length : undefined;
+        return (
+          <ActivityChip
+            key={key}
+            icon={ListTree}
+            tone="muted"
+            label="Listed tasks"
+            target={count ? `${count} items` : undefined}
+          />
+        );
+      }
+      if (block.name === 'TaskGet' || block.name === 'TaskStop') {
+        const input = block.input as { taskId?: string };
+        return (
+          <ActivityChip
+            key={key}
+            icon={ListChecks}
+            tone="muted"
+            label={block.name === 'TaskStop' ? 'Stopped task' : 'Inspected task'}
+            target={input.taskId ? `#${input.taskId}` : undefined}
+          />
+        );
+      }
+
+      // Read routed by path — skills / memory / project docs get chips, other
+      // reads stay as ToolCallBlock so the full path + content preview is
+      // available in the generic card.
+      if (block.name === 'Read') {
+        const input = block.input as { file_path?: string };
+        const path = input.file_path ?? '';
+        const { kind, label } = classifyRead(path);
+        if (kind === 'skill') {
+          return <ActivityChip key={key} icon={Brain} tone="blue" label="Read skill" target={label} />;
+        }
+        if (kind === 'memory') {
+          return <ActivityChip key={key} icon={BookOpen} tone="amber" label="Read memory" target={label} />;
+        }
+        if (kind === 'project-doc') {
+          return <ActivityChip key={key} icon={BookOpen} tone="muted" label="Read doc" target={label} />;
+        }
+        // fall through to generic
+      }
+
       return (
         <ToolCallBlock
           key={key}
