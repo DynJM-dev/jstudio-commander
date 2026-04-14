@@ -7,9 +7,10 @@ import type { ChatMessage } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { ChatThread } from '../components/chat/ChatThread';
 import { ContextBar } from '../components/chat/ContextBar';
-
+import { PermissionPrompt } from '../components/chat/PermissionPrompt';
 import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
 import { useChat } from '../hooks/useChat';
+import { usePromptDetection } from '../hooks/usePromptDetection';
 import { api } from '../services/api';
 
 const M = 'Montserrat, sans-serif';
@@ -120,6 +121,13 @@ export const ChatPage = () => {
   );
   const allMessages = [...messages, ...pendingLocal];
 
+  // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
+  const { prompt, clearPrompt } = usePromptDetection(
+    sessionId,
+    session?.status,
+    allMessages.length,
+  );
+
   // No session selected
   if (!sessionId) {
     return (
@@ -176,6 +184,17 @@ export const ChatPage = () => {
         messages={allMessages}
         sessionStatus={session?.status}
       />
+
+      {/* Permission prompt — when Claude is waiting for input */}
+      <AnimatePresence>
+        {prompt && allMessages.length > 0 && sessionId && (
+          <PermissionPrompt
+            sessionId={sessionId}
+            prompt={prompt}
+            onResponded={clearPrompt}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Input area — glass surface, fixed bottom */}
       {session && session.status !== 'stopped' && (

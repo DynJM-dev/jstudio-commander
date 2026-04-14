@@ -89,6 +89,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       // Detect interactive prompts
       const prompts: { type: string; message: string; options?: string[] }[] = [];
 
+      // Trust prompt
       if (raw.includes('trust this folder') || raw.includes('Yes, I trust')) {
         prompts.push({
           type: 'trust',
@@ -96,16 +97,54 @@ export const sessionRoutes = async (app: FastifyInstance) => {
           options: ['Yes, I trust this folder', 'No, exit'],
         });
       }
-      if (raw.includes('(y/n)') || raw.includes('(Y/n)') || raw.includes('(y/N)')) {
-        const lastYn = outputLines.filter((l) => l.includes('(y/n)') || l.includes('(Y/n)') || l.includes('(y/N)')).pop();
-        if (lastYn) {
-          prompts.push({ type: 'confirm', message: lastYn.trim() });
+
+      // Numbered choice prompts — look for ❯ marker on a numbered option (Claude's interactive UI)
+      // Only search the last 10 lines to avoid matching numbered content in the conversation
+      const tailLines = outputLines.slice(-10);
+      const markerIdx = tailLines.findIndex((l) => /^\s*❯\s*\d+\./.test(l));
+      if (markerIdx >= 0) {
+        // Collect all numbered options from the tail
+        const options = tailLines
+          .filter((l) => /^\s*[❯ ]\s*\d+\./.test(l))
+          .map((l) => l.replace(/^\s*[❯ ]\s*/, '').trim());
+        if (options.length > 1) {
+          // Find the question text: walk backwards from the marker in the FULL output
+          const fullMarkerIdx = outputLines.length - 10 + markerIdx;
+          let contextMsg = 'Choose an option';
+          for (let j = fullMarkerIdx - 1; j >= Math.max(0, fullMarkerIdx - 5); j--) {
+            const line = outputLines[j]?.trim();
+            if (line && line.length > 5 && !line.startsWith('─') && !line.startsWith('⎿') && !/^\s*[❯ ]\s*\d+\./.test(line)) {
+              contextMsg = line;
+              break;
+            }
+          }
+          prompts.push({ type: 'choice', message: contextMsg, options });
         }
       }
-      if (raw.includes('permission') && (raw.includes('Allow') || raw.includes('Deny'))) {
-        const permLine = outputLines.filter((l) => l.includes('Allow') || l.includes('permission')).pop();
-        if (permLine) {
-          prompts.push({ type: 'permission', message: permLine.trim(), options: ['Allow', 'Deny'] });
+
+      // Allow/Deny permission prompts (tool approval)
+      if (!prompts.some((p) => p.type === 'choice') && (raw.includes('Allow') && (raw.includes('Deny') || raw.includes('allow always')))) {
+        // Find the line describing what's being allowed
+        const contextLine = outputLines.find((l) =>
+          l.includes('Allow') && (l.includes('run:') || l.includes('to run') || l.includes('to execute'))
+        );
+        const actionLine = outputLines.find((l) =>
+          l.includes('Allow') && !l.includes('run:') && !l.includes('to run')
+        );
+        const message = contextLine?.trim() ?? actionLine?.trim() ?? 'Permission requested';
+        const hasAlwaysOpt = raw.includes('always') || raw.includes('Allow always');
+        prompts.push({
+          type: 'permission',
+          message,
+          options: hasAlwaysOpt ? ['Allow', 'Allow always', 'Deny'] : ['Allow', 'Deny'],
+        });
+      }
+
+      // Y/N prompts
+      if (!prompts.some((p) => p.type === 'confirm') && (/\(y\/n\)/i.test(raw))) {
+        const lastYn = outputLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
+        if (lastYn) {
+          prompts.push({ type: 'confirm', message: lastYn.trim() });
         }
       }
 
