@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronDown, CheckCircle2, Circle, CircleDotDashed, CircleAlert, CircleX } from 'lucide-react';
+import { ChevronDown, CheckCircle2, Circle, CircleDotDashed, CircleAlert, CircleX, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PlanTask } from './AgentPlan';
 
@@ -32,13 +32,16 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
   const [expanded, setExpanded] = useState(false);
   const [hiddenAfterDone, setHiddenAfterDone] = useState(false);
   const [inlineVisible, setInlineVisible] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Reset UI state when a new plan appears.
+  // Reset UI state when a new plan appears. Manual dismissal is per-plan — a
+  // fresh plan key clears the flag so the widget can surface again.
   useEffect(() => {
     setExpanded(false);
     setHiddenAfterDone(false);
     setInlineVisible(false);
+    setDismissed(false);
   }, [planKey]);
 
   // Auto-hide 3s after all steps complete.
@@ -82,7 +85,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     [plan],
   );
 
-  const visible = !hiddenAfterDone && !inlineVisible && total > 0;
+  const visible = !hiddenAfterDone && !inlineVisible && !dismissed && total > 0;
   const reduced = prefersReducedMotion();
 
   return (
@@ -149,6 +152,30 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
                 style={{ color: 'var(--color-text-secondary)' }}
               >
                 {allDone ? 'All steps complete' : current?.title ?? ''}
+              </span>
+
+              {/* Close (local dismissal only — doesn't touch the plan state) */}
+              <span
+                role="button"
+                tabIndex={0}
+                title="Hide"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDismissed(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDismissed(true);
+                  }
+                }}
+                className="shrink-0 flex items-center justify-center rounded p-0.5 -mr-0.5 cursor-pointer transition-colors"
+                style={{ color: 'var(--color-text-tertiary)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+              >
+                <X size={14} />
               </span>
 
               <motion.div

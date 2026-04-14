@@ -6,8 +6,8 @@ import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { formatTime } from '../../utils/format';
 import {
-  buildPlanFromAssistantGroup,
   buildToolResultMap,
+  getActivePlan,
   groupMessages,
   type MessageGroup,
 } from '../../utils/plans';
@@ -85,6 +85,10 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
 
   const toolResultMap = useMemo(() => buildToolResultMap(messages), [messages]);
   const groups = useMemo<MessageGroup[]>(() => groupMessages(messages), [messages]);
+  // Single session-wide plan — shared by inline AgentPlan and StickyPlanWidget
+  // so they can never disagree. The plan's anchor message id tells us which
+  // assistant group hosts the inline card.
+  const activePlan = useMemo(() => getActivePlan(messages), [messages]);
 
   // Track scroll position
   const handleScroll = useCallback(() => {
@@ -193,10 +197,15 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
             const prevGroup = gi > 0 ? groups[gi - 1] : undefined;
             const isLast = gi === groups.length - 1;
 
-            // For assistant groups: build the plan from this group's tool calls
-            const assistantPlan = group.role === 'assistant'
-              ? buildPlanFromAssistantGroup(group, toolResultMap)
-              : [];
+            // Render the inline plan card only on the group that contains the
+            // plan's anchor message (the one with the first TaskCreate). Other
+            // groups — including those holding only TaskUpdates — render no plan.
+            const anchorInGroup =
+              activePlan !== null &&
+              group.role === 'assistant' &&
+              group.messages.some((m) => m.id === activePlan.key);
+            const inlinePlan = anchorInGroup ? activePlan!.plan : [];
+            const inlinePlanKey = anchorInGroup ? activePlan!.key : undefined;
 
             // Timestamp separator between groups
             let timestampSep = false;
@@ -257,8 +266,8 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
                   <AssistantMessage
                     messages={group.messages}
                     toolResults={toolResultMap}
-                    plan={assistantPlan}
-                    planKey={group.key}
+                    plan={inlinePlan}
+                    planKey={inlinePlanKey}
                   />
                 )}
 

@@ -14,17 +14,23 @@ export interface MessageGroup {
 // Matches Claude Code's TaskCreate tool_result: "Task #<N> created successfully: ..."
 const TASK_ID_FROM_RESULT = /Task #(\d+) created/;
 
-// Walks an assistant group's TaskCreate/TaskUpdate tool calls to produce a plan.
-// Task IDs are monotonic across the session so we key each task by the real ID
-// parsed from TaskCreate's tool_result, not a per-group counter.
-export const buildPlanFromAssistantGroup = (
-  group: MessageGroup,
+// Walks the full message stream and builds the session's active plan.
+// Per-group walking (old impl) breaks the moment an approval/"Proceed" message
+// splits the assistant turn: TaskCreates end up in one group and subsequent
+// TaskUpdates in later groups, so the per-group plan for each is incomplete.
+// A session-wide walk keeps one running Map of tasks keyed by real ID, and
+// resets it only when a NEW TaskCreate appears after all existing tasks are
+// completed — that's how we distinguish "next phase" from "update to the
+// current plan".
+export const buildPlanFromMessages = (
+  messages: ChatMessage[],
   toolResults: Map<string, { content: string; isError?: boolean }>,
-): PlanTask[] => {
-  if (group.role !== 'assistant') return [];
-  const tasks = new Map<string, PlanTask>();
+): { plan: PlanTask[]; firstCreateMessageId: string | null; allDone: boolean } => {
+  let tasks = new Map<string, PlanTask>();
+  let firstCreateMessageId: string | null = null;
 
-  for (const msg of group.messages) {
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue;
     for (const block of msg.content) {
       if (block.type !== 'tool_use') continue;
 
@@ -34,6 +40,19 @@ export const buildPlanFromAssistantGroup = (
         const match = result?.content.match(TASK_ID_FROM_RESULT);
         if (!match) continue;
         const id = match[1]!;
+
+        // New-plan detection: if everything in the running plan is already
+        // completed, the next TaskCreate starts a fresh plan. Without this,
+        // two sequential plans would visually merge into one growing list.
+        if (tasks.size > 0) {
+          const allComplete = Array.from(tasks.values()).every((t) => t.status === 'completed');
+          if (allComplete) {
+            tasks = new Map();
+            firstCreateMessageId = null;
+          }
+        }
+
+        if (!firstCreateMessageId) firstCreateMessageId = msg.id;
         tasks.set(id, {
           id,
           title: input.subject ?? 'Task',
@@ -54,7 +73,9 @@ export const buildPlanFromAssistantGroup = (
     }
   }
 
-  return Array.from(tasks.values());
+  const plan = Array.from(tasks.values());
+  const allDone = plan.length > 0 && plan.every((t) => t.status === 'completed');
+  return { plan, firstCreateMessageId, allDone };
 };
 
 // Group consecutive messages by role. tool_result-only user messages fold into
@@ -133,20 +154,13 @@ export interface ActivePlan {
   allDone: boolean;
 }
 
-// Returns the most recent plan in the conversation. "Active" = any step not
-// completed. When every step is done we still return it so the widget can run
-// its 3s hide animation instead of vanishing on the final TaskUpdate.
+// Returns the currently-active plan (or most-recently-completed one so the
+// widget can run its fade-out). The key is the id of the message that
+// contained the plan's first TaskCreate — inline anchor for the sticky
+// IntersectionObserver and identity for "same plan vs new plan" decisions.
 export const getActivePlan = (messages: ChatMessage[]): ActivePlan | null => {
   const toolResults = buildToolResultMap(messages);
-  const groups = groupMessages(messages);
-
-  for (let i = groups.length - 1; i >= 0; i--) {
-    const g = groups[i]!;
-    if (g.role !== 'assistant') continue;
-    const plan = buildPlanFromAssistantGroup(g, toolResults);
-    if (plan.length === 0) continue;
-    const allDone = plan.every((t) => t.status === 'completed');
-    return { plan, key: g.key, allDone };
-  }
-  return null;
+  const { plan, firstCreateMessageId, allDone } = buildPlanFromMessages(messages, toolResults);
+  if (plan.length === 0 || !firstCreateMessageId) return null;
+  return { plan, key: firstCreateMessageId, allDone };
 };
