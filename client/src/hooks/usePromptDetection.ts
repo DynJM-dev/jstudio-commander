@@ -26,6 +26,10 @@ const parseTerminalHint = (lines: string[]): string | null => {
   const tail = lines.slice(-8).map((l) => l.trim()).filter(Boolean);
   const joined = tail.join(' ');
 
+  // Compaction
+  if (joined.includes('Compacting') || joined.includes('compacting') || joined.includes('Summarizing')) {
+    return 'Compacting context...';
+  }
   // Thinking/reasoning
   if (joined.includes('Thinking') || joined.includes('Cogitating') || joined.includes('✻')) {
     return 'Cogitating...';
@@ -99,11 +103,15 @@ export const usePromptDetection = (
           `/sessions/${sessionId}/output?lines=15`
         );
 
-        // Prompts — only show if not within dismiss debounce window
+        // Prompts — only show when:
+        // 1. Session is 'waiting' (not actively working with spinner/output)
+        // 2. Not within dismiss debounce window
+        // 3. Backend detected a prompt in the last 3 lines
         const isDismissed = Date.now() < dismissedUntilRef.current;
-        if (!isDismissed && res.prompts && res.prompts.length > 0) {
+        const isWaiting = sessionStatus === 'waiting';
+        if (!isDismissed && isWaiting && res.prompts && res.prompts.length > 0) {
           setPrompt(res.prompts[res.prompts.length - 1]!);
-        } else if (isDismissed || !res.prompts || res.prompts.length === 0) {
+        } else {
           setPrompt(null);
         }
 

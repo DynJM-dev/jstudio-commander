@@ -201,13 +201,9 @@ export const sessionRoutes = async (app: FastifyInstance) => {
 
       // "Accept edits" prompt (⏵⏵ pattern)
       if (bottomRaw.includes('accept edits') || bottomRaw.includes('⏵⏵')) {
-        const editLine = bottomLines.find((l) =>
-          l.includes('accept edits') || l.includes('⏵⏵')
-        );
         prompts.push({
           type: 'accept_edits',
-          message: editLine?.trim() ?? 'Accept pending edits?',
-          context: extractToolContext(),
+          message: 'Accept pending edits?',
           options: ['Accept', 'Reject'],
         });
       }
