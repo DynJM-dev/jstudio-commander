@@ -139,9 +139,10 @@ interface ContextBarProps {
   messagesQueued?: boolean;
   effortLevel?: string;
   userJustSent?: boolean;
+  onInterrupt?: () => void;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -177,11 +178,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
   const changeEffort = useCallback(async (level: EffortLevel) => {
     setEffort(level);
     setEffortOpen(false);
+    // Send /effort command to current Claude session
     if (sessionId) {
-      try {
-        await api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` });
-      } catch { /* ignore */ }
+      api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` }).catch(() => {});
     }
+    // Persist to ~/.claude/settings.json for future sessions
+    api.post('/system/effort', { level }).catch(() => {});
   }, [sessionId]);
 
   // Derive action label — userJustSent provides instant "working" before server confirms
@@ -213,7 +215,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
 
   return (
     <div
-      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav overflow-hidden ${isWorking ? 'bar-working' : ''}`}
+      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav ${isWorking ? 'bar-working' : ''}`}
       style={{
         fontFamily: M,
         height: 34,
@@ -234,11 +236,28 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
         </span>
       </div>
 
-      {/* Elapsed timer — only when working */}
+      {/* Elapsed timer + interrupt — only when working */}
       {isWorking && responseStartRef.current > 0 && (
         <>
           <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
           <LiveElapsed startedAt={responseStartRef.current} />
+          {onInterrupt && (
+            <button
+              onClick={onInterrupt}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors"
+              style={{
+                color: 'var(--color-error)',
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                fontFamily: M,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; }}
+              title="Interrupt Claude (Esc)"
+            >
+              Stop
+            </button>
+          )}
         </>
       )}
 
@@ -322,14 +341,15 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
         {/* Dropdown */}
         {effortOpen && (
           <div
-            className="absolute bottom-full right-0 mb-1 rounded-lg overflow-hidden py-1"
+            className="absolute bottom-full right-0 mb-1 rounded-lg overflow-hidden py-1 z-50"
             style={{
               fontFamily: M,
-              background: 'rgba(15, 20, 25, 0.95)',
+              background: 'rgba(15, 20, 25, 0.98)',
               border: '1px solid rgba(255, 255, 255, 0.1)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
               minWidth: 100,
+              boxShadow: '0 -4px 20px rgba(0, 0, 0, 0.4)',
             }}
           >
             {EFFORT_LEVELS.map((level) => (

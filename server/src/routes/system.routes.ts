@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { config } from '../config.js';
@@ -56,5 +56,24 @@ export const systemRoutes = async (app: FastifyInstance) => {
       effortLevel,
       version: '0.1.0',
     };
+  });
+
+  // Update effort level — persists to ~/.claude/settings.json
+  app.post<{ Body: { level: string } }>('/api/system/effort', async (request) => {
+    const { level } = request.body ?? {};
+    if (!level || !['low', 'medium', 'high', 'max'].includes(level)) {
+      return { ok: false, error: 'Invalid level' };
+    }
+
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    try {
+      const raw = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf-8') : '{}';
+      const settings = JSON.parse(raw) as Record<string, unknown>;
+      settings.effortLevel = level;
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      return { ok: true, level };
+    } catch {
+      return { ok: false, error: 'Failed to update settings' };
+    }
   });
 };
