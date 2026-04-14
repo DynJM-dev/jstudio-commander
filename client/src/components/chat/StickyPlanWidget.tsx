@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronDown, CheckCircle2, Circle, CircleDotDashed, CircleAlert, CircleX } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PlanTask } from './AgentPlan';
@@ -31,11 +31,14 @@ interface StickyPlanWidgetProps {
 export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: StickyPlanWidgetProps) => {
   const [expanded, setExpanded] = useState(false);
   const [hiddenAfterDone, setHiddenAfterDone] = useState(false);
+  const [inlineVisible, setInlineVisible] = useState(false);
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Reset UI state when a new plan appears.
   useEffect(() => {
     setExpanded(false);
     setHiddenAfterDone(false);
+    setInlineVisible(false);
   }, [planKey]);
 
   // Auto-hide 3s after all steps complete.
@@ -48,6 +51,29 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     return () => clearTimeout(t);
   }, [allDone, planKey]);
 
+  // Observe the inline plan card. Sticky only surfaces when the inline card is
+  // off-screen — no point duplicating what the user is already reading.
+  useEffect(() => {
+    observerRef.current?.disconnect();
+    const target = document.querySelector<HTMLElement>(
+      `[data-plan-group-key="${CSS.escape(planKey)}"]`,
+    );
+    if (!target) {
+      setInlineVisible(false);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) setInlineVisible(entry.isIntersecting);
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(target);
+    observerRef.current = observer;
+    return () => observer.disconnect();
+  }, [planKey, plan.length]);
+
   const completed = useMemo(() => plan.filter((t) => t.status === 'completed').length, [plan]);
   const total = plan.length;
   const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -56,7 +82,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     [plan],
   );
 
-  const visible = !hiddenAfterDone && total > 0;
+  const visible = !hiddenAfterDone && !inlineVisible && total > 0;
   const reduced = prefersReducedMotion();
 
   return (
@@ -64,11 +90,11 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
       {visible && (
         <motion.div
           key={planKey}
-          initial={reduced ? false : { opacity: 0, y: -8 }}
+          initial={reduced ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={reduced ? undefined : { opacity: 0, y: -8 }}
-          transition={{ duration: 0.25, ease: EASE }}
-          className="shrink-0 px-3 lg:px-6 pt-2"
+          exit={reduced ? undefined : { opacity: 0, y: 8 }}
+          transition={{ duration: 0.2, ease: EASE }}
+          className="shrink-0 px-3 lg:px-6 pb-2"
           style={{ fontFamily: M }}
         >
           <div
@@ -78,7 +104,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
               border: '1px solid rgba(14, 124, 123, 0.18)',
               backdropFilter: 'blur(16px) saturate(180%)',
               WebkitBackdropFilter: 'blur(16px) saturate(180%)',
-              boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)',
+              boxShadow: '0 -6px 18px rgba(0, 0, 0, 0.22)',
             }}
           >
             {/* Collapsed header — always rendered, acts as the toggle */}

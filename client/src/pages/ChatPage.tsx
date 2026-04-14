@@ -220,17 +220,6 @@ export const ChatPage = () => {
         />
       )}
 
-      {/* Sticky plan widget — pinned above ContextBar when an active plan exists.
-          Shares plan state with the inline AgentPlan card (getActivePlan reads
-          the same JSONL) and auto-hides when that inline card scrolls into view. */}
-      {activePlan && (
-        <StickyPlanWidget
-          plan={activePlan.plan}
-          planKey={activePlan.key}
-          allDone={activePlan.allDone}
-        />
-      )}
-
       {/* ContextBar — above input */}
       <ContextBar
         model={session?.model}
@@ -257,6 +246,17 @@ export const ChatPage = () => {
           />
         )}
       </AnimatePresence>
+
+      {/* Sticky plan widget — docks above the input, visible only when the
+          inline plan card has scrolled off-screen. Shares plan state with the
+          inline AgentPlan via the same getActivePlan pipeline. */}
+      {activePlan && (
+        <StickyPlanWidget
+          plan={activePlan.plan}
+          planKey={activePlan.key}
+          allDone={activePlan.allDone}
+        />
+      )}
 
       {/* Input area — glass surface, fixed bottom */}
       {session && session.status !== 'stopped' && (
