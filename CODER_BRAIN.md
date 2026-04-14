@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — added permission prompt detection + inline action buttons in chat
+> Last updated: 2026-04-14 — reliability audit: stats polling, action detection, field mismatch, favicon
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -35,6 +35,9 @@
 | `bde70fd` | Coder-7 | Consolidate stats into ContextBar (action + tokens + elapsed + context %), remove StatusStrip/ResponseSummary, fix Enter key + duplicate keys |
 | `6da7618` | Coder-7 | Move ContextBar above input (not above chat), remove session info bar, fix text-renderer duplicate keys with unique prefixes |
 | `452059b` | Coder-7 | Permission prompt detection: PermissionPrompt component, usePromptDetection hook, enhanced backend detection (numbered choices, Allow/Deny, y/n) |
+| `1117320` | Coder-7 | Redesign PermissionPrompt: full tool context display, plain text info above buttons |
+| `347d0fe` | Coder-7 | Merge consecutive assistant messages into single response blocks (one header + dot per turn) |
+| `bb8989c` | Coder-7 | Reliability audit: stats polling every 3s, fix field mismatch (totalTokens not totalInputTokens), action detection searches backwards, favicon, sent indicator |
 
 ## File Inventory
 
