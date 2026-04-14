@@ -122,7 +122,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
     setLoadingMore(false);
   }, [loadingMore, onLoadMore]);
 
-  const renderMessage = (message: ChatMessage) => {
+  const renderMessage = (message: ChatMessage, showHeader?: boolean) => {
     if (message.role === 'user') {
       return <UserMessage message={message} />;
     }
@@ -132,6 +132,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
         <AssistantMessage
           message={message}
           toolResults={toolResultMap}
+          showHeader={showHeader}
         />
       );
     }
@@ -205,18 +206,28 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
 
           {messages.map((message, index) => {
             const prevMsg = index > 0 ? messages[index - 1] : undefined;
+            const nextMsg = index < messages.length - 1 ? messages[index + 1] : undefined;
+            const isAssistant = message.role === 'assistant';
+            const prevIsAssistant = prevMsg?.role === 'assistant';
 
-            // Determine separators needed
+            // Consecutive assistant messages are part of the same response turn
+            const isContinuation = isAssistant && prevIsAssistant;
+            // First assistant message in a turn (show header + dot)
+            const isFirstInTurn = isAssistant && !prevIsAssistant;
+            // Last assistant message overall (pulsing dot)
+            const isLastMessage = !nextMsg;
+
+            // Determine separators — only between different turns (user→assistant)
             let timestampSep = false;
             let modelSep = false;
 
-            if (prevMsg) {
+            if (prevMsg && !isContinuation) {
               const prevTime = new Date(prevMsg.timestamp).getTime();
               const currTime = new Date(message.timestamp).getTime();
               timestampSep = currTime - prevTime > FIVE_MINUTES;
             }
 
-            if (message.model && prevMsg) {
+            if (message.model && prevMsg && isFirstInTurn) {
               let prevModel: string | undefined;
               for (let j = index - 1; j >= 0; j--) {
                 const m = messages[j];
@@ -228,23 +239,20 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
               modelSep = !!(prevModel && prevModel !== message.model);
             }
 
-            const nextMsg = index < messages.length - 1 ? messages[index + 1] : undefined;
-            const isAssistant = message.role === 'assistant';
-            const isLastAssistant = isAssistant && !nextMsg;
             return (
               <div key={index} className="relative" style={{ paddingLeft: 16 }}>
-                {/* Timeline dot — only for assistant messages */}
-                {isAssistant && (
+                {/* Timeline dot — only on the first assistant message per turn */}
+                {isFirstInTurn && (
                   <div
-                    className={`absolute ${isLastAssistant ? 'animate-pulse' : ''}`}
+                    className={`absolute ${isLastMessage ? 'animate-pulse' : ''}`}
                     style={{
-                      left: isLastAssistant ? -4 : -3,
+                      left: isLastMessage ? -4 : -3,
                       top: 16,
-                      width: isLastAssistant ? 8 : 6,
-                      height: isLastAssistant ? 8 : 6,
+                      width: isLastMessage ? 8 : 6,
+                      height: isLastMessage ? 8 : 6,
                       borderRadius: '50%',
                       background: 'var(--color-accent)',
-                      boxShadow: isLastAssistant ? '0 0 8px rgba(14, 124, 123, 0.4)' : 'none',
+                      boxShadow: isLastMessage ? '0 0 8px rgba(14, 124, 123, 0.4)' : 'none',
                     }}
                   />
                 )}
@@ -252,15 +260,15 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
                 {timestampSep && <TimestampSeparator timestamp={message.timestamp} />}
                 {modelSep && message.model && <ModelChangeSeparator model={message.model} />}
 
-                {/* Subtle divider between messages */}
-                {prevMsg && !timestampSep && (
+                {/* Divider only between turns, not between continuation messages */}
+                {prevMsg && !timestampSep && !isContinuation && (
                   <div
                     className="my-1"
                     style={{ borderTop: '0.5px solid rgba(255, 255, 255, 0.04)' }}
                   />
                 )}
 
-                {renderMessage(message)}
+                {renderMessage(message, !isContinuation)}
               </div>
             );
           })}

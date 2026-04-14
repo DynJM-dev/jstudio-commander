@@ -15,6 +15,7 @@ const prefersReducedMotion = () =>
 interface AssistantMessageProps {
   message: ChatMessage;
   toolResults: Map<string, { content: string; isError?: boolean }>;
+  showHeader?: boolean;
 }
 
 const renderBlock = (
@@ -66,7 +67,7 @@ const renderBlock = (
   }
 };
 
-export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps) => {
+export const AssistantMessage = ({ message, toolResults, showHeader = true }: AssistantMessageProps) => {
   const reduced = prefersReducedMotion();
 
   return (
@@ -74,30 +75,32 @@ export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps
       initial={reduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className="w-full pt-1.5 pb-1.5 px-3"
+      className={`w-full px-3 ${showHeader ? 'pt-1.5 pb-1.5' : 'pb-1'}`}
       style={{ fontFamily: M }}
     >
-      {/* Header: Sparkles icon + "Claude" + timestamp */}
-      <div className="flex items-center gap-1.5 mb-px">
-        <Sparkles
-          size={14}
-          className="shrink-0"
-          style={{ color: 'var(--color-accent)' }}
-        />
-        <span
-          className="text-xs font-semibold leading-none"
-          style={{ color: 'var(--color-accent-light)' }}
-        >
-          Claude
-        </span>
-        <span className="flex-1" />
-        <span
-          className="text-xs leading-none"
-          style={{ color: 'var(--color-text-tertiary)' }}
-        >
-          {formatTime(message.timestamp)}
-        </span>
-      </div>
+      {/* Header: only on the first message of a response turn */}
+      {showHeader && (
+        <div className="flex items-center gap-1.5 mb-px">
+          <Sparkles
+            size={14}
+            className="shrink-0"
+            style={{ color: 'var(--color-accent)' }}
+          />
+          <span
+            className="text-xs font-semibold leading-none"
+            style={{ color: 'var(--color-accent-light)' }}
+          >
+            Claude
+          </span>
+          <span className="flex-1" />
+          <span
+            className="text-xs leading-none"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            {formatTime(message.timestamp)}
+          </span>
+        </div>
+      )}
 
       {/* Content blocks */}
       <div className="space-y-0.5">
