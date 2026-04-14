@@ -75,22 +75,52 @@ setupWatcherBridge();
 // Start status poller
 statusPollerService.start();
 
-// Clear stale statuses on startup — check all non-stopped sessions
+// Startup recovery — fix stale statuses, mark gone sessions, discover orphans
 {
   const db = getDb();
+  const { agentStatusService } = await import('./services/agent-status.service.js');
+  const { tmuxService: tmux } = await import('./services/tmux.service.js');
+  const now = new Date().toISOString();
+
+  // 1. Check all non-stopped DB sessions against live tmux
   const activeSessions = db.prepare(
     "SELECT id, tmux_session, status FROM sessions WHERE status != 'stopped'"
   ).all() as Array<{ id: string; tmux_session: string; status: string }>;
 
-  if (activeSessions.length > 0) {
-    const { agentStatusService } = await import('./services/agent-status.service.js');
-    for (const row of activeSessions) {
+  for (const row of activeSessions) {
+    if (!tmux.hasSession(row.tmux_session)) {
+      // Tmux session gone — mark as stopped
+      db.prepare("UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?")
+        .run(now, now, row.id);
+      console.log(`[startup] Session ${row.id.slice(0, 8)} tmux gone → stopped`);
+    } else {
+      // Tmux alive — detect current status
       const liveStatus = agentStatusService.detectStatus(row.tmux_session);
       if (liveStatus !== row.status) {
-        db.prepare('UPDATE sessions SET status = ?, updated_at = datetime(?) WHERE id = ?')
-          .run(liveStatus, new Date().toISOString(), row.id);
+        db.prepare('UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?')
+          .run(liveStatus, now, row.id);
         console.log(`[startup] Session ${row.id.slice(0, 8)} status: ${row.status} → ${liveStatus}`);
       }
+    }
+  }
+
+  // 2. Discover orphaned jsc- tmux sessions not in the DB
+  const liveTmuxSessions = tmux.listSessions().filter((s) => s.name.startsWith('jsc-'));
+  const knownTmuxNames = new Set(
+    (db.prepare('SELECT tmux_session FROM sessions').all() as Array<{ tmux_session: string }>)
+      .map((r) => r.tmux_session)
+  );
+
+  for (const tmuxSession of liveTmuxSessions) {
+    if (!knownTmuxNames.has(tmuxSession.name)) {
+      // Orphaned tmux session — add to DB
+      const id = tmuxSession.name.replace('jsc-', '') + '-0000-0000-0000-000000000000';
+      const liveStatus = agentStatusService.detectStatus(tmuxSession.name);
+      db.prepare(`
+        INSERT OR IGNORE INTO sessions (id, name, tmux_session, status, model, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'claude-opus-4-6', ?, ?)
+      `).run(id, `recovered-${tmuxSession.name}`, tmuxSession.name, liveStatus, now, now);
+      console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} → added as ${liveStatus}`);
     }
   }
 }

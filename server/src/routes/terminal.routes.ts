@@ -32,19 +32,19 @@ export const terminalRoutes = async (app: FastifyInstance) => {
         return;
       }
 
-      // Attach to tmux session via node-pty
+      // Attach to tmux session
       const terminalId = `term-${sessionId}`;
-      let ptyProcess;
+      let terminal;
       try {
-        ptyProcess = terminalService.attach(terminalId, row.tmux_session);
+        terminal = terminalService.attach(terminalId, row.tmux_session);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to attach';
         ws.close(4002, msg);
         return;
       }
 
-      // Pipe pty output → WebSocket
-      const dataHandler = ptyProcess.onData((data: string) => {
+      // Pipe terminal output → WebSocket
+      terminal.onData((data: string) => {
         try {
           if (ws.readyState === 1) { // OPEN
             ws.send(data);
@@ -54,17 +54,16 @@ export const terminalRoutes = async (app: FastifyInstance) => {
         }
       });
 
-      // Pipe pty exit → close WebSocket
-      const exitHandler = ptyProcess.onExit(() => {
+      // Pipe terminal exit → close WebSocket
+      terminal.onExit(() => {
         try {
           ws.close(1000, 'Process exited');
         } catch {
           // Already closed
         }
-        terminalService.detach(terminalId);
       });
 
-      // Pipe WebSocket messages → pty
+      // Pipe WebSocket messages → terminal
       ws.on('message', (raw: Buffer | string) => {
         const str = raw.toString();
 
@@ -72,11 +71,11 @@ export const terminalRoutes = async (app: FastifyInstance) => {
         try {
           const msg = JSON.parse(str) as TerminalMessage;
           if (msg.type === 'resize' && msg.cols && msg.rows) {
-            terminalService.resize(terminalId, msg.cols, msg.rows);
+            terminal.resize(msg.cols, msg.rows);
             return;
           }
           if (msg.type === 'input' && msg.data) {
-            ptyProcess.write(msg.data);
+            terminal.write(msg.data);
             return;
           }
         } catch {
@@ -84,20 +83,16 @@ export const terminalRoutes = async (app: FastifyInstance) => {
         }
 
         // Raw input
-        ptyProcess.write(str);
+        terminal.write(str);
       });
 
       // Cleanup on WebSocket close
       ws.on('close', () => {
-        dataHandler.dispose();
-        exitHandler.dispose();
-        terminalService.detach(terminalId);
+        terminal.kill();
       });
 
       ws.on('error', () => {
-        dataHandler.dispose();
-        exitHandler.dispose();
-        terminalService.detach(terminalId);
+        terminal.kill();
       });
     }
   );
