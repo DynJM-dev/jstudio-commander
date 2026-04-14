@@ -66,7 +66,7 @@ export const usePromptDetection = (
   const [prompt, setPrompt] = useState<DetectedPrompt | null>(null);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
   const prevMessageCountRef = useRef(messageCount);
-  const dismissedRef = useRef(false);
+  const dismissedUntilRef = useRef(0);
 
   // Clear prompt when session goes idle or new messages arrive
   useEffect(() => {
@@ -76,17 +76,16 @@ export const usePromptDetection = (
     }
   }, [sessionStatus]);
 
-  // Clear dismissed flag when new messages arrive (allows re-detection)
+  // Clear dismissed state when new messages arrive (allows re-detection)
   useEffect(() => {
     if (messageCount > prevMessageCountRef.current) {
-      dismissedRef.current = false;
       prevMessageCountRef.current = messageCount;
     }
   }, [messageCount]);
 
   const clearPrompt = useCallback(() => {
     setPrompt(null);
-    dismissedRef.current = true;
+    dismissedUntilRef.current = Date.now() + 5000; // 5s debounce
   }, []);
 
   // Poll for prompts + terminal hints when session is active
@@ -100,10 +99,11 @@ export const usePromptDetection = (
           `/sessions/${sessionId}/output?lines=15`
         );
 
-        // Prompts
-        if (!dismissedRef.current && res.prompts && res.prompts.length > 0) {
+        // Prompts — only show if not within dismiss debounce window
+        const isDismissed = Date.now() < dismissedUntilRef.current;
+        if (!isDismissed && res.prompts && res.prompts.length > 0) {
           setPrompt(res.prompts[res.prompts.length - 1]!);
-        } else {
+        } else if (isDismissed || !res.prompts || res.prompts.length === 0) {
           setPrompt(null);
         }
 

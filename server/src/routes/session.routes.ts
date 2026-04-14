@@ -116,6 +116,11 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       const raw = tmuxService.capturePane(session.tmuxSession, lines);
       const outputLines = raw.split('\n');
 
+      // Only check the last 3 non-empty lines for prompts — active prompts are always at the bottom.
+      // Old prompt text scrolled up in the pane must NOT trigger detection.
+      const bottomLines = outputLines.slice(-5).filter((l) => l.trim().length > 0).slice(-3);
+      const bottomRaw = bottomLines.join('\n');
+
       // Detect interactive prompts
       const prompts: { type: string; message: string; context?: string; options?: string[] }[] = [];
 
@@ -144,7 +149,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       };
 
       // Trust prompt
-      if (raw.includes('trust this folder') || raw.includes('Yes, I trust')) {
+      if (bottomRaw.includes('trust this folder') || bottomRaw.includes('Yes, I trust')) {
         prompts.push({
           type: 'trust',
           message: 'Claude Code is asking if you trust this workspace folder.',
@@ -177,7 +182,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       }
 
       // Allow/Deny permission prompts (tool approval)
-      if (!prompts.some((p) => p.type === 'choice') && (raw.includes('Allow') && (raw.includes('Deny') || raw.includes('allow always')))) {
+      if (!prompts.some((p) => p.type === 'choice') && (bottomRaw.includes('Allow') && (bottomRaw.includes('Deny') || bottomRaw.includes('allow always')))) {
         const contextLine = outputLines.find((l) =>
           l.includes('Allow') && (l.includes('run:') || l.includes('to run') || l.includes('to execute'))
         );
@@ -185,7 +190,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
           l.includes('Allow') && !l.includes('run:') && !l.includes('to run')
         );
         const message = contextLine?.trim() ?? actionLine?.trim() ?? 'Permission requested';
-        const hasAlwaysOpt = raw.includes('always') || raw.includes('Allow always');
+        const hasAlwaysOpt = bottomRaw.includes('always') || bottomRaw.includes('Allow always');
         prompts.push({
           type: 'permission',
           message,
@@ -195,8 +200,8 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       }
 
       // "Accept edits" prompt (⏵⏵ pattern)
-      if (raw.includes('accept edits') || raw.includes('⏵⏵')) {
-        const editLine = outputLines.find((l) =>
+      if (bottomRaw.includes('accept edits') || bottomRaw.includes('⏵⏵')) {
+        const editLine = bottomLines.find((l) =>
           l.includes('accept edits') || l.includes('⏵⏵')
         );
         prompts.push({
@@ -208,15 +213,15 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       }
 
       // Y/N prompts
-      if (prompts.length === 0 && /\(y\/n\)/i.test(raw)) {
-        const lastYn = outputLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
+      if (prompts.length === 0 && /\(y\/n\)/i.test(bottomRaw)) {
+        const lastYn = bottomLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
         if (lastYn) {
           prompts.push({ type: 'confirm', message: lastYn.trim(), context: extractToolContext() });
         }
       }
 
       // Generic "Esc to cancel" / "Enter to confirm" — catch-all for unknown prompt types
-      if (prompts.length === 0 && (raw.includes('Esc to cancel') || raw.includes('Enter to confirm'))) {
+      if (prompts.length === 0 && (bottomRaw.includes('Esc to cancel') || bottomRaw.includes('Enter to confirm'))) {
         prompts.push({
           type: 'confirm',
           message: 'Waiting for confirmation',

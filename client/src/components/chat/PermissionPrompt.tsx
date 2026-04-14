@@ -76,12 +76,11 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className={`shrink-0 mx-3 lg:mx-6 mb-2 rounded-lg overflow-hidden ${prompt.type === 'accept_edits' ? 'animate-pulse-slow' : ''}`}
+      className="shrink-0 mx-3 lg:mx-6 mb-2 rounded-lg overflow-hidden"
       style={{
         fontFamily: M,
-        background: prompt.type === 'accept_edits' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.06)',
-        borderLeft: '3px solid rgba(245, 158, 11, 0.5)',
-        border: prompt.type === 'accept_edits' ? '1px solid rgba(245, 158, 11, 0.3)' : undefined,
+        background: prompt.type === 'accept_edits' ? 'rgba(245, 158, 11, 0.08)' : 'rgba(245, 158, 11, 0.05)',
+        border: '1px solid rgba(245, 158, 11, 0.2)',
         borderLeftWidth: 3,
         borderLeftColor: 'rgba(245, 158, 11, 0.5)',
         padding: 16,

@@ -234,15 +234,15 @@ button:active, a:active, [role="button"]:active {
   animation: status-pulse 2s ease-in-out infinite;
 }
 
-/* ContextBar glow when working */
+/* ContextBar glow when working — shadow only, no opacity/background changes */
 @keyframes bar-glow {
-  0%, 100% { box-shadow: 0 0 0px rgba(14, 124, 123, 0); }
-  50% { box-shadow: 0 -2px 12px rgba(14, 124, 123, 0.15); }
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(14, 124, 123, 0.1); }
+  50% { box-shadow: inset 0 1px 0 rgba(14, 124, 123, 0.25), 0 -1px 8px rgba(14, 124, 123, 0.12); }
 }
 
 .bar-working {
-  animation: bar-glow 2s ease-in-out infinite;
-  border-top-color: rgba(14, 124, 123, 0.3) !important;
+  animation: bar-glow 2.5s ease-in-out infinite;
+  border-top-color: rgba(14, 124, 123, 0.2) !important;
 }
 
 /* Reduced motion — disable all animations */
