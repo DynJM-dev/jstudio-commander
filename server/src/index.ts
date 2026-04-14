@@ -75,6 +75,26 @@ setupWatcherBridge();
 // Start status poller
 statusPollerService.start();
 
+// Clear stale statuses on startup — check all non-stopped sessions
+{
+  const db = getDb();
+  const activeSessions = db.prepare(
+    "SELECT id, tmux_session, status FROM sessions WHERE status != 'stopped'"
+  ).all() as Array<{ id: string; tmux_session: string; status: string }>;
+
+  if (activeSessions.length > 0) {
+    const { agentStatusService } = await import('./services/agent-status.service.js');
+    for (const row of activeSessions) {
+      const liveStatus = agentStatusService.detectStatus(row.tmux_session);
+      if (liveStatus !== row.status) {
+        db.prepare('UPDATE sessions SET status = ?, updated_at = datetime(?) WHERE id = ?')
+          .run(liveStatus, new Date().toISOString(), row.id);
+        console.log(`[startup] Session ${row.id.slice(0, 8)} status: ${row.status} → ${liveStatus}`);
+      }
+    }
+  }
+}
+
 // Graceful shutdown
 const shutdown = async () => {
   console.log('\n[server] Shutting down...');

@@ -93,7 +93,10 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       // Looks for the block between ─── separator and the prompt options
       const extractToolContext = (): string | undefined => {
         // Find the separator line (────)
-        const sepIdx = outputLines.findLastIndex((l) => /^─{4,}/.test(l.trim()));
+        let sepIdx = -1;
+        for (let k = outputLines.length - 1; k >= 0; k--) {
+          if (/^─{4,}/.test((outputLines[k] ?? '').trim())) { sepIdx = k; break; }
+        }
         if (sepIdx < 0) return undefined;
 
         // Collect lines from separator to the question/options
