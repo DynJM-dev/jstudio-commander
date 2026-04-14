@@ -209,7 +209,13 @@ export const ChatPage = () => {
           />
         </div>
       ) : (
-        <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
+        <ChatThread
+          messages={allMessages}
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          isWorking={session?.status === 'working' || userJustSent}
+          actionLabel={terminalHint}
+        />
       )}
 
       {/* ContextBar — above input */}

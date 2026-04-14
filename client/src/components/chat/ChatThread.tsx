@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { ArrowDown, Loader2 } from 'lucide-react';
+import { ArrowDown, Loader2, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
@@ -72,9 +73,11 @@ interface ChatThreadProps {
   messages: ChatMessage[];
   hasMore: boolean;
   onLoadMore: () => Promise<void>;
+  isWorking?: boolean;
+  actionLabel?: string | null;
 }
 
-export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) => {
+export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, actionLabel }: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showNewMessages, setShowNewMessages] = useState(false);
@@ -170,6 +173,15 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
     setIsAtBottom(atBottom);
     if (atBottom) setShowNewMessages(false);
   }, []);
+
+  // Auto-scroll when working indicator appears
+  useEffect(() => {
+    if (isWorking && isAtBottom) {
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      });
+    }
+  }, [isWorking, isAtBottom]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -328,6 +340,61 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
               </div>
             );
           })}
+
+          {/* Live activity indicator — Claude is working */}
+          <AnimatePresence>
+            {isWorking && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.2, ease: 'easeOut' as const }}
+                className="relative pt-2 pb-4"
+                style={{ paddingLeft: 16 }}
+              >
+                {/* Timeline dot — pulsing */}
+                <div
+                  className="absolute animate-pulse"
+                  style={{
+                    left: -4,
+                    top: 24,
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: 'var(--color-accent)',
+                    boxShadow: '0 0 8px rgba(14, 124, 123, 0.4)',
+                  }}
+                />
+                <div className="px-3" style={{ fontFamily: M }}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Sparkles size={14} style={{ color: 'var(--color-accent)' }} />
+                    <span
+                      className="text-xs font-semibold leading-none"
+                      style={{ color: 'var(--color-accent-light)' }}
+                    >
+                      Claude
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 py-1">
+                    <div
+                      className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
+                      style={{ background: 'var(--color-accent)' }}
+                    />
+                    <span
+                      className="text-sm"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    >
+                      {actionLabel || 'Thinking...'}
+                    </span>
+                  </div>
+                  <div
+                    className="thinking-shimmer h-0.5 rounded-full mt-1"
+                    style={{ maxWidth: 180 }}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
