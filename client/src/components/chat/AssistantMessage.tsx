@@ -74,33 +74,33 @@ export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps
       initial={reduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className="w-full pt-2.5 pb-2 px-4"
+      className="w-full pt-1.5 pb-1.5 px-3"
       style={{ fontFamily: M }}
     >
       {/* Header: Sparkles icon + "Claude" + timestamp */}
-      <div className="flex items-center gap-2 mb-0.5">
+      <div className="flex items-center gap-1.5 mb-px">
         <Sparkles
-          size={16}
-          className="shrink-0 lg:w-4 lg:h-4 w-3.5 h-3.5"
+          size={14}
+          className="shrink-0"
           style={{ color: 'var(--color-accent)' }}
         />
         <span
-          className="text-xs font-semibold"
+          className="text-xs font-semibold leading-none"
           style={{ color: 'var(--color-accent-light)' }}
         >
           Claude
         </span>
         <span className="flex-1" />
         <span
-          className="text-xs"
+          className="text-xs leading-none"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {formatTime(message.timestamp)}
         </span>
       </div>
 
-      {/* Content blocks — flat, no timeline bar */}
-      <div className="space-y-1">
+      {/* Content blocks */}
+      <div className="space-y-0.5">
         {message.content.map((block, i) => renderBlock(block, i, toolResults))}
       </div>
     </motion.div>

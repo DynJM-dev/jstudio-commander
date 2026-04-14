@@ -3,7 +3,7 @@ import { ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
-import { ResponseSummary } from './ResponseSummary';
+
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -228,19 +228,11 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
               modelSep = !!(prevModel && prevModel !== message.model);
             }
 
-            // Show ResponseSummary after each completed assistant turn
-            // (when the next message is from user, or it's the last message and session isn't working)
             const nextMsg = index < messages.length - 1 ? messages[index + 1] : undefined;
-            const showSummary = message.role === 'assistant' &&
-              message.usage &&
-              (nextMsg?.role === 'user' || (!nextMsg));
-
             const isAssistant = message.role === 'assistant';
             const isLastAssistant = isAssistant && !nextMsg;
-            const uid = `${index}-${message.id}`;
-
             return (
-              <div key={uid} className="relative" style={{ paddingLeft: 16 }}>
+              <div key={index} className="relative" style={{ paddingLeft: 16 }}>
                 {/* Timeline dot — only for assistant messages */}
                 {isAssistant && (
                   <div
@@ -269,14 +261,6 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
                 )}
 
                 {renderMessage(message)}
-
-                {/* Response summary after complete assistant turns */}
-                {showSummary && (
-                  <ResponseSummary
-                    message={message}
-                    prevTimestamp={prevMsg?.timestamp}
-                  />
-                )}
               </div>
             );
           })}

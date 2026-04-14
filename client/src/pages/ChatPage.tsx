@@ -8,7 +8,7 @@ import { EmptyState } from '../components/shared/EmptyState';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { ChatThread } from '../components/chat/ChatThread';
 import { ContextBar } from '../components/chat/ContextBar';
-import { StatusStrip } from '../components/chat/StatusStrip';
+
 import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
@@ -112,8 +112,14 @@ export const ChatPage = () => {
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
 
-  // Clear local commands once real JSONL messages arrive
-  const allMessages = messages.length > 0 ? messages : localCommands;
+  // Always show local commands that are newer than the last JSONL message
+  const lastJsonlTime = messages.length > 0
+    ? new Date(messages[messages.length - 1]!.timestamp).getTime()
+    : 0;
+  const pendingLocal = localCommands.filter(
+    (lc) => new Date(lc.timestamp).getTime() > lastJsonlTime
+  );
+  const allMessages = [...messages, ...pendingLocal];
 
   // No session selected
   if (!sessionId) {
@@ -161,14 +167,14 @@ export const ChatPage = () => {
         </div>
       </div>
 
-      {/* Context bar — fixed top */}
-      {stats && (
-        <ContextBar
-          model={session?.model}
-          totalTokens={totalTokens}
-          totalCost={stats.totalCostUsd}
-        />
-      )}
+      {/* Context bar — fixed top: model, action status, tokens, cost, elapsed time, context % */}
+      <ContextBar
+        model={session?.model}
+        totalTokens={totalTokens}
+        totalCost={stats?.totalCostUsd ?? 0}
+        messages={allMessages}
+        sessionStatus={session?.status}
+      />
 
       {/* Chat area */}
       {loading ? (
@@ -193,9 +199,6 @@ export const ChatPage = () => {
       ) : (
         <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
       )}
-
-      {/* Status strip — above input when working */}
-      <StatusStrip messages={allMessages} sessionStatus={session?.status} />
 
       {/* Input area — glass surface, fixed bottom */}
       {session && session.status !== 'stopped' && (
