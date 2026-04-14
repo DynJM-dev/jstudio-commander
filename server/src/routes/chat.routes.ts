@@ -5,18 +5,18 @@ import { jsonlDiscoveryService } from '../services/jsonl-discovery.service.js';
 import { tokenTrackerService } from '../services/token-tracker.service.js';
 
 export const chatRoutes = async (app: FastifyInstance) => {
-  // Get parsed chat messages for a session
+  // Get parsed chat messages for a session (polled frequently — suppress logs)
   app.get<{
     Params: { sessionId: string };
     Querystring: { limit?: string; offset?: string };
-  }>('/api/chat/:sessionId', async (request, reply) => {
+  }>('/api/chat/:sessionId', { logLevel: 'warn' as const }, async (request, reply) => {
     const { sessionId } = request.params;
     const limit = parseInt(request.query.limit ?? '200', 10);
     const offset = parseInt(request.query.offset ?? '0', 10);
 
     const db = getDb();
-    const session = db.prepare('SELECT project_path, transcript_path FROM sessions WHERE id = ?')
-      .get(sessionId) as { project_path: string | null; transcript_path: string | null } | undefined;
+    const session = db.prepare('SELECT project_path, transcript_path, created_at FROM sessions WHERE id = ?')
+      .get(sessionId) as { project_path: string | null; transcript_path: string | null; created_at: string } | undefined;
 
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });
@@ -26,15 +26,37 @@ export const chatRoutes = async (app: FastifyInstance) => {
       return reply.status(400).send({ error: 'Session has no project path — cannot locate JSONL files' });
     }
 
-    // Use stored transcript_path from hooks (exact file), fall back to discovery
-    const jsonlFile = session.transcript_path ?? jsonlDiscoveryService.findLatestSessionFile(session.project_path);
+    // Use stored transcript_path from hooks (exact JSONL file for THIS session)
+    let jsonlFile = session.transcript_path;
+
+    // If no transcript_path yet (hook hasn't fired), try to find a JSONL file
+    // that was modified AFTER this session was created — catches new sessions
+    // before the first hook fires
+    if (!jsonlFile) {
+      const sessionCreated = new Date(session.created_at).getTime() - 5000; // 5s buffer
+      const files = jsonlDiscoveryService.findSessionFiles(session.project_path);
+      const recentFile = files.find((f) => f.modifiedAt.getTime() >= sessionCreated);
+      if (recentFile) {
+        jsonlFile = recentFile.filePath;
+        // Store it so future requests don't need to scan
+        db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ?')
+          .run(recentFile.filePath, sessionId);
+      }
+    }
+
     if (!jsonlFile) {
       return { messages: [], total: 0 };
     }
 
     const allMessages = jsonlParserService.parseFile(jsonlFile);
     const total = allMessages.length;
-    const paginated = allMessages.slice(offset, offset + limit);
+
+    // When offset=0 (default), return the LAST `limit` messages (most recent)
+    // This ensures real-time chat always shows the latest tool calls/responses
+    // For "load older" requests (offset > 0), paginate from the start
+    const paginated = offset === 0 && total > limit
+      ? allMessages.slice(total - limit)
+      : allMessages.slice(offset, offset + limit);
 
     return { messages: paginated, total };
   });
@@ -47,8 +69,8 @@ export const chatRoutes = async (app: FastifyInstance) => {
       const { sessionId } = request.params;
 
       const db = getDb();
-      const session = db.prepare('SELECT id, project_path, transcript_path FROM sessions WHERE id = ?')
-        .get(sessionId) as { id: string; project_path: string | null; transcript_path: string | null } | undefined;
+      const session = db.prepare('SELECT id, project_path, transcript_path, created_at FROM sessions WHERE id = ?')
+        .get(sessionId) as { id: string; project_path: string | null; transcript_path: string | null; created_at: string } | undefined;
 
       if (!session) {
         return reply.status(404).send({ error: 'Session not found' });
@@ -58,7 +80,14 @@ export const chatRoutes = async (app: FastifyInstance) => {
         return { totalTokens: 0, totalCost: 0, byModel: {} };
       }
 
-      const jsonlFile = session.transcript_path ?? jsonlDiscoveryService.findLatestSessionFile(session.project_path);
+      // Use stored transcript_path, or discover recent file
+      let jsonlFile = session.transcript_path;
+      if (!jsonlFile) {
+        const sessionCreated = new Date(session.created_at).getTime() - 5000;
+        const files = jsonlDiscoveryService.findSessionFiles(session.project_path);
+        const recentFile = files.find((f) => f.modifiedAt.getTime() >= sessionCreated);
+        jsonlFile = recentFile?.filePath ?? null;
+      }
       if (!jsonlFile) {
         return { totalTokens: 0, totalCost: 0, byModel: {} };
       }

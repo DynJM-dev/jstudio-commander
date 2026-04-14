@@ -23,42 +23,73 @@ interface UsePromptDetectionReturn {
 }
 
 const parseTerminalHint = (lines: string[]): string | null => {
-  // Look at the last few lines for action clues
-  const tail = lines.slice(-8).map((l) => l.trim()).filter(Boolean);
+  const tail = lines.slice(-10).map((l) => l.trim()).filter(Boolean);
   const joined = tail.join(' ');
 
   // Compaction
-  if (joined.includes('Compacting') || joined.includes('compacting') || joined.includes('Summarizing')) {
+  if (/[Cc]ompacting|[Ss]ummariz/i.test(joined)) {
     return 'Compacting context...';
   }
-  // Thinking/reasoning
-  if (joined.includes('Thinking') || joined.includes('Cogitating') || joined.includes('✻')) {
-    return 'Cogitating...';
+
+  // Explore/Agent subagents
+  if (/Explore\s*\(/i.test(joined) || /Explore\s+\w+/i.test(joined)) {
+    const desc = joined.match(/Explore\s+([^·]+)/i)?.[1]?.trim();
+    return desc ? `Exploring: ${desc.slice(0, 50)}...` : 'Exploring codebase...';
   }
-  // Nesting/sub-agents
-  if (joined.includes('Nesting') || joined.includes('Running') && joined.includes('agent')) {
-    return 'Delegating to agent...';
+  if (/Agent\s*\(/i.test(joined) || /Running\s+\d+\s+.*agent/i.test(joined)) {
+    return 'Running subagent...';
   }
-  // Bash/command
-  if (joined.includes('$ ') && (joined.includes('Bash') || joined.includes('command'))) {
-    return 'Running command...';
+  if (/Skill\s*\(/i.test(joined)) {
+    return 'Loading skill...';
   }
-  // Reading files
-  if (joined.includes('Reading') || joined.includes('Listing')) {
-    return 'Reading files...';
+
+  // Tool chain count
+  const toolCountMatch = joined.match(/\+(\d+)\s+more\s+tool/i);
+  if (toolCountMatch) {
+    return `Running ${toolCountMatch[1]}+ tools...`;
   }
-  // Searching
-  if (joined.includes('Searching') || joined.includes('Grep') || joined.includes('Glob')) {
-    return 'Searching...';
+
+  // Extended thinking with duration
+  const thinkMatch = joined.match(/(Hullaballoo|Cogitat|Herding|Pondering|Spinning|Mulling|Brewed|Crunched|Nesting)\w*[….]* *\((\dm?\s*\d+s|\d+s)/i);
+  if (thinkMatch) {
+    return `Thinking deeply... (${thinkMatch[2]})`;
   }
-  // Editing/writing
-  if (joined.includes('Editing') || joined.includes('Writing')) {
-    return 'Writing code...';
+
+  // Thinking/reasoning (no duration)
+  if (/✻|✶|Thinking|Cogitat|Hullaballoo|Herding|Pondering|Mulling|Spinning/i.test(joined)) {
+    return 'Thinking deeply...';
   }
-  // Generic working
-  if (joined.includes('esc to interrupt') || joined.includes('ctrl+b')) {
-    return 'Working...';
+
+  // Nesting (subagent work)
+  if (/Nesting/i.test(joined)) {
+    const nestMatch = joined.match(/Nesting[….]* *\(([^)]+)\)/i);
+    return nestMatch ? `Nesting... (${nestMatch[1]})` : 'Nesting...';
   }
+
+  // Specific tool calls
+  if (/Bash\s*\(/i.test(joined)) return 'Running command...';
+  if (/Read\s*\(/i.test(joined)) {
+    const file = joined.match(/Read\s*\(\s*([^)]+)\)/i)?.[1]?.split('/').pop();
+    return file ? `Reading ${file}...` : 'Reading file...';
+  }
+  if (/Edit\s*\(/i.test(joined)) {
+    const file = joined.match(/Edit\s*\(\s*([^)]+)\)/i)?.[1]?.split('/').pop();
+    return file ? `Editing ${file}...` : 'Editing file...';
+  }
+  if (/Write\s*\(/i.test(joined)) {
+    const file = joined.match(/Write\s*\(\s*([^)]+)\)/i)?.[1]?.split('/').pop();
+    return file ? `Writing ${file}...` : 'Writing file...';
+  }
+  if (/Grep\s*\(|Glob\s*\(/i.test(joined)) return 'Searching codebase...';
+
+  // Generic reading/listing/searching/editing/writing
+  if (/Reading|Listing/i.test(joined)) return 'Reading files...';
+  if (/Searching/i.test(joined)) return 'Searching...';
+  if (/Editing/i.test(joined)) return 'Editing...';
+  if (/Writing/i.test(joined)) return 'Writing...';
+
+  // Generic working indicators
+  if (/esc to interrupt|ctrl\+b/i.test(joined)) return 'Working...';
 
   return null;
 };

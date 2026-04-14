@@ -44,6 +44,58 @@ const renderBlock = (
       // TaskCreate/TaskUpdate are rendered as AgentPlan — skip here
       if (block.name === 'TaskCreate' || block.name === 'TaskUpdate') return null;
 
+      // Agent spawns — special rendering
+      if (block.name === 'Agent') {
+        const input = block.input as { description?: string; prompt?: string; subagent_type?: string };
+        const desc = input.description ?? input.subagent_type ?? 'Subagent';
+        const result = toolResults.get(block.id);
+        return (
+          <div
+            key={key}
+            className="flex items-start gap-2 py-1.5 px-2 my-1 rounded-md"
+            style={{
+              background: 'rgba(14, 124, 123, 0.06)',
+              border: '1px solid rgba(14, 124, 123, 0.1)',
+              fontFamily: M,
+            }}
+          >
+            <span className="text-xs mt-0.5" style={{ color: 'var(--color-accent)' }}>⚡</span>
+            <div className="min-w-0">
+              <span className="text-xs font-medium" style={{ color: 'var(--color-accent-light)' }}>
+                Agent: {desc}
+              </span>
+              {input.prompt && (
+                <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-tertiary)', maxWidth: 400 }}>
+                  {input.prompt.slice(0, 100)}{input.prompt.length > 100 ? '...' : ''}
+                </p>
+              )}
+              {result && (
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {result.content.slice(0, 80)}{result.content.length > 80 ? '...' : ''}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // Skill loading — compact note
+      if (block.name === 'Skill') {
+        const input = block.input as { skill?: string };
+        return (
+          <div
+            key={key}
+            className="flex items-center gap-1.5 py-0.5"
+            style={{ fontFamily: M }}
+          >
+            <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>🧠</span>
+            <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+              Loaded skill: {input.skill ?? 'unknown'}
+            </span>
+          </div>
+        );
+      }
+
       const result = toolResults.get(block.id);
       return (
         <ToolCallBlock

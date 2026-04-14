@@ -23,7 +23,7 @@ interface ChatResponse {
   total: number;
 }
 
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 500;
 
 export const useChat = (sessionId: string | undefined, sessionStatus?: string): UseChatReturn => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
