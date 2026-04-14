@@ -15,8 +15,8 @@ export const chatRoutes = async (app: FastifyInstance) => {
     const offset = parseInt(request.query.offset ?? '0', 10);
 
     const db = getDb();
-    const session = db.prepare('SELECT project_path FROM sessions WHERE id = ?')
-      .get(sessionId) as { project_path: string | null } | undefined;
+    const session = db.prepare('SELECT project_path, created_at FROM sessions WHERE id = ?')
+      .get(sessionId) as { project_path: string | null; created_at: string } | undefined;
 
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });
@@ -32,8 +32,16 @@ export const chatRoutes = async (app: FastifyInstance) => {
     }
 
     const allMessages = jsonlParserService.parseFile(jsonlFile);
-    const total = allMessages.length;
-    const paginated = allMessages.slice(offset, offset + limit);
+
+    // Filter to only show messages from after this session was created
+    // (prevents old killed session's conversation from appearing in new session)
+    const sessionCreatedAt = new Date(session.created_at).getTime() - 5000; // 5s buffer
+    const filtered = allMessages.filter((m) =>
+      new Date(m.timestamp).getTime() >= sessionCreatedAt
+    );
+
+    const total = filtered.length;
+    const paginated = filtered.slice(offset, offset + limit);
 
     return { messages: paginated, total };
   });
@@ -46,8 +54,8 @@ export const chatRoutes = async (app: FastifyInstance) => {
       const { sessionId } = request.params;
 
       const db = getDb();
-      const session = db.prepare('SELECT id, project_path FROM sessions WHERE id = ?')
-        .get(sessionId) as { id: string; project_path: string | null } | undefined;
+      const session = db.prepare('SELECT id, project_path, created_at FROM sessions WHERE id = ?')
+        .get(sessionId) as { id: string; project_path: string | null; created_at: string } | undefined;
 
       if (!session) {
         return reply.status(404).send({ error: 'Session not found' });
@@ -64,7 +72,14 @@ export const chatRoutes = async (app: FastifyInstance) => {
       }
 
       const allMessages = jsonlParserService.parseFile(jsonlFile);
-      const usageEntries = tokenTrackerService.extractUsage(allMessages);
+
+      // Filter to current session's timeframe
+      const sessionCreatedAt = new Date(session.created_at).getTime() - 5000;
+      const filtered = allMessages.filter((m) =>
+        new Date(m.timestamp).getTime() >= sessionCreatedAt
+      );
+
+      const usageEntries = tokenTrackerService.extractUsage(filtered);
 
       const byModel: Record<string, { tokens: number; cost: number }> = {};
       let totalTokens = 0;
