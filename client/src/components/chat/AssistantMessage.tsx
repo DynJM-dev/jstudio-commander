@@ -12,22 +12,21 @@ const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-interface AssistantMessageProps {
-  message: ChatMessage;
+interface AssistantMessageGroupProps {
+  messages: ChatMessage[];
   toolResults: Map<string, { content: string; isError?: boolean }>;
-  showHeader?: boolean;
 }
 
 const renderBlock = (
   block: ContentBlock,
-  index: number,
+  key: string,
   toolResults: Map<string, { content: string; isError?: boolean }>
 ) => {
   switch (block.type) {
     case 'text':
       return (
         <div
-          key={index}
+          key={key}
           className="text-sm leading-relaxed py-0.5"
           style={{ color: 'var(--color-text-primary)' }}
         >
@@ -36,13 +35,13 @@ const renderBlock = (
       );
 
     case 'thinking':
-      return <ThinkingBlock key={index} text={block.text} />;
+      return <ThinkingBlock key={key} text={block.text} />;
 
     case 'tool_use': {
       const result = toolResults.get(block.id);
       return (
         <ToolCallBlock
-          key={index}
+          key={key}
           name={block.name}
           input={block.input}
           result={result?.content}
@@ -54,7 +53,7 @@ const renderBlock = (
     case 'system_note':
       return (
         <div
-          key={index}
+          key={key}
           className="text-xs italic py-1"
           style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
         >
@@ -67,44 +66,48 @@ const renderBlock = (
   }
 };
 
-export const AssistantMessage = ({ message, toolResults, showHeader = true }: AssistantMessageProps) => {
+export const AssistantMessage = ({ messages, toolResults }: AssistantMessageGroupProps) => {
   const reduced = prefersReducedMotion();
+  const firstMsg = messages[0];
+  if (!firstMsg) return null;
 
   return (
     <motion.div
       initial={reduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className={`w-full px-3 ${showHeader ? 'pt-1.5 pb-1.5' : 'pb-1'}`}
+      className="w-full pt-1.5 pb-1.5 px-3"
       style={{ fontFamily: M }}
     >
-      {/* Header: only on the first message of a response turn */}
-      {showHeader && (
-        <div className="flex items-center gap-1.5 mb-px">
-          <Sparkles
-            size={14}
-            className="shrink-0"
-            style={{ color: 'var(--color-accent)' }}
-          />
-          <span
-            className="text-xs font-semibold leading-none"
-            style={{ color: 'var(--color-accent-light)' }}
-          >
-            Claude
-          </span>
-          <span className="flex-1" />
-          <span
-            className="text-xs leading-none"
-            style={{ color: 'var(--color-text-tertiary)' }}
-          >
-            {formatTime(message.timestamp)}
-          </span>
-        </div>
-      )}
+      {/* Header: one per group */}
+      <div className="flex items-center gap-1.5 mb-px">
+        <Sparkles
+          size={14}
+          className="shrink-0"
+          style={{ color: 'var(--color-accent)' }}
+        />
+        <span
+          className="text-xs font-semibold leading-none"
+          style={{ color: 'var(--color-accent-light)' }}
+        >
+          Claude
+        </span>
+        <span className="flex-1" />
+        <span
+          className="text-xs leading-none"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          {formatTime(firstMsg.timestamp)}
+        </span>
+      </div>
 
-      {/* Content blocks */}
+      {/* All content blocks from all messages in the group */}
       <div className="space-y-0.5">
-        {message.content.map((block, i) => renderBlock(block, i, toolResults))}
+        {messages.map((msg, mi) =>
+          msg.content.map((block, bi) =>
+            renderBlock(block, `${mi}-${bi}`, toolResults)
+          )
+        )}
       </div>
     </motion.div>
   );

@@ -3,12 +3,18 @@ import { ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
-
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
 
 const FIVE_MINUTES = 5 * 60 * 1000;
+
+interface MessageGroup {
+  role: 'user' | 'assistant' | 'system';
+  messages: ChatMessage[];
+  timestamp: string;
+  model?: string;
+}
 
 const ModelChangeSeparator = ({ model }: { model: string }) => (
   <div className="flex items-center gap-3 py-1.5">
@@ -69,6 +75,28 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
     return map;
   }, [messages]);
 
+  // Group consecutive messages by role
+  const groups = useMemo<MessageGroup[]>(() => {
+    const result: MessageGroup[] = [];
+    for (const msg of messages) {
+      const last = result[result.length - 1];
+      if (last && last.role === msg.role && msg.role === 'assistant') {
+        // Extend existing assistant group
+        last.messages.push(msg);
+        if (!last.model && msg.model) last.model = msg.model;
+      } else {
+        // New group
+        result.push({
+          role: msg.role as 'user' | 'assistant' | 'system',
+          messages: [msg],
+          timestamp: msg.timestamp,
+          model: msg.model,
+        });
+      }
+    }
+    return result;
+  }, [messages]);
+
   // Track scroll position
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -122,47 +150,6 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
     setLoadingMore(false);
   }, [loadingMore, onLoadMore]);
 
-  const renderMessage = (message: ChatMessage, showHeader?: boolean) => {
-    if (message.role === 'user') {
-      return <UserMessage message={message} />;
-    }
-
-    if (message.role === 'assistant') {
-      return (
-        <AssistantMessage
-          message={message}
-          toolResults={toolResultMap}
-          showHeader={showHeader}
-        />
-      );
-    }
-
-    // System messages
-    if (message.role === 'system') {
-      const text = message.content[0]?.type === 'system_note'
-        ? message.content[0].text
-        : 'System event';
-
-      return (
-        <div className="flex justify-center py-2">
-          <span
-            className="text-xs px-3 py-1 rounded-full"
-            style={{
-              fontFamily: M,
-              background: 'rgba(255, 255, 255, 0.04)',
-              color: 'var(--color-text-tertiary)',
-              border: '1px solid rgba(255, 255, 255, 0.04)',
-            }}
-          >
-            {text}
-          </span>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
   return (
     <div className="relative flex-1 min-h-0">
       <div
@@ -192,7 +179,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
           </div>
         )}
 
-        {/* Messages — continuous flat thread with timeline dots */}
+        {/* Message groups with timeline */}
         <div className="flex flex-col relative" style={{ marginLeft: 12 }}>
           {/* Continuous vertical timeline line */}
           <div
@@ -204,71 +191,89 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
             }}
           />
 
-          {messages.map((message, index) => {
-            const prevMsg = index > 0 ? messages[index - 1] : undefined;
-            const nextMsg = index < messages.length - 1 ? messages[index + 1] : undefined;
-            const isAssistant = message.role === 'assistant';
-            const prevIsAssistant = prevMsg?.role === 'assistant';
+          {groups.map((group, gi) => {
+            const prevGroup = gi > 0 ? groups[gi - 1] : undefined;
+            const isLast = gi === groups.length - 1;
 
-            // Consecutive assistant messages are part of the same response turn
-            const isContinuation = isAssistant && prevIsAssistant;
-            // First assistant message in a turn (show header + dot)
-            const isFirstInTurn = isAssistant && !prevIsAssistant;
-            // Last assistant message overall (pulsing dot)
-            const isLastMessage = !nextMsg;
-
-            // Determine separators — only between different turns (user→assistant)
+            // Timestamp separator between groups
             let timestampSep = false;
-            let modelSep = false;
-
-            if (prevMsg && !isContinuation) {
-              const prevTime = new Date(prevMsg.timestamp).getTime();
-              const currTime = new Date(message.timestamp).getTime();
+            if (prevGroup) {
+              const prevTime = new Date(prevGroup.timestamp).getTime();
+              const currTime = new Date(group.timestamp).getTime();
               timestampSep = currTime - prevTime > FIVE_MINUTES;
             }
 
-            if (message.model && prevMsg && isFirstInTurn) {
+            // Model change separator
+            let modelSep = false;
+            if (group.role === 'assistant' && group.model && prevGroup) {
               let prevModel: string | undefined;
-              for (let j = index - 1; j >= 0; j--) {
-                const m = messages[j];
-                if (m && m.role === 'assistant' && m.model) {
-                  prevModel = m.model;
+              for (let j = gi - 1; j >= 0; j--) {
+                if (groups[j]?.role === 'assistant' && groups[j]?.model) {
+                  prevModel = groups[j]!.model;
                   break;
                 }
               }
-              modelSep = !!(prevModel && prevModel !== message.model);
+              modelSep = !!(prevModel && prevModel !== group.model);
             }
 
             return (
-              <div key={index} className="relative" style={{ paddingLeft: 16 }}>
-                {/* Timeline dot — only on the first assistant message per turn */}
-                {isFirstInTurn && (
+              <div key={gi} className="relative" style={{ paddingLeft: 16 }}>
+                {/* Timeline dot — one per assistant group */}
+                {group.role === 'assistant' && (
                   <div
-                    className={`absolute ${isLastMessage ? 'animate-pulse' : ''}`}
+                    className={`absolute ${isLast ? 'animate-pulse' : ''}`}
                     style={{
-                      left: isLastMessage ? -4 : -3,
+                      left: isLast ? -4 : -3,
                       top: 16,
-                      width: isLastMessage ? 8 : 6,
-                      height: isLastMessage ? 8 : 6,
+                      width: isLast ? 8 : 6,
+                      height: isLast ? 8 : 6,
                       borderRadius: '50%',
                       background: 'var(--color-accent)',
-                      boxShadow: isLastMessage ? '0 0 8px rgba(14, 124, 123, 0.4)' : 'none',
+                      boxShadow: isLast ? '0 0 8px rgba(14, 124, 123, 0.4)' : 'none',
                     }}
                   />
                 )}
 
-                {timestampSep && <TimestampSeparator timestamp={message.timestamp} />}
-                {modelSep && message.model && <ModelChangeSeparator model={message.model} />}
+                {timestampSep && <TimestampSeparator timestamp={group.timestamp} />}
+                {modelSep && group.model && <ModelChangeSeparator model={group.model} />}
 
-                {/* Divider only between turns, not between continuation messages */}
-                {prevMsg && !timestampSep && !isContinuation && (
+                {/* Divider between groups */}
+                {prevGroup && !timestampSep && (
                   <div
                     className="my-1"
                     style={{ borderTop: '0.5px solid rgba(255, 255, 255, 0.04)' }}
                   />
                 )}
 
-                {renderMessage(message, !isContinuation)}
+                {/* Render the group */}
+                {group.role === 'user' && (
+                  <UserMessage message={group.messages[0]!} />
+                )}
+
+                {group.role === 'assistant' && (
+                  <AssistantMessage
+                    messages={group.messages}
+                    toolResults={toolResultMap}
+                  />
+                )}
+
+                {group.role === 'system' && (
+                  <div className="flex justify-center py-2">
+                    <span
+                      className="text-xs px-3 py-1 rounded-full"
+                      style={{
+                        fontFamily: M,
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        color: 'var(--color-text-tertiary)',
+                        border: '1px solid rgba(255, 255, 255, 0.04)',
+                      }}
+                    >
+                      {group.messages[0]?.content[0]?.type === 'system_note'
+                        ? group.messages[0].content[0].text
+                        : 'System event'}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
