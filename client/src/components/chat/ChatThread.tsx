@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
+import type { PlanTask } from './AgentPlan';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -16,6 +17,44 @@ interface MessageGroup {
   timestamp: string;
   model?: string;
 }
+
+// Walk an assistant group's TaskCreate/TaskUpdate tool calls to produce a plan.
+// Plans belong visually to the preceding user message — they show what Claude
+// is tracking for that specific request.
+const buildPlanFromAssistantGroup = (group: MessageGroup): PlanTask[] => {
+  if (group.role !== 'assistant') return [];
+  const tasks = new Map<string, PlanTask>();
+  let autoId = 1;
+
+  for (const msg of group.messages) {
+    for (const block of msg.content) {
+      if (block.type !== 'tool_use') continue;
+
+      if (block.name === 'TaskCreate') {
+        const id = String(autoId++);
+        const input = block.input as { subject?: string; description?: string };
+        tasks.set(id, {
+          id,
+          title: input.subject ?? 'Task',
+          description: input.description,
+          status: 'pending',
+        });
+      }
+
+      if (block.name === 'TaskUpdate') {
+        const input = block.input as { taskId?: string; status?: string; subject?: string };
+        const taskId = input.taskId;
+        if (taskId && tasks.has(taskId)) {
+          const task = tasks.get(taskId)!;
+          if (input.status) task.status = input.status as PlanTask['status'];
+          if (input.subject) task.title = input.subject;
+        }
+      }
+    }
+  }
+
+  return Array.from(tasks.values());
+};
 
 const ModelChangeSeparator = ({ model }: { model: string }) => (
   <div className="flex items-center gap-3 py-1.5">
@@ -272,6 +311,11 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
             const prevGroup = gi > 0 ? groups[gi - 1] : undefined;
             const isLast = gi === groups.length - 1;
 
+            // For user groups: pull the plan from the immediately following assistant group
+            const userPlan = group.role === 'user'
+              ? buildPlanFromAssistantGroup(groups[gi + 1] ?? { role: 'assistant', messages: [], timestamp: '' } as MessageGroup)
+              : [];
+
             // Timestamp separator between groups
             let timestampSep = false;
             if (prevGroup) {
@@ -324,7 +368,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
 
                 {/* Render the group */}
                 {group.role === 'user' && (
-                  <UserMessage message={group.messages[0]!} />
+                  <UserMessage message={group.messages[0]!} plan={userPlan} />
                 )}
 
                 {group.role === 'assistant' && (

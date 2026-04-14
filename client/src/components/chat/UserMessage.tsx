@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { formatTime } from '../../utils/format';
+import { AgentPlan } from './AgentPlan';
+import type { PlanTask } from './AgentPlan';
 
 const M = 'Montserrat, sans-serif';
 
@@ -15,9 +17,10 @@ const prefersReducedMotion = () =>
 
 interface UserMessageProps {
   message: ChatMessage;
+  plan?: PlanTask[];
 }
 
-export const UserMessage = ({ message }: UserMessageProps) => {
+export const UserMessage = ({ message, plan }: UserMessageProps) => {
   const textBlocks = message.content.filter((b) => b.type === 'text');
   const toolResults = message.content.filter((b) => b.type === 'tool_result');
   const [expanded, setExpanded] = useState(false);
@@ -97,6 +100,13 @@ export const UserMessage = ({ message }: UserMessageProps) => {
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>
+      )}
+
+      {/* Attached plan — Claude's task list for this user request */}
+      {plan && plan.length > 0 && (
+        <div className="mt-2">
+          <AgentPlan tasks={plan} title="Plan" />
+        </div>
       )}
     </motion.div>
   );
