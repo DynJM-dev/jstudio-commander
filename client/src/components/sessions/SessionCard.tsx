@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Pencil } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 import { StatusBadge } from '../shared/StatusBadge';
 import { CommandInput } from './CommandInput';
 import { SessionActions } from './SessionActions';
+import { TeammateRow } from './TeammateRow';
 
 const M = 'Montserrat, sans-serif';
 
 interface SessionCardProps {
   session: Session;
+  teammates?: Session[];
   onCommand: (id: string, command: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
@@ -41,10 +44,13 @@ const shortenPath = (path: string | null): string => {
   return path.replace(/^\/Users\/[^/]+/, '~');
 };
 
-export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionCardProps) => {
+export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename }: SessionCardProps) => {
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
-  const isWaiting = session.status === 'waiting';
+  // Glow the parent card yellow when its teammate needs attention — makes
+  // the "someone is waiting on you" signal bubble up to the top of the list.
+  const anyTeammateWaiting = teammates?.some((t) => t.status === 'waiting') ?? false;
+  const isWaiting = session.status === 'waiting' || anyTeammateWaiting;
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -198,6 +204,27 @@ export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionC
             onDelete={async (id) => { await onDelete(id); }}
           />
         </div>
+
+        {/* Teammates — nested under the PM, connected visually by a thin
+            vertical tree line. Clicking a row opens /chat/<pm> with the
+            split already primed to that teammate. */}
+        {teammates && teammates.length > 0 && (
+          <div
+            className="mt-3 pl-3 space-y-0.5"
+            style={{ borderLeft: '1px solid rgba(255, 255, 255, 0.08)' }}
+          >
+            <AnimatePresence initial={false}>
+              {teammates.map((t) => (
+                <TeammateRow
+                  key={t.id}
+                  teammate={t}
+                  parentId={session.id}
+                  onOpen={() => navigate(`/chat/${session.id}`)}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
       </GlassCard>
     </div>
   );

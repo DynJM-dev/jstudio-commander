@@ -62,9 +62,15 @@ export const useSessions = (): UseSessionsReturn => {
         });
         break;
       case 'session:updated':
-        setSessions((prev) =>
-          prev.map((s) => (s.id === event.session.id ? event.session : s))
-        );
+        // Upsert: team-config emits session:updated for newly-detected
+        // teammates too, so a pure map() would drop them. Append if
+        // we've never seen this id.
+        setSessions((prev) => {
+          const exists = prev.some((s) => s.id === event.session.id);
+          return exists
+            ? prev.map((s) => (s.id === event.session.id ? event.session : s))
+            : [event.session, ...prev];
+        });
         break;
       case 'session:deleted':
         setSessions((prev) => prev.filter((s) => s.id !== event.sessionId));

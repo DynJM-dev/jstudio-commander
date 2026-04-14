@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Monitor, Plus } from 'lucide-react';
+import type { Session } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { SessionCard } from '../components/sessions/SessionCard';
@@ -12,6 +13,43 @@ export const SessionsPage = () => {
   const { sessions, loading, error, createSession, deleteSession, sendCommand, updateSession } = useSessions();
   const [modalOpen, setModalOpen] = useState(false);
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
+
+  // Build a parent → teammates map, then a top-level list excluding teammates.
+  // Sessions link to parents by either Commander UUID (parentSessionId matches
+  // another session.id) or by Claude's leadSessionId (matches claudeSessionId
+  // on a Commander row) — match both forms so the tree holds either way.
+  const { topLevel, teammatesByParent } = useMemo(() => {
+    const byCommanderId = new Map<string, Session>();
+    const byClaudeId = new Map<string, Session>();
+    for (const s of activeSessions) {
+      byCommanderId.set(s.id, s);
+      if (s.claudeSessionId) byClaudeId.set(s.claudeSessionId, s);
+    }
+
+    const childIds = new Set<string>();
+    const childrenOf = new Map<string, Session[]>();
+
+    for (const s of activeSessions) {
+      if (!s.parentSessionId) continue;
+      const parent = byCommanderId.get(s.parentSessionId) ?? byClaudeId.get(s.parentSessionId);
+      if (!parent) continue;
+      childIds.add(s.id);
+      const bucket = childrenOf.get(parent.id) ?? [];
+      bucket.push(s);
+      childrenOf.set(parent.id, bucket);
+    }
+
+    const top = activeSessions
+      .filter((s) => !childIds.has(s.id))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+    // Sort each bucket by role then name for stable rendering.
+    for (const bucket of childrenOf.values()) {
+      bucket.sort((a, b) => (a.agentRole ?? '').localeCompare(b.agentRole ?? '') || a.name.localeCompare(b.name));
+    }
+
+    return { topLevel: top, teammatesByParent: childrenOf };
+  }, [activeSessions]);
 
   const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string }) => {
     await createSession(opts);
@@ -101,13 +139,14 @@ export const SessionsPage = () => {
         </div>
       )}
 
-      {/* Active sessions grid */}
-      {activeSessions.length > 0 && (
+      {/* Active sessions grid — top-level parents with teammates nested */}
+      {topLevel.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {activeSessions.map((session) => (
+          {topLevel.map((session) => (
             <SessionCard
               key={session.id}
               session={session}
+              teammates={teammatesByParent.get(session.id)}
               onCommand={handleCommand}
               onDelete={handleDelete}
               onRename={handleRename}
