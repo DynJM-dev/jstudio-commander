@@ -55,7 +55,7 @@ export const ChatPage = () => {
       setShowSlashMenu(false);
       setSent(true);
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      setTimeout(() => setSent(false), 1500);
+      setTimeout(() => setSent(false), 2000);
     } catch {
       // silently fail
     } finally {
@@ -110,7 +110,7 @@ export const ChatPage = () => {
   }, [sendCommand]);
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
-  const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
+  const totalTokens = stats?.totalTokens ?? 0;
 
   // Always show local commands that are newer than the last JSONL message
   const lastJsonlTime = messages.length > 0
@@ -180,7 +180,7 @@ export const ChatPage = () => {
       <ContextBar
         model={session?.model}
         totalTokens={totalTokens}
-        totalCost={stats?.totalCostUsd ?? 0}
+        totalCost={stats?.totalCost ?? 0}
         messages={allMessages}
         sessionStatus={session?.status}
       />
@@ -314,6 +314,27 @@ export const ChatPage = () => {
               {sent ? <Check size={16} /> : <SendHorizontal size={16} />}
             </button>
           </div>
+
+          {/* Sent confirmation */}
+          <AnimatePresence>
+            {sent && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="flex items-center gap-1 mt-1.5 ml-1"
+              >
+                <Check size={12} style={{ color: 'var(--color-working)' }} />
+                <span
+                  className="text-xs"
+                  style={{ color: 'var(--color-working)', fontFamily: M }}
+                >
+                  Sent
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
     </div>

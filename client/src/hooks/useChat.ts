@@ -4,10 +4,9 @@ import { api } from '../services/api';
 import { useWebSocket } from './useWebSocket';
 
 interface ChatStats {
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCostUsd: number;
-  messageCount: number;
+  totalTokens: number;
+  totalCost: number;
+  byModel: Record<string, { tokens: number; cost: number }>;
 }
 
 interface UseChatReturn {
@@ -121,21 +120,24 @@ export const useChat = (sessionId: string | undefined): UseChatReturn => {
     }
   }, [lastEvent, sessionId]);
 
-  // Polling fallback — fetch new messages every 3s in case WebSocket pipeline misses updates
+  // Polling fallback — fetch new messages + stats every 3s
   useEffect(() => {
     if (!sessionId || loading) return;
 
     const poll = async () => {
       try {
-        const res = await api.get<ChatResponse>(`/chat/${sessionId}?limit=${PAGE_SIZE}`);
+        const [chatRes, statsRes] = await Promise.all([
+          api.get<ChatResponse>(`/chat/${sessionId}?limit=${PAGE_SIZE}`),
+          api.get<ChatStats>(`/chat/${sessionId}/stats`).catch(() => null),
+        ]);
         setMessages((prev) => {
-          // Only update if there are genuinely new messages
-          if (res.messages.length <= prev.length) return prev;
+          if (chatRes.messages.length <= prev.length) return prev;
           const existingIds = new Set(prev.map((m) => m.id));
-          const newMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+          const newMsgs = chatRes.messages.filter((m) => !existingIds.has(m.id));
           return newMsgs.length > 0 ? [...prev, ...newMsgs] : prev;
         });
-        setTotal(res.total);
+        setTotal(chatRes.total);
+        if (statsRes) setStats(statsRes);
       } catch {
         // Silently fail on poll
       }

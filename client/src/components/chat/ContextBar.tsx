@@ -19,8 +19,12 @@ const getContextLimit = (model?: string): number => {
 
 const getActionLabel = (messages: ChatMessage[]): string | null => {
   if (messages.length === 0) return null;
-  const lastMsg = messages[messages.length - 1];
-  if (!lastMsg || lastMsg.role !== 'assistant') return null;
+  // Find the last assistant message (user messages may be appended after)
+  let lastMsg: ChatMessage | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === 'assistant') { lastMsg = messages[i]; break; }
+  }
+  if (!lastMsg) return null;
 
   const blocks = lastMsg.content;
   const lastBlock = blocks[blocks.length - 1];
@@ -130,7 +134,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
       style={{
         fontFamily: M,
         height: 32,
-        borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+        borderTop: '1px solid rgba(255, 255, 255, 0.04)',
       }}
     >
       {/* Model name */}
