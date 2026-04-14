@@ -76,9 +76,27 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
   }, [messages]);
 
   // Group consecutive messages by role
+  // tool_result-only user messages are folded into the preceding assistant group
+  // (they're system bookkeeping, not real user messages)
   const groups = useMemo<MessageGroup[]>(() => {
     const result: MessageGroup[] = [];
+
+    const isToolResultOnly = (msg: ChatMessage) =>
+      msg.role === 'user' &&
+      msg.content.length > 0 &&
+      msg.content.every((b) => b.type === 'tool_result');
+
     for (const msg of messages) {
+      // Skip tool_result-only user messages — fold into current assistant group
+      if (isToolResultOnly(msg)) {
+        const last = result[result.length - 1];
+        if (last && last.role === 'assistant') {
+          // Add to the assistant group so tool results are available
+          last.messages.push(msg);
+        }
+        continue;
+      }
+
       const last = result[result.length - 1];
       if (last && last.role === msg.role && msg.role === 'assistant') {
         // Extend existing assistant group

@@ -37,27 +37,30 @@ export const ChatPage = () => {
   const sendCommand = useCallback(async () => {
     if (!sessionId || !command.trim() || sending) return;
     const cmdText = command.trim();
+
+    // Show the message IMMEDIATELY — before the API call
+    const localMsg: ChatMessage = {
+      id: `local-${Date.now()}`,
+      parentId: null,
+      role: 'user',
+      timestamp: new Date().toISOString(),
+      content: [{ type: 'text', text: cmdText }],
+      isSidechain: false,
+    };
+    setLocalCommands((prev) => [...prev, localMsg]);
+    setCommand('');
+    setShowSlashMenu(false);
+    setSent(true);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    setTimeout(() => setSent(false), 2000);
+
+    // Then send to server (fire-and-forget style — message is already visible)
     setSending(true);
     try {
       await api.post(`/sessions/${sessionId}/command`, { command: cmdText });
-
-      const localMsg: ChatMessage = {
-        id: `local-${Date.now()}`,
-        parentId: null,
-        role: 'user',
-        timestamp: new Date().toISOString(),
-        content: [{ type: 'text', text: cmdText }],
-        isSidechain: false,
-      };
-      setLocalCommands((prev) => [...prev, localMsg]);
-
-      setCommand('');
-      setShowSlashMenu(false);
-      setSent(true);
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      setTimeout(() => setSent(false), 2000);
     } catch {
-      // silently fail
+      // Command failed — but local message is already visible
+      // Could add error indicator here in the future
     } finally {
       setSending(false);
     }
