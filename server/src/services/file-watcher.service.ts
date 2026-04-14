@@ -1,5 +1,6 @@
 import { watch } from 'chokidar';
-import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, statSync, openSync, readSync, closeSync, watch as fsWatch } from 'node:fs';
+import type { FSWatcher as NodeFSWatcher } from 'node:fs';
 import { basename } from 'node:path';
 import type { FSWatcher } from 'chokidar';
 import { getDb } from '../db/connection.js';
@@ -12,6 +13,7 @@ let jsonlWatcher: FSWatcher | null = null;
 let projectWatcher: FSWatcher | null = null;
 const jsonlHandlers: JsonlChangeHandler[] = [];
 const projectHandlers: ProjectFileChangeHandler[] = [];
+const specificWatchers = new Map<string, NodeFSWatcher>();
 
 const getIncrementalLines = (filePath: string): string[] => {
   const db = getDb();
@@ -76,7 +78,9 @@ export const fileWatcherService = {
       persistent: true,
       ignoreInitial: true,
       depth: 2,
-      awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+      usePolling: true,
+      interval: 500,
+      awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     });
 
     jsonlWatcher.on('ready', () => {
@@ -146,6 +150,10 @@ export const fileWatcherService = {
       projectWatcher.close();
       projectWatcher = null;
     }
+    for (const [, w] of specificWatchers) {
+      try { w.close(); } catch { /* already closed */ }
+    }
+    specificWatchers.clear();
     jsonlHandlers.length = 0;
     projectHandlers.length = 0;
     console.log('[watcher] File watchers stopped');
@@ -157,6 +165,50 @@ export const fileWatcherService = {
 
   onProjectFileChange(callback: ProjectFileChangeHandler): void {
     projectHandlers.push(callback);
+  },
+
+  // Watch a specific JSONL file using fs.watch (triggered by Claude Code hooks)
+  // Much more reliable than directory-level watching for individual files
+  watchSpecificFile(filePath: string): void {
+    if (specificWatchers.has(filePath)) return; // Already watching
+
+    try {
+      const watcher = fsWatch(filePath, { persistent: false }, (eventType) => {
+        if (eventType !== 'change') return;
+
+        const newLines = getIncrementalLines(filePath);
+        if (newLines.length > 0) {
+          for (const handler of jsonlHandlers) {
+            try {
+              handler(filePath, newLines);
+            } catch (err) {
+              console.error('[watcher] Specific file handler error:', err);
+            }
+          }
+        }
+      });
+
+      watcher.on('error', () => {
+        specificWatchers.delete(filePath);
+      });
+
+      specificWatchers.set(filePath, watcher);
+      console.log(`[watcher] Watching specific file: ${basename(filePath)}`);
+
+      // Also trigger an immediate read for any unprocessed data
+      const newLines = getIncrementalLines(filePath);
+      if (newLines.length > 0) {
+        for (const handler of jsonlHandlers) {
+          try {
+            handler(filePath, newLines);
+          } catch (err) {
+            console.error('[watcher] Specific file handler error:', err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[watcher] Failed to watch ${basename(filePath)}:`, err);
+    }
   },
 
   getIncrementalLines,

@@ -55,6 +55,10 @@ class CommanderEventBus extends EventEmitter {
   emitSystemError(error: string): void {
     this.emit('system:error', error);
   }
+
+  emitSystemEvent(event: string, data: unknown): void {
+    this.emit('system:event', event, data);
+  }
 }
 
 export const eventBus = new CommanderEventBus();

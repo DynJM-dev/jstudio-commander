@@ -14,6 +14,7 @@ import { analyticsRoutes } from './routes/analytics.routes.js';
 import { terminalRoutes } from './routes/terminal.routes.js';
 import { tunnelRoutes } from './routes/tunnel.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
+import { hookEventRoutes } from './routes/hook-event.routes.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
 import { pinAuthMiddleware } from './middleware/pin-auth.js';
@@ -64,6 +65,7 @@ await app.register(analyticsRoutes);
 await app.register(terminalRoutes);
 await app.register(tunnelRoutes);
 await app.register(authRoutes);
+await app.register(hookEventRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
