@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Monitor, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Monitor, Plus } from 'lucide-react';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { SessionCard } from '../components/sessions/SessionCard';
@@ -11,10 +11,7 @@ const M = 'Montserrat, sans-serif';
 export const SessionsPage = () => {
   const { sessions, loading, error, createSession, deleteSession, sendCommand, updateSession } = useSessions();
   const [modalOpen, setModalOpen] = useState(false);
-  const [stoppedExpanded, setStoppedExpanded] = useState(false);
-
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
-  const stoppedSessions = sessions.filter((s) => s.status === 'stopped');
 
   const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string }) => {
     await createSession(opts);
@@ -116,39 +113,6 @@ export const SessionsPage = () => {
               onRename={handleRename}
             />
           ))}
-        </div>
-      )}
-
-      {/* Stopped sessions */}
-      {stoppedSessions.length > 0 && (
-        <div className="mt-6">
-          <button
-            onClick={() => setStoppedExpanded(!stoppedExpanded)}
-            className="flex items-center gap-2 mb-3 transition-colors"
-            style={{ color: 'var(--color-text-tertiary)' }}
-          >
-            {stoppedExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            <span
-              className="text-sm font-medium"
-              style={{ fontFamily: M }}
-            >
-              Stopped Sessions ({stoppedSessions.length})
-            </span>
-          </button>
-
-          {stoppedExpanded && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {stoppedSessions.map((session) => (
-                <SessionCard
-                  key={session.id}
-                  session={session}
-                  onCommand={handleCommand}
-                  onDelete={handleDelete}
-                  onRename={handleRename}
-                />
-              ))}
-            </div>
-          )}
         </div>
       )}
 
