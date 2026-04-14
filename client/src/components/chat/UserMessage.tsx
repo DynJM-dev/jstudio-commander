@@ -1,4 +1,4 @@
-import { User } from 'lucide-react';
+import { Crown } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
@@ -38,16 +38,16 @@ export const UserMessage = ({ message }: UserMessageProps) => {
     >
       {/* Header: User icon + "You" + timestamp */}
       <div className="flex items-center gap-2 mb-1.5">
-        <User
+        <Crown
           size={14}
           className="shrink-0"
-          style={{ color: 'var(--color-text-tertiary)' }}
+          style={{ color: '#EAB308' }}
         />
         <span
           className="text-xs font-semibold"
           style={{ color: 'var(--color-text-secondary)' }}
         >
-          You
+          JB
         </span>
         <span className="flex-1" />
         <span

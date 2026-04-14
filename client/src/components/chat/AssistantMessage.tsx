@@ -74,11 +74,11 @@ export const AssistantMessage = ({ message, toolResults }: AssistantMessageProps
       initial={reduced ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className="w-full py-3 px-4"
+      className="w-full pt-2.5 pb-2 px-4"
       style={{ fontFamily: M }}
     >
       {/* Header: Sparkles icon + "Claude" + timestamp */}
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center gap-2 mb-0.5">
         <Sparkles
           size={16}
           className="shrink-0 lg:w-4 lg:h-4 w-3.5 h-3.5"

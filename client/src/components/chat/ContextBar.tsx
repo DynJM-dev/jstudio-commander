@@ -2,14 +2,27 @@ import { formatTokens, formatCost } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
 
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4-6': 1_000_000,
+  'claude-sonnet-4-6': 200_000,
+  'claude-haiku-4-5': 200_000,
+  'claude-opus-4-5-20251101': 1_000_000,
+  'claude-sonnet-4-5-20241022': 200_000,
+};
+
+const getContextLimit = (model?: string): number => {
+  if (!model) return 200_000;
+  return MODEL_CONTEXT_LIMITS[model] ?? 200_000;
+};
+
 interface ContextBarProps {
   model?: string;
   totalTokens: number;
   totalCost: number;
-  contextLimit?: number;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextLimit = 200000 }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost }: ContextBarProps) => {
+  const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
     : 0;
@@ -98,7 +111,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextLimit = 20000
           className="text-xs hidden md:inline-block"
           style={{ color: 'var(--color-error)' }}
         >
-          consider /compact
+          Context {contextPercent}% — consider /compact
         </span>
       )}
     </div>

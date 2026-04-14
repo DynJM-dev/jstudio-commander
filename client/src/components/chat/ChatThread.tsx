@@ -191,8 +191,18 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
           </div>
         )}
 
-        {/* Messages — continuous flat thread */}
-        <div className="flex flex-col">
+        {/* Messages — continuous flat thread with timeline dots */}
+        <div className="flex flex-col relative" style={{ marginLeft: 12 }}>
+          {/* Continuous vertical timeline line */}
+          <div
+            className="absolute top-0 bottom-0"
+            style={{
+              left: 0,
+              width: 1,
+              background: 'rgba(255, 255, 255, 0.06)',
+            }}
+          />
+
           {messages.map((message, index) => {
             const prevMsg = index > 0 ? messages[index - 1] : undefined;
 
@@ -225,10 +235,28 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
               message.usage &&
               (nextMsg?.role === 'user' || (!nextMsg));
 
+            const isAssistant = message.role === 'assistant';
+            const isLastAssistant = isAssistant && !nextMsg;
             const uid = `${index}-${message.id}`;
 
             return (
-              <div key={uid}>
+              <div key={uid} className="relative" style={{ paddingLeft: 16 }}>
+                {/* Timeline dot — only for assistant messages */}
+                {isAssistant && (
+                  <div
+                    className={`absolute ${isLastAssistant ? 'animate-pulse' : ''}`}
+                    style={{
+                      left: isLastAssistant ? -4 : -3,
+                      top: 16,
+                      width: isLastAssistant ? 8 : 6,
+                      height: isLastAssistant ? 8 : 6,
+                      borderRadius: '50%',
+                      background: 'var(--color-accent)',
+                      boxShadow: isLastAssistant ? '0 0 8px rgba(14, 124, 123, 0.4)' : 'none',
+                    }}
+                  />
+                )}
+
                 {timestampSep && <TimestampSeparator timestamp={message.timestamp} />}
                 {modelSep && message.model && <ModelChangeSeparator model={message.model} />}
 
