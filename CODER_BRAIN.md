@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — 6 chat view fixes (spacing, StatusStrip, ContextBar, user icon, timeline dots)
+> Last updated: 2026-04-14 — consolidated stats into ContextBar, removed StatusStrip/ResponseSummary, fixed input bugs
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -32,6 +32,7 @@
 | `a1dd129` | Coder-6 | Final chat rebuild: UserMessage, AssistantMessage, StatusStrip, ContextBar, ResponseSummary, glass code blocks, compact tool calls, rich input |
 | `e768815` | Coder-7 | State files audit, CSS @import fix |
 | `6af9ae5` | Coder-7 | 6 chat fixes: spacing, StatusStrip auto-clear, varied status text, ContextBar model limits, Crown icon, timeline dots |
+| `bde70fd` | Coder-7 | Consolidate stats into ContextBar (action + tokens + elapsed + context %), remove StatusStrip/ResponseSummary, fix Enter key + duplicate keys |
 
 ## File Inventory
 
@@ -74,9 +75,7 @@
 - `components/chat/UserMessage.tsx` — flat left-aligned user message, skips tool_result-only messages, Framer Motion entry
 - `components/chat/AssistantMessage.tsx` — flat assistant message with content block rendering (text, thinking, tool calls)
 - `components/chat/ChatThread.tsx` — scrollable timeline, auto-scroll, "New messages ↓" pill, load older, groups messages into user→assistant turns
-- `components/chat/StatusStrip.tsx` — live status bar: thinking/writing/running/reading states with elapsed timers, shows token count on completion
-- `components/chat/ContextBar.tsx` — context usage bar (tokens/cost/model), color-coded warning at 85%+
-- `components/chat/ResponseSummary.tsx` — completion duration + token summary between turns
+- `components/chat/ContextBar.tsx` — unified top bar: model, action status (Cogitating/Reading/Editing/Running/Searching/Delegating/Composing), live token count, cost, elapsed timer, context % bar with color warnings
 - `components/chat/ToolCallBlock.tsx` — collapsible tool calls with icon mapping, special Bash/Edit/Write rendering, compact layout
 - `components/chat/CodeBlock.tsx` — Shiki syntax highlighting (lazy), copy button, language label, line numbers, glass styling
 - `components/chat/ThinkingBlock.tsx` — collapsible thinking with BrainCircuit icon, brain-glow animation, handles redacted
@@ -86,6 +85,8 @@
 ### client/src/ — Chat Components REMOVED
 - `components/chat/UserBubble.tsx` — DELETED (replaced by UserMessage.tsx)
 - `components/chat/AssistantBubble.tsx` — DELETED (replaced by AssistantMessage.tsx)
+- `components/chat/StatusStrip.tsx` — DELETED (merged into ContextBar)
+- `components/chat/ResponseSummary.tsx` — DELETED (inline token summaries removed per user request)
 
 ### client/src/ — Layouts
 - `layouts/Sidebar.tsx` — collapsible 64↔240px, 5 nav items, localStorage, tunnel status
