@@ -32,6 +32,8 @@ export const ChatPage = () => {
   const [sending, setSending] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [localCommands, setLocalCommands] = useState<ChatMessage[]>([]);
+  const [userJustSent, setUserJustSent] = useState(false);
+  const msgCountAtSendRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const sendCommand = useCallback(() => {
@@ -51,6 +53,8 @@ export const ChatPage = () => {
     setCommand('');
     setShowSlashMenu(false);
     setSent(true);
+    setUserJustSent(true);
+    msgCountAtSendRef.current = messages.length;
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setTimeout(() => setSent(false), 2000);
 
@@ -87,6 +91,21 @@ export const ChatPage = () => {
   useEffect(() => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
+
+  // Clear optimistic "working" state when new messages arrive or session goes idle
+  useEffect(() => {
+    if (!userJustSent) return;
+    // Clear if session confirmed working (real status caught up)
+    if (session?.status === 'working') {
+      setUserJustSent(false);
+      return;
+    }
+    // Clear if we got new assistant messages since sending
+    if (messages.length > msgCountAtSendRef.current) {
+      const hasNewAssistant = messages.slice(msgCountAtSendRef.current).some((m) => m.role === 'assistant');
+      if (hasNewAssistant) setUserJustSent(false);
+    }
+  }, [userJustSent, session?.status, messages.length]);
 
   // Auto-resize textarea
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -132,6 +151,7 @@ export const ChatPage = () => {
     sessionId,
     session?.status,
     allMessages.length,
+    userJustSent,
   );
 
   // No session selected
@@ -193,6 +213,7 @@ export const ChatPage = () => {
         terminalHint={terminalHint}
         hasPrompt={!!prompt}
         messagesQueued={messagesQueued}
+        userJustSent={userJustSent}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

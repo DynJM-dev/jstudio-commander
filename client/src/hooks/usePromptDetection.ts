@@ -67,6 +67,7 @@ export const usePromptDetection = (
   sessionId: string | undefined,
   sessionStatus: string | undefined,
   messageCount: number,
+  userJustSent = false,
 ): UsePromptDetectionReturn => {
   const [prompt, setPrompt] = useState<DetectedPrompt | null>(null);
   const [terminalHint, setTerminalHint] = useState<string | null>(null);
@@ -95,10 +96,14 @@ export const usePromptDetection = (
     dismissedUntilRef.current = Date.now() + 5000; // 5s debounce
   }, []);
 
-  // Poll for prompts + terminal hints when session is active
+  // Poll for prompts + terminal hints when session is active or user just sent
   useEffect(() => {
     if (!sessionId) return;
-    if (sessionStatus !== 'working' && sessionStatus !== 'waiting') return;
+    const isActive = sessionStatus === 'working' || sessionStatus === 'waiting' || userJustSent;
+    if (!isActive) return;
+
+    // Poll faster when user just sent (1s) for instant feedback
+    const pollInterval = userJustSent ? 1000 : 2000;
 
     const poll = async () => {
       try {
@@ -131,9 +136,9 @@ export const usePromptDetection = (
     };
 
     poll();
-    const interval = setInterval(poll, 2000);
+    const interval = setInterval(poll, pollInterval);
     return () => clearInterval(interval);
-  }, [sessionId, sessionStatus]);
+  }, [sessionId, sessionStatus, userJustSent]);
 
   return { prompt, terminalHint, messagesQueued, clearPrompt };
 };

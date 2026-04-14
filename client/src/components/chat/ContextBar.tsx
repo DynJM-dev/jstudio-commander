@@ -138,9 +138,10 @@ interface ContextBarProps {
   hasPrompt?: boolean;
   messagesQueued?: boolean;
   effortLevel?: string;
+  userJustSent?: boolean;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium' }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -183,13 +184,15 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
     }
   }, [sessionId]);
 
-  // Derive action label
-  const isWorking = sessionStatus === 'working';
+  // Derive action label — userJustSent provides instant "working" before server confirms
+  const isWorking = sessionStatus === 'working' || userJustSent;
   const jsonlAction = isWorking ? getActionLabel(messages) : null;
   const actionLabel = jsonlAction ?? (isWorking ? terminalHint : null) ?? null;
 
   // Status info (always shown)
-  const statusInfo = getStatusInfo(sessionStatus, actionLabel, hasPrompt);
+  const effectiveStatus = userJustSent && sessionStatus !== 'working' ? 'working' : sessionStatus;
+  const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
+  const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt);
   const status = messagesQueued && isWorking
     ? { ...statusInfo, label: `${statusInfo.label} (queued)` }
     : statusInfo;
