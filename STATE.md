@@ -3,76 +3,97 @@
 ## Current State
 - Phase: Post-v1 Polish (Coder-7) — IN PROGRESS
 - Last updated: 2026-04-14
-- Blockers: node-pty broken (posix_spawnp) — using capture-pane fallback
+- Blockers: node-pty broken (posix_spawnp), tsx watch unreliable for server changes
 - Server port: **3002** (config.json override)
 
 ## Phases
-- [x] Phase 0: Planning & Architecture
-- [x] Phase 1: Foundation & Scaffold — monorepo, SQLite, Tailwind v4, dev servers
-- [x] Phase 2: Backend — tmux service, session CRUD, 7 REST endpoints
-- [x] Phase 3: Backend — JSONL parser, project scanner, token tracker, file watchers
-- [x] Phase 4: WebSocket & Real-time — event bus, rooms, status poller, watcher bridge
-- [x] Phase 5: App Shell & Navigation — sidebar, top bar, mobile nav, routing
-- [x] Phase 6: Session Management UI — cards, create modal, real-time updates
-- [x] Phase 7: Chat Conversation View — bubbles, tool calls, code blocks, Shiki
-- [x] Phase 8: Project Dashboard — cards, phase timeline, module map, STATE.md viewer
-- [x] Phase 9: Terminal Panel & Token Analytics — xterm.js, Recharts dashboards
-- [x] Phase 10: Cloudflare Tunnel, Polish & Delivery — tunnel, PIN auth, production build
+- [x] Phase 0-10: v1 Complete (see PM_HANDOFF.md for details)
 
 ## Post-v1 Polish (Coders 3-6 + PM)
+- [x] Coder-3: Pipeline fixes (chokidar, path decoding, polling fallback)
+- [x] PM: Session tabs, terminal preview, model selector, port 3002
+- [x] Coder-4: Chat overflow fix, avatars, animations
+- [x] Coder-5: Flat timeline layout, no bubbles
+- [x] Coder-6: UserMessage, AssistantMessage, StatusStrip, ContextBar rebuild
 
-- [x] **Coder-3** (`e36d84f`): Pipeline fixes — chokidar glob, path decoding, empty command, polling fallback
-- [x] **PM** (`3db42b5`): Session tabs in TopCommandBar, terminal preview, model selector, port 3002
-- [x] **Coder-4** (`9f87287`): Chat overflow fix, avatars, thinking animations
-- [x] **Coder-5** (`eab3d3d`): First chat redesign — flat timeline, no bubbles
-- [x] **Coder-6** (`a1dd129`): Final chat rebuild — UserMessage, AssistantMessage, StatusStrip, ContextBar
+## Coder-7 Work (42 commits, 2026-04-14)
 
-## Coder-7 Work (17 commits, 2026-04-14)
+### Chat UI
+- [x] CSS @import order fix
+- [x] 6 initial chat fixes (spacing, Crown icon, timeline dots)
+- [x] Consolidate StatusStrip + ResponseSummary into ContextBar
+- [x] Move ContextBar above input, remove session info bar
+- [x] Message grouping (consecutive assistant msgs → one block)
+- [x] tool_result user messages folded into assistant groups
+- [x] Internal XML command messages filtered (<command-name> etc.)
+- [x] Interrupt messages rendered as subtle "— Interrupted —" dividers
+- [x] First message appears immediately (before API call)
+- [x] "Sent ✓" / "Queued — Claude is still working" indicator
+- [x] Optimistic working status (instant "Processing..." on send)
+- [x] Plan card rendering → AgentPlan component with animated tasks
+- [x] Plan auto-check (✓/✅/~~done~~ detection + progress bar)
+- [x] Text-renderer duplicate key fixes (hierarchical prefixes)
 
-### Chat UI Overhaul
-- [x] CSS @import fix — Google Fonts before Tailwind (`e768815`)
-- [x] 6 chat fixes: spacing, StatusStrip auto-clear, Crown icon, timeline dots (`6af9ae5`)
-- [x] Consolidate StatusStrip + ResponseSummary into ContextBar (`bde70fd`)
-- [x] Move ContextBar above input, remove session info bar (`6da7618`)
-- [x] Fix text-renderer duplicate React keys (`6da7618`)
-- [x] Merge consecutive assistant messages — one header per turn (`347d0fe`)
-- [x] Message grouping — consecutive assistant msgs → single visual block (`9c82b87`)
+### ContextBar
+- [x] Always-visible status (idle/waiting/working with colored dots)
+- [x] Bar-glow animation when working (shadow-only, no opacity changes)
+- [x] Effort level selector (CircleGauge icon + upward dropdown)
+- [x] Per-session effort persistence (DB column + PATCH)
+- [x] Terminal hints as action fallback (before JSONL catches up)
+- [x] Message queued indicator ("(queued)" suffix)
+- [x] Model context limits (1M opus/sonnet, 200K haiku)
 
-### Permission Prompt Detection
-- [x] PermissionPrompt component + usePromptDetection hook (`452059b`)
-- [x] Enhanced backend detection: numbered choices, Allow/Deny, y/n, trust (`452059b`)
-- [x] Full tool context extraction from terminal output (`1117320`)
+### Permission Prompts
+- [x] PermissionPrompt component (numbered choices, Allow/Deny, y/n, trust)
+- [x] Raw key endpoint (/api/sessions/:id/key) for Enter/Escape
+- [x] Full tool context extraction from terminal output
+- [x] False positive fix (only check last 3 lines of pane)
+- [x] 5-second dismiss debounce
+- [x] accept_edits removed (mode indicator, not prompt)
+- [x] Numbered choice ❯ 1. detected as waiting (not idle)
 
-### Reliability & Performance
-- [x] Stats field mismatch fix (totalTokens not totalInputTokens) (`bb8989c`)
-- [x] Stats polling — now refreshes every poll cycle, not just on mount (`bb8989c`)
-- [x] ContextBar action detection — searches backwards for last assistant msg (`bb8989c`)
-- [x] Adaptive polling: 1.5s when working, 5s when idle (`a3e8dda`)
-- [x] Terminal hints for ContextBar — shows action before JSONL catches up (`a3e8dda`)
-- [x] Favicon — teal diamond SVG (`bb8989c`)
-- [x] "Sent ✓" indicator below input (`bb8989c`)
+### Real-Time Pipeline
+- [x] Claude Code hook endpoint (/api/hook-event)
+- [x] Hook script (~/.claude/hooks/commander-hook.sh)
+- [x] Hooks configured in ~/.claude/settings.json (PostToolUse, Stop)
+- [x] Specific file watching (fs.watch on exact JSONL from hooks)
+- [x] Adaptive polling (1.5s working / 5s idle)
+- [x] Fast polling (1s) when userJustSent
+- [x] Simplified polling dedup (count + last ID compare)
+- [x] Watcher bridge records token usage
+
+### Session Management
+- [x] Session isolation via transcript_path from hooks
+- [x] Startup recovery (stale status, orphan tmux, gone sessions)
+- [x] Per-session effort_level column + migration
+- [x] New sessions inherit effort from Claude settings
+- [x] Hide stopped sessions from Sessions page
+- [x] sendKeys with -l literal flag + separate Enter
 
 ### Server Fixes
-- [x] Agent status detection rewrite — skip decorators, detect ❯ prompt in tail, defaults to idle (`2122f45`)
-- [x] Startup status cleanup — correct stale working status on boot (`2122f45`)
-- [x] Terminal service rewrite — capture-pane -e 500ms polling fallback (node-pty broken) (`d09534e`)
-- [x] Startup orphan recovery — discover jsc- tmux sessions not in DB (`d09534e`)
-- [x] Gone session cleanup — mark stopped if tmux session no longer exists (`d09534e`)
+- [x] Agent-status rewrite (skip decorators, split idle vs numbered choice)
+- [x] Terminal service rewrite (capture-pane -e fallback, node-pty broken)
+- [x] EMFILE fix (usePolling + depth:1 for project watcher)
+- [x] Stats always from JSONL (not empty token_usage table)
+- [x] Stats field mismatch fix (totalTokens not totalInputTokens)
+- [x] Favicon (teal diamond SVG)
 
-## Known Technical Debt
-- node-pty broken on this system — terminal uses capture-pane polling (not as smooth)
-- Ralph Loop engine deferred to v2
-- Push notifications deferred to v2
-- Voice input deferred to v2
-- Agent Teams visualization deferred (research done, see CODER_BRAIN.md)
+### Other
+- [x] AgentPlan component (animated tasks, status icons, expandable subtasks)
+- [x] Effort command collision fix (await before next send)
+
+## Known Issues
+- tsx watch does NOT hot-reload server changes reliably — MUST manually restart
+- node-pty broken on this system — terminal uses capture-pane polling
+- Hooks only fire for sessions started after hook configuration
+- Claude Code reads settings.json hooks only on startup
 
 ## Resolved Decisions
-- Session naming: auto-slug + optional user rename
-- Project discovery: ~/Desktop/Projects/ default + configurable
-- Remote auth: 4-6 digit PIN for tunnel access
-- Ports: server **3002**, client dev 5173
 - Chat layout: flat timeline, message grouping, ContextBar above input
-- Stats API: returns `{totalTokens, totalCost, byModel}` (not separate input/output)
+- Stats: calculated from JSONL directly (not DB table)
 - Status detection: tmux pane heuristics (no live data in ~/.claude/sessions/*.json)
-- Terminal: capture-pane -e fallback at 500ms (node-pty posix_spawnp fails)
+- Terminal: capture-pane -e at 500ms (node-pty posix_spawnp fails)
+- Session isolation: transcript_path from hooks, fallback to recent file discovery
+- Effort: per-session DB column, not global settings
 - Context limits: opus 1M, sonnet 1M, haiku 200K
+- sendKeys: -l literal flag + separate Enter
