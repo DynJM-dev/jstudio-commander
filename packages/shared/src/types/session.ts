@@ -13,6 +13,7 @@ export interface Session {
   stoppedAt: string | null;
   stationId: string | null;
   agentRole: string | null;
+  effortLevel: string;
 }
 
 export interface SessionEvent {

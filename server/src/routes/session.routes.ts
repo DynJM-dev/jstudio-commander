@@ -229,7 +229,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
   );
 
   // Update session (rename, change model)
-  app.patch<{ Params: { id: string }; Body: { name?: string; model?: string } }>(
+  app.patch<{ Params: { id: string }; Body: { name?: string; model?: string; effortLevel?: string } }>(
     '/api/sessions/:id',
     async (request, reply) => {
       const session = sessionService.updateSession(request.params.id, request.body ?? {});

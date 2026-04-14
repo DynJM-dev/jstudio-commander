@@ -119,12 +119,22 @@ export const ChatPage = () => {
     setShowSlashMenu(val === '/' || (val.startsWith('/') && val.length < 10 && !val.includes(' ')));
   }, []);
 
+  const interruptSession = useCallback(() => {
+    if (!sessionId) return;
+    api.post(`/sessions/${sessionId}/key`, { key: 'Escape' }).catch(() => {});
+  }, [sessionId]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendCommand();
     }
-  }, [sendCommand]);
+    // Escape interrupts Claude when input is empty
+    if (e.key === 'Escape' && !command.trim()) {
+      e.preventDefault();
+      interruptSession();
+    }
+  }, [sendCommand, command, interruptSession]);
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats?.totalTokens ?? 0;
@@ -214,6 +224,8 @@ export const ChatPage = () => {
         hasPrompt={!!prompt}
         messagesQueued={messagesQueued}
         userJustSent={userJustSent}
+        effortLevel={session?.effortLevel}
+        onInterrupt={interruptSession}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

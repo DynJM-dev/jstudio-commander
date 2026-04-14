@@ -47,6 +47,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   stoppedAt: row.stopped_at as string | null,
   stationId: row.station_id as string | null,
   agentRole: row.agent_role as string | null,
+  effortLevel: (row.effort_level as string) ?? 'medium',
 });
 
 export const sessionService = {
@@ -175,7 +176,7 @@ export const sessionService = {
     return { success: true };
   },
 
-  updateSession(id: string, updates: { name?: string; model?: string }): Session | null {
+  updateSession(id: string, updates: { name?: string; model?: string; effortLevel?: string }): Session | null {
     const db = getDb();
     const existing = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!existing) return null;
@@ -190,6 +191,10 @@ export const sessionService = {
     if (updates.model !== undefined) {
       sets.push('model = ?');
       values.push(updates.model);
+    }
+    if (updates.effortLevel !== undefined) {
+      sets.push('effort_level = ?');
+      values.push(updates.effortLevel);
     }
 
     if (sets.length === 0) return this.getSession(id);

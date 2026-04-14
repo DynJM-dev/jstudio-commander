@@ -30,6 +30,10 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN transcript_path TEXT');
     console.log('[db] Migration: added transcript_path column to sessions');
   }
+  if (!cols.some((c) => c.name === 'effort_level')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN effort_level TEXT DEFAULT 'medium'");
+    console.log('[db] Migration: added effort_level column to sessions');
+  }
 
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;

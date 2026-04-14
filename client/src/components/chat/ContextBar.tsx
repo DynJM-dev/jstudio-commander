@@ -178,12 +178,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
   const changeEffort = useCallback(async (level: EffortLevel) => {
     setEffort(level);
     setEffortOpen(false);
-    // Send /effort command to current Claude session
     if (sessionId) {
+      // Send /effort command to current Claude session
       api.post(`/sessions/${sessionId}/command`, { command: `/effort ${level}` }).catch(() => {});
+      // Persist per session in our DB
+      api.patch(`/sessions/${sessionId}`, { effortLevel: level }).catch(() => {});
     }
-    // Persist to ~/.claude/settings.json for future sessions
-    api.post('/system/effort', { level }).catch(() => {});
   }, [sessionId]);
 
   // Derive action label — userJustSent provides instant "working" before server confirms
