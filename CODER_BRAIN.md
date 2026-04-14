@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — reliability audit: stats polling, action detection, field mismatch, favicon
+> Last updated: 2026-04-14 — terminal fallback (node-pty broken), startup recovery, orphan detection
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -38,6 +38,9 @@
 | `1117320` | Coder-7 | Redesign PermissionPrompt: full tool context display, plain text info above buttons |
 | `347d0fe` | Coder-7 | Merge consecutive assistant messages into single response blocks (one header + dot per turn) |
 | `bb8989c` | Coder-7 | Reliability audit: stats polling every 3s, fix field mismatch (totalTokens not totalInputTokens), action detection searches backwards, favicon, sent indicator |
+| `a3e8dda` | Coder-7 | Adaptive polling (1.5s working, 5s idle), terminal hints for ContextBar action status |
+| `2122f45` | Coder-7 | Rewrite agent-status heuristics: skip decorators, detect ❯ prompt in tail, startup status cleanup |
+| `d09534e` | Coder-7 | Terminal fallback (node-pty posix_spawnp fails → capture-pane -e 500ms polling), startup orphan recovery |
 
 ## File Inventory
 
