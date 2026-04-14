@@ -57,21 +57,38 @@ export const sessionService = {
     const tmuxName = generateTmuxName(id);
     const model = opts.model || 'claude-opus-4-6';
 
-    // Create tmux session
+    // Create tmux session (in project directory if specified)
     tmuxService.createSession(tmuxName, opts.projectPath);
+
+    // Auto-start Claude Code in the tmux session
+    // Build the claude command with the selected model
+    const modelFlag = model ? `--model ${model}` : '';
+    const claudeCmd = `claude ${modelFlag}`.trim();
+
+    // Small delay to let the shell initialize, then send the claude command
+    setTimeout(() => {
+      try {
+        tmuxService.sendKeys(tmuxName, claudeCmd);
+
+        // The UI will detect and surface any interactive prompts (trust, permissions)
+        // via the /api/sessions/:id/output endpoint
+      } catch {
+        // Session may have been killed before claude could start
+      }
+    }, 500);
 
     // Insert into database
     const now = new Date().toISOString();
     db.prepare(`
       INSERT INTO sessions (id, name, tmux_session, project_path, status, model, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'idle', ?, ?, ?)
+      VALUES (?, ?, ?, ?, 'working', ?, ?, ?)
     `).run(id, slug, tmuxName, opts.projectPath ?? null, model, now, now);
 
     // Log event
     db.prepare(`
       INSERT INTO session_events (session_id, event, detail)
       VALUES (?, 'created', ?)
-    `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath }));
+    `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
 
     const session = this.getSession(id)!;
     eventBus.emitSessionCreated(session);
@@ -82,23 +99,9 @@ export const sessionService = {
     const db = getDb();
     const rows = db.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all() as Record<string, unknown>[];
 
-    return rows.map((row) => {
-      const session = rowToSession(row);
-      // Enrich with live status if not stopped
-      if (session.status !== 'stopped') {
-        const liveStatus = tmuxService.hasSession(session.tmuxSession)
-          ? agentStatusService.detectStatus(session.tmuxSession)
-          : 'stopped';
-
-        if (liveStatus !== session.status) {
-          // Update DB with live status
-          db.prepare('UPDATE sessions SET status = ?, updated_at = datetime(\'now\') WHERE id = ?')
-            .run(liveStatus, session.id);
-          session.status = liveStatus;
-        }
-      }
-      return session;
-    });
+    // Return cached status from DB — the status poller (5s interval) keeps this fresh
+    // No live tmux detection here to keep the endpoint fast
+    return rows.map((row) => rowToSession(row));
   },
 
   getSession(id: string): Session | null {
@@ -106,22 +109,8 @@ export const sessionService = {
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
 
-    const session = rowToSession(row);
-
-    // Enrich with live status if not stopped
-    if (session.status !== 'stopped') {
-      const liveStatus = tmuxService.hasSession(session.tmuxSession)
-        ? agentStatusService.detectStatus(session.tmuxSession)
-        : 'stopped';
-
-      if (liveStatus !== session.status) {
-        db.prepare('UPDATE sessions SET status = ?, updated_at = datetime(\'now\') WHERE id = ?')
-          .run(liveStatus, session.id);
-        session.status = liveStatus;
-      }
-    }
-
-    return session;
+    // Return cached status — status poller keeps it fresh
+    return rowToSession(row);
   },
 
   deleteSession(id: string): Session | null {

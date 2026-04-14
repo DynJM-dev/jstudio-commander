@@ -1,11 +1,14 @@
-export const formatTokens = (n: number): string => {
+export const formatTokens = (n: number | undefined | null): string => {
+  if (n == null || isNaN(n)) return '0';
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
 };
 
-export const formatCost = (n: number): string =>
-  `$${n.toFixed(2)}`;
+export const formatCost = (n: number | undefined | null): string => {
+  if (n == null || isNaN(n)) return '$0.00';
+  return `$${n.toFixed(2)}`;
+};
 
 export const formatDuration = (ms: number): string => {
   const totalSeconds = Math.floor(ms / 1000);

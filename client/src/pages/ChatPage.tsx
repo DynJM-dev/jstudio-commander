@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { MessageSquare, ArrowLeft, ChevronDown, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { MessageSquare, Loader2, SendHorizontal, Check } from 'lucide-react';
 import type { Session } from '@commander/shared';
+import type { ChatMessage } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { ChatThread } from '../components/chat/ChatThread';
+import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
 import { useChat } from '../hooks/useChat';
 import { api } from '../services/api';
 import { formatTokens, formatCost } from '../utils/format';
@@ -17,48 +19,74 @@ export const ChatPage = () => {
   const { messages, loading, error, hasMore, stats, loadMore } = useChat(sessionId);
   const [session, setSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [command, setCommand] = useState('');
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [localCommands, setLocalCommands] = useState<ChatMessage[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch current session details
-  useEffect(() => {
-    if (!sessionId) {
-      setSession(null);
-      return;
+  const sendCommand = useCallback(async () => {
+    if (!sessionId || !command.trim() || sending) return;
+    const cmdText = command.trim();
+    setSending(true);
+    try {
+      await api.post(`/sessions/${sessionId}/command`, { command: cmdText });
+
+      // Add as a local message so it appears immediately in chat
+      const localMsg: ChatMessage = {
+        id: `local-${Date.now()}`,
+        parentId: null,
+        role: 'user',
+        timestamp: new Date().toISOString(),
+        content: [{ type: 'text', text: cmdText }],
+        isSidechain: false,
+      };
+      setLocalCommands((prev) => [...prev, localMsg]);
+
+      setCommand('');
+      setSent(true);
+      setTimeout(() => setSent(false), 1500);
+    } catch {
+      // silently fail
+    } finally {
+      setSending(false);
     }
+  }, [sessionId, command, sending]);
+
+  // Clear local commands when switching sessions
+  useEffect(() => {
+    setLocalCommands([]);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) { setSession(null); return; }
     api.get<Session>(`/sessions/${sessionId}`).then(setSession).catch(() => {});
   }, [sessionId]);
 
-  // Fetch all sessions for selector
   useEffect(() => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
-  const totalTokens = stats ? stats.totalInputTokens + stats.totalOutputTokens : 0;
+  const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
+
+  // Merge JSONL messages with local commands
+  const allMessages = [...messages, ...localCommands];
 
   // No session selected
   if (!sessionId) {
     return (
       <div className="flex flex-col h-full pb-24 lg:pb-6" style={{ fontFamily: M }}>
-        <div className="p-4 lg:p-6">
-          <h1
-            className="text-xl font-semibold mb-6"
-            style={{ color: 'var(--color-text-primary)' }}
-          >
-            Chat
-          </h1>
-        </div>
         <div className="flex-1 flex items-center justify-center px-4">
           <div className="glass-card w-full max-w-lg">
             <EmptyState
               icon={MessageSquare}
               title="Select a session"
-              description="Choose an active session to view its conversation."
-              action={
-                activeSessions.length > 0
-                  ? { label: `View ${activeSessions[0]!.name}`, onClick: () => navigate(`/chat/${activeSessions[0]!.id}`) }
-                  : undefined
+              description={activeSessions.length > 0
+                ? 'Pick a session from the top bar to view its conversation.'
+                : 'Create a session first from the Sessions page.'
               }
+              action={{ label: 'View All Sessions', onClick: () => navigate('/sessions') }}
             />
           </div>
         </div>
@@ -68,50 +96,40 @@ export const ChatPage = () => {
 
   return (
     <div className="flex flex-col h-full pb-24 lg:pb-6" style={{ fontFamily: M }}>
-      {/* Header */}
-      <div
-        className="flex items-center justify-between px-4 lg:px-6 py-3 shrink-0"
-        style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <Link
-            to="/sessions"
-            className="shrink-0 flex items-center justify-center rounded-lg transition-colors"
-            style={{ width: 32, height: 32, color: 'var(--color-text-tertiary)' }}
-          >
-            <ArrowLeft size={18} />
-          </Link>
 
+      {/* Session info bar */}
+      <div
+        className="shrink-0 flex items-center justify-between px-4 lg:px-6 py-2"
+        style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
           {session && (
             <>
-              <StatusBadge status={session.status} size="sm" />
-              <div className="min-w-0">
-                <h2
-                  className="text-base font-semibold truncate"
-                  style={{ color: 'var(--color-text-primary)' }}
-                >
-                  {session.name}
-                </h2>
-              </div>
+              <StatusBadge status={session.status} showLabel size="sm" />
               <span
-                className="hidden sm:inline-block text-xs px-2 py-0.5 rounded-full shrink-0"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  color: 'var(--color-text-tertiary)',
-                }}
+                className="text-xs px-2 py-0.5 rounded-full hidden sm:inline-block"
+                style={{ background: 'rgba(255, 255, 255, 0.06)', color: 'var(--color-text-tertiary)' }}
               >
-                {session.model}
+                {session.model?.replace('claude-', '')}
               </span>
+              {session.projectPath && (
+                <span
+                  className="font-mono-stats text-xs truncate max-w-[250px] hidden md:inline-block"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  {session.projectPath.replace(/^\/Users\/[^/]+\//, '~/')}
+                </span>
+              )}
             </>
           )}
         </div>
 
-        {/* Stats */}
         {stats && (
-          <div className="hidden sm:flex items-center gap-3 font-mono-stats text-xs shrink-0">
+          <div className="flex items-center gap-3 font-mono-stats text-xs shrink-0">
             <span style={{ color: 'var(--color-accent-light)' }}>
-              {formatTokens(totalTokens)}
+              {formatTokens(totalTokens)} tokens
             </span>
+            <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
             <span style={{ color: 'var(--color-working)' }}>
               {formatCost(stats.totalCostUsd)}
             </span>
@@ -127,116 +145,69 @@ export const ChatPage = () => {
       ) : error ? (
         <div className="flex-1 flex items-center justify-center px-4">
           <div className="glass-card p-5 max-w-md w-full">
-            <p className="text-sm text-center" style={{ color: 'var(--color-error)' }}>
-              {error}
-            </p>
+            <p className="text-sm text-center" style={{ color: 'var(--color-error)' }}>{error}</p>
           </div>
         </div>
-      ) : messages.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center px-4">
-          <div className="glass-card w-full max-w-md">
-            <EmptyState
-              icon={MessageSquare}
-              title="No messages yet"
-              description="Waiting for activity in this session..."
-            />
-          </div>
+      ) : allMessages.length === 0 ? (
+        <div className="flex-1 overflow-y-auto">
+          <SessionTerminalPreview
+            sessionId={sessionId}
+            onSendKeys={async (keys) => {
+              await api.post(`/sessions/${sessionId}/command`, { command: keys });
+            }}
+          />
         </div>
       ) : (
-        <ChatThread
-          messages={messages}
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-        />
+        <ChatThread messages={allMessages} hasMore={hasMore} onLoadMore={loadMore} />
       )}
 
-      {/* Footer: session selector + stats */}
-      <div
-        className="shrink-0 flex items-center justify-between px-4 lg:px-6 py-2"
-        style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
-      >
-        {/* Session selector */}
-        <div className="relative">
-          <button
-            onClick={() => setSelectorOpen(!selectorOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors"
-            style={{
-              fontFamily: M,
-              background: 'rgba(255, 255, 255, 0.04)',
-              color: 'var(--color-text-secondary)',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-            }}
-          >
-            <span className="truncate max-w-[200px]">
-              {session?.name ?? 'Select session'}
-            </span>
-            <ChevronDown size={14} />
-          </button>
-
-          {selectorOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setSelectorOpen(false)}
-              />
-              <div
-                className="absolute bottom-full left-0 mb-1 z-50 w-64 rounded-lg overflow-hidden max-h-64 overflow-y-auto"
-                style={{
-                  background: 'rgba(15, 20, 25, 0.95)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  backdropFilter: 'blur(16px)',
-                }}
-              >
-                {sessions.filter((s) => s.status !== 'stopped').map((s) => (
-                  <button
-                    key={s.id}
-                    className="w-full text-left px-3 py-2.5 text-sm flex items-center gap-2 transition-colors"
-                    style={{
-                      fontFamily: M,
-                      color: s.id === sessionId ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
-                      background: s.id === sessionId ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
-                    }}
-                    onClick={() => {
-                      navigate(`/chat/${s.id}`);
-                      setSelectorOpen(false);
-                    }}
-                    onMouseEnter={(e) => {
-                      if (s.id !== sessionId) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                    }}
-                    onMouseLeave={(e) => {
-                      if (s.id !== sessionId) e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <StatusBadge status={s.status} size="sm" />
-                    <span className="truncate">{s.name}</span>
-                  </button>
-                ))}
-                {sessions.filter((s) => s.status !== 'stopped').length === 0 && (
-                  <div
-                    className="px-3 py-2 text-xs"
-                    style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
-                  >
-                    No active sessions
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Mobile stats */}
-        {stats && (
-          <div className="sm:hidden flex items-center gap-2 font-mono-stats text-xs">
-            <span style={{ color: 'var(--color-accent-light)' }}>
-              {formatTokens(totalTokens)}
-            </span>
-            <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-            <span style={{ color: 'var(--color-working)' }}>
-              {formatCost(stats.totalCostUsd)}
-            </span>
+      {/* Command input bar */}
+      {session && session.status !== 'stopped' && (
+        <div
+          className="shrink-0 px-3 lg:px-6 py-2.5"
+          style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              ref={inputRef}
+              type="text"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendCommand();
+                }
+              }}
+              placeholder="Type your prompt..."
+              disabled={sending}
+              className="flex-1 rounded-lg px-4 py-2.5 text-base outline-none transition-colors"
+              style={{
+                fontFamily: M,
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                color: 'var(--color-text-primary)',
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'; }}
+            />
+            <button
+              onClick={sendCommand}
+              disabled={!command.trim() || sending}
+              className="shrink-0 flex items-center justify-center rounded-lg transition-all"
+              style={{
+                width: 42,
+                height: 42,
+                background: command.trim() ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.04)',
+                color: command.trim() ? '#fff' : 'var(--color-text-tertiary)',
+                cursor: command.trim() ? 'pointer' : 'default',
+              }}
+            >
+              {sent ? <Check size={18} /> : <SendHorizontal size={18} />}
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

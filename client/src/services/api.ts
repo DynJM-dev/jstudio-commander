@@ -37,8 +37,13 @@ export const clearPin = (): void => {
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   const pin = getPin();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
   if (pin) headers['x-commander-pin'] = pin;
+
+  // Only set Content-Type for requests with a body
+  if (options?.body) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const res = await fetch(`${BASE_URL}${path}`, {
     headers,

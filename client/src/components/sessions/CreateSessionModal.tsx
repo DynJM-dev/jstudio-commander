@@ -7,9 +7,9 @@ import { api } from '../../services/api';
 const M = 'Montserrat, sans-serif';
 
 const MODEL_OPTIONS = [
-  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  { value: 'claude-opus-4-6', label: 'Opus 4.6', detail: '1M ctx · $15/$75', tier: 'premium' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', detail: '200K ctx · $3/$15', tier: 'balanced' },
+  { value: 'claude-haiku-4-5', label: 'Haiku 4.5', detail: '200K ctx · $0.80/$4', tier: 'fast' },
 ];
 
 interface CreateSessionModalProps {
@@ -230,21 +230,34 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                 >
                   Model
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2">
                   {MODEL_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
                       type="button"
                       onClick={() => setModel(opt.value)}
-                      className="flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all"
+                      className="flex items-center justify-between rounded-lg px-4 py-3 text-sm transition-all"
                       style={{
                         fontFamily: M,
-                        background: model === opt.value ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.04)',
-                        color: model === opt.value ? '#fff' : 'var(--color-text-secondary)',
+                        background: model === opt.value ? 'rgba(14, 124, 123, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                        color: model === opt.value ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
                         border: `1px solid ${model === opt.value ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.08)'}`,
                       }}
                     >
-                      {opt.label.split(' ').pop()}
+                      <div className="flex flex-col items-start gap-0.5">
+                        <span className="font-semibold" style={{ color: model === opt.value ? '#fff' : 'var(--color-text-primary)' }}>
+                          {opt.label}
+                        </span>
+                        <span className="font-mono-stats text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                          {opt.detail}
+                        </span>
+                      </div>
+                      {model === opt.value && (
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ background: 'var(--color-accent-light)' }}
+                        />
+                      )}
                     </button>
                   ))}
                 </div>
