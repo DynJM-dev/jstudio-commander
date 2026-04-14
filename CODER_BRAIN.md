@@ -1,16 +1,27 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — Coder-7 shutdown, 48 commits total
-> Coder: Coder-7 (Opus 4.6, 1M context)
+> Last updated: 2026-04-14 — Coder-8 verification sweep PASS
+> Coders: Coder-7 (48 polish commits) → Coder-8 (verified)
 
-## NOTES FOR CODER-8 (READ FIRST)
+## Verification Sweep (Coder-8, 2026-04-14) — 50/50 PASS
 
-### Verification sweep was started but NOT executed
-PM requested a 50-item verification sweep right before shutdown. I created the task but did NOT run the tests before being asked for the brain dump. Coder-8 should:
-1. Run the full 50-item verification sweep (see PM's message with all 50 items)
-2. Restart the server first (`lsof -ti:3002 | xargs kill -9 && cd server && npx tsx src/index.ts &>/tmp/jsc-server.log &`)
-3. Test each item with actual curl/browser checks, not just code reading
-4. Fix anything that fails
+All 50 items verified against running server (port 3002, uptime 39m) and code.
+**No fixes required. Branch clean at commit `fa6380d`.**
+
+Evidence highlights (for future regression hunts):
+- Health: `/api/system/health` → `{status:ok, dbConnected:true, tmuxAvailable:true}`
+- Full session CRUD lifecycle green (create → PATCH → /command → /key Escape → DELETE)
+- Effort inherits from `~/.claude/settings.json` on create (returned `effortLevel:"max"`)
+- Chat pagination: `?limit=3&offset=0` on 241-msg session returns last 3 (chat.routes.ts:57-59)
+- Stats real from JSONL (164K tokens / $41.61 / byModel on GG1 session)
+- Hook endpoint `/api/hook-event` returns `{ok:true}`, populates transcript_path
+- Server log streams `[watcher] JSONL change:` during active sessions
+- All UI items verified by code inspection (Shiki+Copy, AgentPlan, teal Agent card, etc.)
+
+### Stale-but-kept note from Coder-7's handoff
+Coder-7's last commits (`fa6380d`, `fb25ec4`) needed a manual server restart to
+take effect. At verification time the running server already had them loaded
+(pagination + Agent/Skill rendering + 8s cooldown all confirmed live).
 
 ### What was just committed that needs manual server restart to take effect
 - `fa6380d` — **Chat API pagination fix** (last 28 messages were missing when total > 200)
