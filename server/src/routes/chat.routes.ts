@@ -15,8 +15,8 @@ export const chatRoutes = async (app: FastifyInstance) => {
     const offset = parseInt(request.query.offset ?? '0', 10);
 
     const db = getDb();
-    const session = db.prepare('SELECT project_path, created_at FROM sessions WHERE id = ?')
-      .get(sessionId) as { project_path: string | null; created_at: string } | undefined;
+    const session = db.prepare('SELECT project_path, transcript_path FROM sessions WHERE id = ?')
+      .get(sessionId) as { project_path: string | null; transcript_path: string | null } | undefined;
 
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });
@@ -26,22 +26,15 @@ export const chatRoutes = async (app: FastifyInstance) => {
       return reply.status(400).send({ error: 'Session has no project path — cannot locate JSONL files' });
     }
 
-    const jsonlFile = jsonlDiscoveryService.findLatestSessionFile(session.project_path);
+    // Use stored transcript_path from hooks (exact file), fall back to discovery
+    const jsonlFile = session.transcript_path ?? jsonlDiscoveryService.findLatestSessionFile(session.project_path);
     if (!jsonlFile) {
       return { messages: [], total: 0 };
     }
 
     const allMessages = jsonlParserService.parseFile(jsonlFile);
-
-    // Filter to only show messages from after this session was created
-    // (prevents old killed session's conversation from appearing in new session)
-    const sessionCreatedAt = new Date(session.created_at).getTime() - 5000; // 5s buffer
-    const filtered = allMessages.filter((m) =>
-      new Date(m.timestamp).getTime() >= sessionCreatedAt
-    );
-
-    const total = filtered.length;
-    const paginated = filtered.slice(offset, offset + limit);
+    const total = allMessages.length;
+    const paginated = allMessages.slice(offset, offset + limit);
 
     return { messages: paginated, total };
   });
@@ -54,32 +47,24 @@ export const chatRoutes = async (app: FastifyInstance) => {
       const { sessionId } = request.params;
 
       const db = getDb();
-      const session = db.prepare('SELECT id, project_path, created_at FROM sessions WHERE id = ?')
-        .get(sessionId) as { id: string; project_path: string | null; created_at: string } | undefined;
+      const session = db.prepare('SELECT id, project_path, transcript_path FROM sessions WHERE id = ?')
+        .get(sessionId) as { id: string; project_path: string | null; transcript_path: string | null } | undefined;
 
       if (!session) {
         return reply.status(404).send({ error: 'Session not found' });
       }
 
-      // Calculate stats directly from JSONL messages — always authoritative
       if (!session.project_path) {
         return { totalTokens: 0, totalCost: 0, byModel: {} };
       }
 
-      const jsonlFile = jsonlDiscoveryService.findLatestSessionFile(session.project_path);
+      const jsonlFile = session.transcript_path ?? jsonlDiscoveryService.findLatestSessionFile(session.project_path);
       if (!jsonlFile) {
         return { totalTokens: 0, totalCost: 0, byModel: {} };
       }
 
       const allMessages = jsonlParserService.parseFile(jsonlFile);
-
-      // Filter to current session's timeframe
-      const sessionCreatedAt = new Date(session.created_at).getTime() - 5000;
-      const filtered = allMessages.filter((m) =>
-        new Date(m.timestamp).getTime() >= sessionCreatedAt
-      );
-
-      const usageEntries = tokenTrackerService.extractUsage(filtered);
+      const usageEntries = tokenTrackerService.extractUsage(allMessages);
 
       const byModel: Record<string, { tokens: number; cost: number }> = {};
       let totalTokens = 0;

@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   stopped_at TEXT,
   station_id TEXT,
-  agent_role TEXT
+  agent_role TEXT,
+  transcript_path TEXT
 );
 
 -- Projects: discovered from filesystem, enriched with parsed STATE.md

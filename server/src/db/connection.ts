@@ -24,6 +24,13 @@ export const getDb = (): Database.Database => {
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
   db.exec(schema);
 
+  // Migrations for existing databases
+  const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'transcript_path')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN transcript_path TEXT');
+    console.log('[db] Migration: added transcript_path column to sessions');
+  }
+
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;
 };
