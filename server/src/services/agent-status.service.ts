@@ -36,10 +36,18 @@ const getLastMeaningfulLine = (text: string): string => {
   return '';
 };
 
-// Check if any line in the last N lines contains the prompt
-const hasPromptInTail = (text: string, n = 6): boolean => {
+// Check if any line in the last N lines contains the IDLE prompt (❯ without numbered choice)
+const hasIdlePromptInTail = (text: string, n = 6): boolean => {
   const lines = text.split('\n').slice(-n);
-  return lines.some((l) => /^\s*❯/.test(l));
+  // ❯ followed by text (user input) or nothing = idle prompt
+  // ❯ followed by a number + dot (❯ 1. Yes) = numbered choice = waiting, NOT idle
+  return lines.some((l) => /^\s*❯/.test(l) && !/^\s*❯\s*\d+\./.test(l));
+};
+
+// Check if numbered choice prompt is in the tail (❯ 1. pattern)
+const hasNumberedChoiceInTail = (text: string, n = 6): boolean => {
+  const lines = text.split('\n').slice(-n);
+  return lines.some((l) => /^\s*❯\s*\d+\./.test(l));
 };
 
 export const agentStatusService = {
@@ -58,6 +66,11 @@ export const agentStatusService = {
       }
     }
 
+    // Numbered choice prompts (❯ 1. Yes) = waiting for user selection
+    if (hasNumberedChoiceInTail(paneContent)) {
+      return 'waiting';
+    }
+
     // Check for waiting patterns (interactive prompts) — highest priority
     for (const pattern of WAITING_INDICATORS) {
       if (pattern.test(paneContent)) {
@@ -65,8 +78,8 @@ export const agentStatusService = {
       }
     }
 
-    // Check if the prompt (❯) is visible in the last few lines — means Claude is idle
-    if (hasPromptInTail(paneContent)) {
+    // Check if the idle prompt (❯) is visible — means Claude is idle
+    if (hasIdlePromptInTail(paneContent)) {
       // But check if Claude is actively thinking/working AFTER the prompt
       // (e.g., user typed something and Claude is now processing)
       const afterPrompt = paneContent.split(/❯[^\n]*\n/).pop() ?? '';
