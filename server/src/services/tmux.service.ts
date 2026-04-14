@@ -63,6 +63,11 @@ export const tmuxService = {
     exec(['send-keys', '-t', name, keys, 'Enter']);
   },
 
+  sendRawKey(name: string, key: string): void {
+    // Send a single key without appending Enter — for Escape, Tab, Enter, etc.
+    exec(['send-keys', '-t', name, key]);
+  },
+
   capturePane(name: string, lines = 50): string {
     return exec(['capture-pane', '-t', name, '-p', '-S', `-${lines}`]);
   },

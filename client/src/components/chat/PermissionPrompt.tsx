@@ -18,38 +18,55 @@ interface PermissionPromptProps {
   onResponded: () => void;
 }
 
-const getButtonResponse = (prompt: DetectedPrompt, option: string, index: number): string => {
+// Returns { type: 'command', value } or { type: 'key', value }
+const getButtonAction = (prompt: DetectedPrompt, option: string, index: number): { type: 'command' | 'key'; value: string } => {
+  if (prompt.type === 'accept_edits') {
+    return option === 'Accept'
+      ? { type: 'key', value: 'Enter' }
+      : { type: 'key', value: 'Escape' };
+  }
+  if (prompt.type === 'confirm' && !prompt.options) {
+    // Generic confirm — Enter to accept, Escape to cancel
+    return option === 'Yes'
+      ? { type: 'key', value: 'Enter' }
+      : { type: 'key', value: 'Escape' };
+  }
   if (prompt.type === 'choice') {
-    return String(index + 1);
+    return { type: 'command', value: String(index + 1) };
   }
   if (prompt.type === 'trust') {
-    return index === 0 ? 'yes' : 'no';
-  }
-  if (prompt.type === 'confirm') {
-    return option.toLowerCase().startsWith('y') ? 'y' : 'n';
+    return { type: 'command', value: index === 0 ? 'yes' : 'no' };
   }
   if (prompt.type === 'permission') {
-    if (option === 'Allow') return 'y';
-    if (option === 'Allow always') return 'a';
-    if (option === 'Deny') return 'n';
+    if (option === 'Allow') return { type: 'command', value: 'y' };
+    if (option === 'Allow always') return { type: 'command', value: 'a' };
+    if (option === 'Deny') return { type: 'command', value: 'n' };
   }
-  return option;
+  return { type: 'command', value: option };
 };
 
 export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionPromptProps) => {
   const [sending, setSending] = useState(false);
   const [customInput, setCustomInput] = useState('');
 
-  const sendResponse = useCallback(async (response: string) => {
+  const sendAction = useCallback(async (action: { type: 'command' | 'key'; value: string }) => {
     if (sending) return;
     setSending(true);
     try {
-      await api.post(`/sessions/${sessionId}/command`, { command: response });
+      if (action.type === 'key') {
+        await api.post(`/sessions/${sessionId}/key`, { key: action.value });
+      } else {
+        await api.post(`/sessions/${sessionId}/command`, { command: action.value });
+      }
       onResponded();
     } catch {
       setSending(false);
     }
   }, [sessionId, sending, onResponded]);
+
+  const sendResponse = useCallback(async (response: string) => {
+    await sendAction({ type: 'command', value: response });
+  }, [sendAction]);
 
   const options = prompt.options ?? (prompt.type === 'confirm' ? ['Yes', 'No'] : []);
 
@@ -59,11 +76,14 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      className="shrink-0 mx-3 lg:mx-6 mb-2 rounded-lg overflow-hidden"
+      className={`shrink-0 mx-3 lg:mx-6 mb-2 rounded-lg overflow-hidden ${prompt.type === 'accept_edits' ? 'animate-pulse-slow' : ''}`}
       style={{
         fontFamily: M,
-        background: 'rgba(245, 158, 11, 0.06)',
+        background: prompt.type === 'accept_edits' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.06)',
         borderLeft: '3px solid rgba(245, 158, 11, 0.5)',
+        border: prompt.type === 'accept_edits' ? '1px solid rgba(245, 158, 11, 0.3)' : undefined,
+        borderLeftWidth: 3,
+        borderLeftColor: 'rgba(245, 158, 11, 0.5)',
         padding: 16,
       }}
     >
@@ -74,7 +94,7 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
           className="text-sm font-semibold"
           style={{ color: 'var(--color-idle)' }}
         >
-          Claude needs your input
+          {prompt.type === 'accept_edits' ? 'Claude needs approval to apply edits' : 'Claude needs your input'}
         </span>
       </div>
 
@@ -129,7 +149,7 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
               <button
                 key={i}
                 disabled={sending}
-                onClick={() => sendResponse(getButtonResponse(prompt, option, i))}
+                onClick={() => sendAction(getButtonAction(prompt, option, i))}
                 className="px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                 style={{
                   fontFamily: M,

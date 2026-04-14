@@ -34,13 +34,13 @@ export const ChatPage = () => {
   const [localCommands, setLocalCommands] = useState<ChatMessage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const sendCommand = useCallback(async () => {
+  const sendCommand = useCallback(() => {
     if (!sessionId || !command.trim() || sending) return;
     const cmdText = command.trim();
 
-    // Show the message IMMEDIATELY — before the API call
+    // Show the message IMMEDIATELY — synchronous state updates
     const localMsg: ChatMessage = {
-      id: `local-${Date.now()}`,
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       parentId: null,
       role: 'user',
       timestamp: new Date().toISOString(),
@@ -54,16 +54,11 @@ export const ChatPage = () => {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setTimeout(() => setSent(false), 2000);
 
-    // Then send to server (fire-and-forget style — message is already visible)
+    // Send to server in background — NOT awaited, so state updates flush immediately
     setSending(true);
-    try {
-      await api.post(`/sessions/${sessionId}/command`, { command: cmdText });
-    } catch {
-      // Command failed — but local message is already visible
-      // Could add error indicator here in the future
-    } finally {
-      setSending(false);
-    }
+    api.post(`/sessions/${sessionId}/command`, { command: cmdText })
+      .catch(() => {})
+      .finally(() => setSending(false));
   }, [sessionId, command, sending]);
 
   // Clear local commands when switching sessions
@@ -115,12 +110,20 @@ export const ChatPage = () => {
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats?.totalTokens ?? 0;
 
-  // Always show local commands that are newer than the last JSONL message
-  const lastJsonlTime = messages.length > 0
-    ? new Date(messages[messages.length - 1]!.timestamp).getTime()
-    : 0;
+  // Keep local commands until JSONL contains a user message with matching text
+  // This ensures the local bubble stays visible until the real message appears
+  const jsonlUserTexts = new Set(
+    messages
+      .filter((m) => m.role === 'user')
+      .flatMap((m) => m.content)
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as { type: 'text'; text: string }).text.trim())
+  );
   const pendingLocal = localCommands.filter(
-    (lc) => new Date(lc.timestamp).getTime() > lastJsonlTime
+    (lc) => {
+      const text = lc.content[0]?.type === 'text' ? lc.content[0].text.trim() : '';
+      return !jsonlUserTexts.has(text);
+    }
   );
   const allMessages = [...messages, ...pendingLocal];
 
@@ -187,6 +190,7 @@ export const ChatPage = () => {
         messages={allMessages}
         sessionStatus={session?.status}
         terminalHint={terminalHint}
+        hasPrompt={!!prompt}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

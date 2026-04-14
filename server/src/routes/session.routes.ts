@@ -58,6 +58,36 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     },
   );
 
+  // Send raw key to session (no Enter appended — for Escape, Enter, Tab, etc.)
+  app.post<{ Params: { id: string }; Body: { key: string } }>(
+    '/api/sessions/:id/key',
+    async (request, reply) => {
+      const { key } = request.body ?? {};
+      if (!key) {
+        return reply.status(400).send({ error: 'key is required' });
+      }
+
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      if (session.status === 'stopped') {
+        return reply.status(400).send({ error: 'Session is stopped' });
+      }
+      if (!tmuxService.hasSession(session.tmuxSession)) {
+        return reply.status(400).send({ error: 'Tmux session not found' });
+      }
+
+      // Send raw key without Enter — handles Escape, Enter, Tab, etc.
+      try {
+        tmuxService.sendRawKey(session.tmuxSession, key);
+      } catch {
+        return reply.status(500).send({ error: 'Failed to send key' });
+      }
+      return { success: true };
+    },
+  );
+
   // Get live session status
   app.get<{ Params: { id: string } }>('/api/sessions/:id/status', async (request, reply) => {
     const result = sessionService.getSessionStatus(request.params.id);
@@ -164,12 +194,34 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         });
       }
 
+      // "Accept edits" prompt (⏵⏵ pattern)
+      if (raw.includes('accept edits') || raw.includes('⏵⏵')) {
+        const editLine = outputLines.find((l) =>
+          l.includes('accept edits') || l.includes('⏵⏵')
+        );
+        prompts.push({
+          type: 'accept_edits',
+          message: editLine?.trim() ?? 'Accept pending edits?',
+          context: extractToolContext(),
+          options: ['Accept', 'Reject'],
+        });
+      }
+
       // Y/N prompts
-      if (!prompts.some((p) => p.type === 'confirm') && (/\(y\/n\)/i.test(raw))) {
+      if (prompts.length === 0 && /\(y\/n\)/i.test(raw)) {
         const lastYn = outputLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
         if (lastYn) {
           prompts.push({ type: 'confirm', message: lastYn.trim(), context: extractToolContext() });
         }
+      }
+
+      // Generic "Esc to cancel" / "Enter to confirm" — catch-all for unknown prompt types
+      if (prompts.length === 0 && (raw.includes('Esc to cancel') || raw.includes('Enter to confirm'))) {
+        prompts.push({
+          type: 'confirm',
+          message: 'Waiting for confirmation',
+          context: extractToolContext(),
+        });
       }
 
       return {

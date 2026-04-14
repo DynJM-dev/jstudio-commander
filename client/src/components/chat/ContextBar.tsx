@@ -91,6 +91,7 @@ interface StatusInfo {
 const getStatusInfo = (
   sessionStatus: string | undefined,
   actionLabel: string | null,
+  hasPrompt: boolean,
 ): StatusInfo => {
   if (sessionStatus === 'working') {
     return {
@@ -101,7 +102,7 @@ const getStatusInfo = (
   }
   if (sessionStatus === 'waiting') {
     return {
-      label: 'Waiting for input',
+      label: hasPrompt ? 'Waiting for approval' : 'Waiting for input',
       dotColor: 'var(--color-idle)',
       pulse: true,
     };
@@ -121,9 +122,10 @@ interface ContextBarProps {
   messages: ChatMessage[];
   sessionStatus?: string;
   terminalHint?: string | null;
+  hasPrompt?: boolean;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionStatus, terminalHint, hasPrompt = false }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const contextPercent = totalTokens > 0
     ? Math.min(Math.round((totalTokens / contextLimit) * 100), 100)
@@ -143,7 +145,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, messages, sessionSta
   const actionLabel = jsonlAction ?? (isWorking ? terminalHint : null) ?? null;
 
   // Status info (always shown)
-  const status = getStatusInfo(sessionStatus, actionLabel);
+  const status = getStatusInfo(sessionStatus, actionLabel, hasPrompt);
 
   // Track response start time
   const responseStartRef = useRef<number>(0);
