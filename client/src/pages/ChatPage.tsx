@@ -76,7 +76,7 @@ export const ChatPage = () => {
   // No session selected
   if (!sessionId) {
     return (
-      <div className="flex flex-col h-full pb-24 lg:pb-6" style={{ fontFamily: M }}>
+      <div className="flex flex-col h-full pb-24 lg:pb-0" style={{ fontFamily: M }}>
         <div className="flex-1 flex items-center justify-center px-4">
           <div className="glass-card w-full max-w-lg">
             <EmptyState
@@ -95,7 +95,7 @@ export const ChatPage = () => {
   }
 
   return (
-    <div className="flex flex-col h-full pb-24 lg:pb-6" style={{ fontFamily: M }}>
+    <div className="flex flex-col h-full pb-24 lg:pb-0 overflow-hidden" style={{ fontFamily: M }}>
 
       {/* Session info bar */}
       <div

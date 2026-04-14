@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Bot } from 'lucide-react';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -68,9 +69,20 @@ export const AssistantBubble = ({ message, toolResults }: AssistantBubbleProps) 
   }, [message.usage]);
 
   return (
-    <div className="flex justify-start">
+    <div className="flex justify-start items-start gap-2">
+      {/* Avatar */}
       <div
-        className="mr-auto max-w-[90%] lg:max-w-[80%] px-4 py-3 lg:px-5 lg:py-4"
+        className="shrink-0 w-6 h-6 lg:w-8 lg:h-8 rounded-full flex items-center justify-center mt-1"
+        style={{
+          background: 'linear-gradient(135deg, #0E7C7B, #12A5A4)',
+        }}
+      >
+        <Bot size={14} color="#fff" className="hidden lg:block" />
+        <Bot size={12} color="#fff" className="lg:hidden" />
+      </div>
+
+      <div
+        className="max-w-[82%] lg:max-w-[72%] px-3.5 py-2.5 lg:px-4 lg:py-3"
         style={{
           fontFamily: M,
           background: 'var(--color-glass-light)',

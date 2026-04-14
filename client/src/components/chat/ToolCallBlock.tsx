@@ -11,7 +11,10 @@ import {
   ListChecks,
   MessageSquare,
   Wrench,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
 
 const M = 'Montserrat, sans-serif';
@@ -45,7 +48,6 @@ const truncate = (s: string, max: number): { text: string; truncated: boolean } 
 const getToolLabel = (name: string, input: Record<string, unknown>): string => {
   const filePath = input.file_path ?? input.path ?? input.command;
   if (typeof filePath === 'string') {
-    // Show short path
     const short = filePath.replace(/^\/Users\/[^/]+/, '~');
     return `${name} ${short}`;
   }
@@ -63,7 +65,6 @@ const RenderBashTool = ({ input, result, isError }: { input: Record<string, unkn
 
   return (
     <div className="space-y-2">
-      {/* Command */}
       <div
         className="rounded px-3 py-2 font-mono-stats text-sm"
         style={{ background: 'rgba(0, 0, 0, 0.25)', color: 'var(--color-accent-light)' }}
@@ -71,7 +72,6 @@ const RenderBashTool = ({ input, result, isError }: { input: Record<string, unkn
         <span style={{ color: 'var(--color-text-tertiary)' }}>$ </span>
         {command}
       </div>
-      {/* Output */}
       {resultText && (
         <div
           className="rounded px-3 py-2 font-mono-stats text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap break-all"
@@ -209,6 +209,14 @@ export const ToolCallBlock = ({ name, input, result, isError }: ToolCallBlockPro
   const Icon = TOOL_ICONS[name] ?? Wrench;
   const label = getToolLabel(name, input);
 
+  // Determine status
+  const hasResult = result !== undefined;
+  const statusColor = isError
+    ? 'var(--color-error)'
+    : hasResult
+      ? 'var(--color-working)'
+      : 'var(--color-accent)';
+
   const renderContent = () => {
     switch (name) {
       case 'Bash':
@@ -223,32 +231,50 @@ export const ToolCallBlock = ({ name, input, result, isError }: ToolCallBlockPro
   };
 
   return (
-    <div className="my-1">
+    <div
+      className="my-0.5 rounded-lg overflow-hidden"
+      style={{
+        borderLeft: `3px solid ${statusColor}`,
+        background: 'rgba(0, 0, 0, 0.08)',
+      }}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 py-1.5 text-sm cursor-pointer transition-colors w-full text-left"
+        className="flex items-center gap-2 py-1.5 px-3 text-sm cursor-pointer transition-colors w-full text-left"
         style={{ color: 'var(--color-text-secondary)', fontFamily: M }}
         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-primary)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
       >
         {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <Icon size={14} />
-        <span className="truncate">{label}</span>
-        {isError && (
-          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-error)', background: 'rgba(239, 68, 68, 0.1)' }}>
-            error
-          </span>
+
+        {/* Status icon */}
+        {isError ? (
+          <XCircle size={13} style={{ color: 'var(--color-error)' }} className="shrink-0" />
+        ) : hasResult ? (
+          <CheckCircle2 size={13} style={{ color: 'var(--color-working)' }} className="shrink-0" />
+        ) : (
+          <Icon size={14} className="shrink-0" />
         )}
+
+        <Icon size={14} className="shrink-0" />
+        <span className="truncate flex-1">{label}</span>
       </button>
 
-      {expanded && (
-        <div
-          className="rounded-lg p-3 mt-1 ml-5"
-          style={{ background: 'rgba(0, 0, 0, 0.2)' }}
-        >
-          {renderContent()}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeOut' as const }}
+            className="overflow-hidden"
+          >
+            <div className="px-3 pb-3 ml-3">
+              {renderContent()}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

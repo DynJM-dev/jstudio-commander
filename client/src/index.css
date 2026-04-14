@@ -162,3 +162,25 @@ button:active, a:active, [role="button"]:active {
     transform: translateY(0);
   }
 }
+
+/* Thinking shimmer animation */
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.thinking-shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(14, 124, 123, 0.08) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Brain glow pulse */
+@keyframes brain-glow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(14, 124, 123, 0.3)); }
+  50% { filter: drop-shadow(0 0 12px rgba(14, 124, 123, 0.6)); }
+}
+
+.brain-glow {
+  animation: brain-glow 2s ease-in-out infinite;
+}

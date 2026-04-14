@@ -77,8 +77,10 @@ export const CodeBlock = ({ code, language }: CodeBlockProps) => {
 
   return (
     <div
-      className="rounded-lg overflow-hidden my-2"
+      className="rounded-lg overflow-hidden my-2 transition-shadow duration-200"
       style={{ background: 'rgba(0, 0, 0, 0.3)' }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 0 12px rgba(14, 124, 123, 0.1)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
     >
       {/* Header */}
       <div

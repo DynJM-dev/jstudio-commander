@@ -1,6 +1,6 @@
+import { Crown } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
-import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
 
@@ -21,9 +21,9 @@ export const UserBubble = ({ message }: UserBubbleProps) => {
   }
 
   return (
-    <div className="flex justify-end">
+    <div className="flex justify-end items-start gap-2">
       <div
-        className="ml-auto max-w-[85%] lg:max-w-[70%] px-4 py-3"
+        className="max-w-[82%] lg:max-w-[65%] px-3.5 py-2.5"
         style={{
           fontFamily: M,
           background: 'rgba(14, 124, 123, 0.12)',
@@ -44,14 +44,15 @@ export const UserBubble = ({ message }: UserBubbleProps) => {
           );
         })}
 
-        <div className="flex justify-end mt-1.5">
-          <span
-            className="text-xs"
-            style={{ color: 'var(--color-text-tertiary)' }}
-          >
-            {formatTime(message.timestamp)}
-          </span>
-        </div>
+      </div>
+
+      {/* Avatar */}
+      <div
+        className="shrink-0 w-6 h-6 lg:w-8 lg:h-8 rounded-full flex items-center justify-center mt-1"
+        style={{ background: '#F59E0B' }}
+      >
+        <Crown size={14} color="#fff" className="hidden lg:block" />
+        <Crown size={12} color="#fff" className="lg:hidden" />
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { formatTokens, formatTime } from '../../utils/format';
+import { formatTokens } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
 
@@ -8,33 +8,18 @@ interface MessageMetaProps {
   timestamp: string;
 }
 
-export const MessageMeta = ({ model, tokens, timestamp }: MessageMetaProps) => (
-  <div className="flex items-center gap-2 mt-2">
-    {model && (
-      <span
-        className="text-xs px-2 py-0.5 rounded-full"
-        style={{
-          fontFamily: M,
-          background: 'rgba(255, 255, 255, 0.06)',
-          color: 'var(--color-text-tertiary)',
-        }}
-      >
-        {model}
-      </span>
-    )}
-    {tokens !== undefined && tokens > 0 && (
+export const MessageMeta = ({ tokens }: MessageMetaProps) => {
+  // Only show token count — model is in the header bar, timestamps in separators
+  if (!tokens || tokens <= 0) return null;
+
+  return (
+    <div className="flex items-center gap-2 mt-1.5">
       <span
         className="font-mono-stats text-xs"
-        style={{ color: 'var(--color-text-tertiary)' }}
+        style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
       >
         {formatTokens(tokens)}
       </span>
-    )}
-    <span
-      className="text-xs"
-      style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
-    >
-      {formatTime(timestamp)}
-    </span>
-  </div>
-);
+    </div>
+  );
+};

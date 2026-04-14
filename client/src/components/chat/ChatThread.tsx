@@ -3,8 +3,41 @@ import { ArrowDown, Loader2 } from 'lucide-react';
 import type { ChatMessage } from '@commander/shared';
 import { UserBubble } from './UserBubble';
 import { AssistantBubble } from './AssistantBubble';
+import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
+
+const FIVE_MINUTES = 5 * 60 * 1000;
+
+const ModelChangeSeparator = ({ model }: { model: string }) => (
+  <div className="flex items-center gap-3 py-1.5">
+    <div className="flex-1" style={{ borderTop: '1px solid rgba(14, 124, 123, 0.15)' }} />
+    <span
+      className="text-xs px-2.5 py-0.5 rounded-full shrink-0"
+      style={{
+        color: 'var(--color-accent-light)',
+        background: 'rgba(14, 124, 123, 0.08)',
+        fontFamily: M,
+      }}
+    >
+      switched to {model.replace('claude-', '')}
+    </span>
+    <div className="flex-1" style={{ borderTop: '1px solid rgba(14, 124, 123, 0.15)' }} />
+  </div>
+);
+
+const TimestampSeparator = ({ timestamp }: { timestamp: string }) => (
+  <div className="flex items-center gap-3 py-2">
+    <div className="flex-1" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }} />
+    <span
+      className="text-xs shrink-0"
+      style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
+    >
+      {formatTime(timestamp)}
+    </span>
+    <div className="flex-1" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }} />
+  </div>
+);
 
 interface ChatThreadProps {
   messages: ChatMessage[];
@@ -39,7 +72,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
     setIsAtBottom(atBottom);
     if (atBottom) setShowNewMessages(false);
   }, []);
@@ -163,8 +196,44 @@ export const ChatThread = ({ messages, hasMore, onLoadMore }: ChatThreadProps) =
         )}
 
         {/* Messages */}
-        <div className="flex flex-col gap-4">
-          {messages.map(renderMessage)}
+        <div className="flex flex-col gap-3">
+          {messages.map((message, index) => {
+            const elements: React.ReactNode[] = [];
+
+            const prevMsg = index > 0 ? messages[index - 1] : undefined;
+
+            // Add timestamp separator for 5min+ gaps
+            if (prevMsg) {
+              const prevTime = new Date(prevMsg.timestamp).getTime();
+              const currTime = new Date(message.timestamp).getTime();
+              if (currTime - prevTime > FIVE_MINUTES) {
+                elements.push(
+                  <TimestampSeparator key={`sep-${message.id}`} timestamp={message.timestamp} />
+                );
+              }
+            }
+
+            // Add model-change separator
+            if (message.model && prevMsg) {
+              // Find previous assistant message's model
+              let prevModel: string | undefined;
+              for (let j = index - 1; j >= 0; j--) {
+                const m = messages[j];
+                if (m && m.role === 'assistant' && m.model) {
+                  prevModel = m.model;
+                  break;
+                }
+              }
+              if (prevModel && prevModel !== message.model) {
+                elements.push(
+                  <ModelChangeSeparator key={`model-${message.id}`} model={message.model} />
+                );
+              }
+            }
+
+            elements.push(renderMessage(message));
+            return elements;
+          })}
         </div>
       </div>
 
