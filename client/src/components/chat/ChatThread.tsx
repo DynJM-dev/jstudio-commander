@@ -20,19 +20,31 @@ interface MessageGroup {
 
 // Walk an assistant group's TaskCreate/TaskUpdate tool calls to produce a plan.
 // Plans are Claude-authored (TodoWrite output) and render inside the assistant
-// message that produced them.
-const buildPlanFromAssistantGroup = (group: MessageGroup): PlanTask[] => {
+// message that produced them. Task IDs are monotonic across the whole session,
+// so we key each task by the real ID parsed from TaskCreate's tool_result
+// ("Task #N created successfully: ..."), not a per-group auto-counter.
+const TASK_ID_FROM_RESULT = /Task #(\d+) created/;
+
+const buildPlanFromAssistantGroup = (
+  group: MessageGroup,
+  toolResults: Map<string, { content: string; isError?: boolean }>,
+): PlanTask[] => {
   if (group.role !== 'assistant') return [];
   const tasks = new Map<string, PlanTask>();
-  let autoId = 1;
 
   for (const msg of group.messages) {
     for (const block of msg.content) {
       if (block.type !== 'tool_use') continue;
 
       if (block.name === 'TaskCreate') {
-        const id = String(autoId++);
         const input = block.input as { subject?: string; description?: string };
+        const result = toolResults.get(block.id);
+        const match = result?.content.match(TASK_ID_FROM_RESULT);
+        // Without a tool_result we can't resolve the real ID yet — skip and let
+        // the next poll pick it up once the result arrives. Rendering an
+        // unkeyed task would cause later TaskUpdate calls to never find it.
+        if (!match) continue;
+        const id = match[1]!;
         tasks.set(id, {
           id,
           title: input.subject ?? 'Task',
@@ -313,7 +325,7 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
 
             // For assistant groups: build the plan from this group's tool calls
             const assistantPlan = group.role === 'assistant'
-              ? buildPlanFromAssistantGroup(group)
+              ? buildPlanFromAssistantGroup(group, toolResultMap)
               : [];
 
             // Timestamp separator between groups
