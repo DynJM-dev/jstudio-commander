@@ -1,9 +1,23 @@
 import { v4 as uuidv4 } from 'uuid';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import type { Session, SessionStatus } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
 import { eventBus } from '../ws/event-bus.js';
+
+const getClaudeEffortLevel = (): string => {
+  try {
+    const p = join(homedir(), '.claude', 'settings.json');
+    if (existsSync(p)) {
+      const s = JSON.parse(readFileSync(p, 'utf-8')) as { effortLevel?: string };
+      if (s.effortLevel) return s.effortLevel;
+    }
+  } catch { /* default */ }
+  return 'medium';
+};
 
 // Auto-slug generator: adjective-noun
 const ADJECTIVES = [
@@ -80,10 +94,11 @@ export const sessionService = {
 
     // Insert into database
     const now = new Date().toISOString();
+    const effortLevel = getClaudeEffortLevel();
     db.prepare(`
-      INSERT INTO sessions (id, name, tmux_session, project_path, status, model, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'working', ?, ?, ?)
-    `).run(id, slug, tmuxName, opts.projectPath ?? null, model, now, now);
+      INSERT INTO sessions (id, name, tmux_session, project_path, status, model, effort_level, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?)
+    `).run(id, slug, tmuxName, opts.projectPath ?? null, model, effortLevel, now, now);
 
     // Log event
     db.prepare(`
