@@ -50,10 +50,18 @@ const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
     ...options,
   });
 
-  const body = await res.json();
+  const text = await res.text();
+  let body: Record<string, unknown> = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    // Empty or malformed response — ignore during reconnects
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return {} as T;
+  }
 
   if (!res.ok) {
-    throw new ApiError(res.status, body.error ?? res.statusText, body.requiresPin ?? false);
+    throw new ApiError(res.status, (body.error as string) ?? res.statusText, (body.requiresPin as boolean) ?? false);
   }
 
   return body as T;

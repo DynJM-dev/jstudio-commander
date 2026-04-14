@@ -3,13 +3,13 @@ import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
 
 export const sessionRoutes = async (app: FastifyInstance) => {
-  // List all sessions
-  app.get('/api/sessions', async () => {
+  // List all sessions (polled frequently — suppress logs)
+  app.get('/api/sessions', { logLevel: 'warn' as const }, async () => {
     return sessionService.listSessions();
   });
 
-  // Get single session
-  app.get<{ Params: { id: string } }>('/api/sessions/:id', async (request, reply) => {
+  // Get single session (polled frequently — suppress logs)
+  app.get<{ Params: { id: string } }>('/api/sessions/:id', { logLevel: 'warn' as const }, async (request, reply) => {
     const session = sessionService.getSession(request.params.id);
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });

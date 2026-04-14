@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { tokenTrackerService } from '../services/token-tracker.service.js';
 
 export const analyticsRoutes = async (app: FastifyInstance) => {
-  // Today's aggregate stats
-  app.get('/api/analytics/today', async () => {
+  // Today's aggregate stats (polled frequently — suppress logs)
+  app.get('/api/analytics/today', { logLevel: 'warn' as const }, async () => {
     return tokenTrackerService.aggregateDaily();
   });
 

@@ -4,6 +4,8 @@ import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolCallBlock } from './ToolCallBlock';
+import { AgentPlan } from './AgentPlan';
+import type { PlanTask } from './AgentPlan';
 import { formatTime } from '../../utils/format';
 
 const M = 'Montserrat, sans-serif';
@@ -15,6 +17,7 @@ const prefersReducedMotion = () =>
 interface AssistantMessageGroupProps {
   messages: ChatMessage[];
   toolResults: Map<string, { content: string; isError?: boolean }>;
+  plan?: PlanTask[];
 }
 
 const renderBlock = (
@@ -121,7 +124,7 @@ const renderBlock = (
   }
 };
 
-export const AssistantMessage = ({ messages, toolResults }: AssistantMessageGroupProps) => {
+export const AssistantMessage = ({ messages, toolResults, plan }: AssistantMessageGroupProps) => {
   const reduced = prefersReducedMotion();
   const firstMsg = messages[0];
   if (!firstMsg) return null;
@@ -156,9 +159,16 @@ export const AssistantMessage = ({ messages, toolResults }: AssistantMessageGrou
         </span>
       </div>
 
-      {/* All content blocks from all messages in the group.
-          TaskCreate/TaskUpdate blocks are filtered out by renderBlock — the plan
-          they produce is rendered attached to the triggering user message instead. */}
+      {/* Plan card — rendered at the top of Claude's response since plans
+          typically arrive early in the stream. TaskCreate/TaskUpdate tool_use
+          blocks are filtered out by renderBlock so they only show here. */}
+      {plan && plan.length > 0 && (
+        <div className="mb-1.5">
+          <AgentPlan tasks={plan} title="Plan" />
+        </div>
+      )}
+
+      {/* All content blocks from all messages in the group. */}
       <div className="space-y-0.5">
         {messages.map((msg, mi) =>
           msg.content.map((block, bi) => renderBlock(block, `${mi}-${bi}`, toolResults))

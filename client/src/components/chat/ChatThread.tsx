@@ -19,8 +19,8 @@ interface MessageGroup {
 }
 
 // Walk an assistant group's TaskCreate/TaskUpdate tool calls to produce a plan.
-// Plans belong visually to the preceding user message — they show what Claude
-// is tracking for that specific request.
+// Plans are Claude-authored (TodoWrite output) and render inside the assistant
+// message that produced them.
 const buildPlanFromAssistantGroup = (group: MessageGroup): PlanTask[] => {
   if (group.role !== 'assistant') return [];
   const tasks = new Map<string, PlanTask>();
@@ -311,9 +311,9 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
             const prevGroup = gi > 0 ? groups[gi - 1] : undefined;
             const isLast = gi === groups.length - 1;
 
-            // For user groups: pull the plan from the immediately following assistant group
-            const userPlan = group.role === 'user'
-              ? buildPlanFromAssistantGroup(groups[gi + 1] ?? { role: 'assistant', messages: [], timestamp: '' } as MessageGroup)
+            // For assistant groups: build the plan from this group's tool calls
+            const assistantPlan = group.role === 'assistant'
+              ? buildPlanFromAssistantGroup(group)
               : [];
 
             // Timestamp separator between groups
@@ -368,13 +368,14 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
 
                 {/* Render the group */}
                 {group.role === 'user' && (
-                  <UserMessage message={group.messages[0]!} plan={userPlan} />
+                  <UserMessage message={group.messages[0]!} />
                 )}
 
                 {group.role === 'assistant' && (
                   <AssistantMessage
                     messages={group.messages}
                     toolResults={toolResultMap}
+                    plan={assistantPlan}
                   />
                 )}
 

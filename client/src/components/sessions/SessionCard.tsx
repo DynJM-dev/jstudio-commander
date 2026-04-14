@@ -1,4 +1,6 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Pencil } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 import { StatusBadge } from '../shared/StatusBadge';
@@ -42,9 +44,27 @@ const shortenPath = (path: string | null): string => {
 export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionCardProps) => {
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(session.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const handleRenameSubmit = useCallback(() => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== session.name) {
+      onRename(session.id, trimmed);
+    }
+    setEditing(false);
+  }, [editValue, session.name, session.id, onRename]);
 
   const handleCardClick = () => {
-    navigate(`/chat/${session.id}`);
+    if (!editing) navigate(`/chat/${session.id}`);
   };
 
   return (
@@ -68,17 +88,50 @@ export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionC
           </span>
         </div>
 
-        {/* Slug name */}
-        <div
-          className="cursor-pointer"
-          onClick={handleCardClick}
-        >
-          <h3
-            className="text-lg font-semibold leading-tight"
-            style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
-          >
-            {session.name}
-          </h3>
+        {/* Session name — inline editable */}
+        <div className="flex items-center gap-2 group">
+          {editing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleRenameSubmit(); }
+                if (e.key === 'Escape') { setEditValue(session.name); setEditing(false); }
+              }}
+              onBlur={handleRenameSubmit}
+              className="text-lg font-semibold leading-tight rounded px-1 -ml-1 outline-none flex-1"
+              style={{
+                fontFamily: M,
+                color: 'var(--color-text-primary)',
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid var(--color-accent)',
+              }}
+            />
+          ) : (
+            <>
+              <h3
+                className="text-lg font-semibold leading-tight cursor-pointer flex-1"
+                style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
+                onClick={handleCardClick}
+              >
+                {session.name}
+              </h3>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditValue(session.name);
+                  setEditing(true);
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded"
+                style={{ width: 24, height: 24, color: 'var(--color-text-tertiary)' }}
+                title="Rename session"
+              >
+                <Pencil size={12} />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Project path */}
@@ -138,9 +191,7 @@ export const SessionCard = ({ session, onCommand, onDelete, onRename }: SessionC
           <SessionActions
             sessionId={session.id}
             isStopped={isStopped}
-            currentName={session.name}
             onDelete={async (id) => { await onDelete(id); }}
-            onRename={async (id, name) => { await onRename(id, name); }}
           />
         </div>
       </GlassCard>
