@@ -19,11 +19,6 @@ interface PermissionPromptProps {
 }
 
 const getButtonAction = (prompt: DetectedPrompt, option: string, index: number): { type: 'command' | 'key'; value: string } => {
-  if (prompt.type === 'accept_edits') {
-    return option === 'Accept'
-      ? { type: 'key', value: 'Enter' }
-      : { type: 'key', value: 'Escape' };
-  }
   if (prompt.type === 'confirm' && !prompt.options) {
     return option === 'Yes'
       ? { type: 'key', value: 'Enter' }
@@ -44,7 +39,6 @@ const getButtonAction = (prompt: DetectedPrompt, option: string, index: number):
 };
 
 const TITLE_MAP: Record<string, string> = {
-  accept_edits: 'Claude needs approval to apply edits',
   permission: 'Claude needs permission',
   trust: 'Trust this workspace?',
   confirm: 'Confirmation needed',

@@ -19,8 +19,7 @@ const WAITING_INDICATORS = [
   /Do you want to proceed/i,
   /trust this folder/i,
   /Allow.*Deny/i,
-  /accept edits/i, /⏵⏵/,       // Claude Code accept-edits prompt
-  /Esc to cancel/i,              // Generic interactive prompt indicator
+  // NOTE: ⏵⏵ accept edits is a MODE INDICATOR, not a prompt — don't detect as waiting
 ];
 const ERROR_PATTERNS = [/^Error:/m, /^error:/m, /FATAL/i, /panic:/i];
 const DECORATOR_RE = /^[─━═┈┄\-]{4,}$/;

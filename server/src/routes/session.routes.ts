@@ -199,14 +199,8 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      // "Accept edits" prompt (⏵⏵ pattern)
-      if (bottomRaw.includes('accept edits') || bottomRaw.includes('⏵⏵')) {
-        prompts.push({
-          type: 'accept_edits',
-          message: 'Accept pending edits?',
-          options: ['Accept', 'Reject'],
-        });
-      }
+      // NOTE: ⏵⏵ accept edits on is a persistent MODE INDICATOR, not a prompt.
+      // It shows Claude Code's edit acceptance mode. NOT actionable — do not detect as prompt.
 
       // Y/N prompts
       if (prompts.length === 0 && /\(y\/n\)/i.test(bottomRaw)) {
