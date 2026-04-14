@@ -1,6 +1,6 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — consolidated stats into ContextBar, removed StatusStrip/ResponseSummary, fixed input bugs
+> Last updated: 2026-04-14 — moved ContextBar above input, fixed duplicate keys, cleaned layout
 > Model: Opus 4.6 (1M context)
 
 ## Current Status
@@ -33,6 +33,7 @@
 | `e768815` | Coder-7 | State files audit, CSS @import fix |
 | `6af9ae5` | Coder-7 | 6 chat fixes: spacing, StatusStrip auto-clear, varied status text, ContextBar model limits, Crown icon, timeline dots |
 | `bde70fd` | Coder-7 | Consolidate stats into ContextBar (action + tokens + elapsed + context %), remove StatusStrip/ResponseSummary, fix Enter key + duplicate keys |
+| `6da7618` | Coder-7 | Move ContextBar above input (not above chat), remove session info bar, fix text-renderer duplicate keys with unique prefixes |
 
 ## File Inventory
 
