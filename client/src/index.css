@@ -234,6 +234,17 @@ button:active, a:active, [role="button"]:active {
   animation: status-pulse 2s ease-in-out infinite;
 }
 
+/* ContextBar glow when working */
+@keyframes bar-glow {
+  0%, 100% { box-shadow: 0 0 0px rgba(14, 124, 123, 0); }
+  50% { box-shadow: 0 -2px 12px rgba(14, 124, 123, 0.15); }
+}
+
+.bar-working {
+  animation: bar-glow 2s ease-in-out infinite;
+  border-top-color: rgba(14, 124, 123, 0.3) !important;
+}
+
 /* Reduced motion — disable all animations */
 @media (prefers-reduced-motion: reduce) {
   .thinking-shimmer,
@@ -241,7 +252,8 @@ button:active, a:active, [role="button"]:active {
   .status-pulse,
   .text-pulse,
   .animate-pulse,
-  .animate-pulse-slow {
+  .animate-pulse-slow,
+  .bar-working {
     animation: none !important;
   }
 }
