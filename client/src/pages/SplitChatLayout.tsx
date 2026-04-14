@@ -4,7 +4,7 @@ import { X, GripVertical } from 'lucide-react';
 import { ChatPage } from './ChatPage';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
-import type { Session, Teammate } from '@commander/shared';
+import type { Session } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
@@ -74,38 +74,38 @@ export const SplitChatLayout = () => {
     subscribe(['sessions']);
   }, [subscribe]);
 
-  // On mount, check for existing active teammates of this PM — they may have
-  // been spawned before this page was open.
-  useEffect(() => {
+  // Refresh the list of teammates for the current PM. Opens the coder pane
+  // if an active teammate exists; closes it if the currently-shown teammate
+  // disappears. The endpoint resolves both the Commander UUID and the Claude
+  // leadSessionId, so callers only need to pass whatever's in the URL.
+  const refreshTeammates = useCallback(async () => {
     if (!pmSessionId) return;
-    let cancelled = false;
-    api
-      .get<Session[]>(`/sessions/${encodeURIComponent(pmSessionId)}/teammates`)
-      .then((teammates) => {
-        if (cancelled) return;
-        const active = teammates.find((t) => t.status !== 'stopped');
-        if (active && !coderSessionId) setCoderSessionId(active.id);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // Only run once per PM session; state transitions handle WS updates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    try {
+      const teammates = await api.get<Session[]>(
+        `/sessions/${encodeURIComponent(pmSessionId)}/teammates`,
+      );
+      const active = teammates.find((t) => t.status !== 'stopped');
+      setCoderSessionId((prev) => {
+        if (!active) return null;
+        // Prefer keeping the currently-shown teammate if still active
+        if (prev && teammates.some((t) => t.id === prev && t.status !== 'stopped')) return prev;
+        return active.id;
+      });
+    } catch { /* transient failure — next WS event will retry */ }
   }, [pmSessionId]);
 
-  // React to teammate:spawned and teammate:dismissed events
+  // Initial load — catch teammates that were spawned before the page mounted.
+  useEffect(() => { refreshTeammates(); }, [refreshTeammates]);
+
+  // WS-driven refresh on any teammate transition. Cheap (single GET) and
+  // avoids having to match parent IDs client-side when the PM uses multiple
+  // identifiers (Commander UUID vs Claude leadSessionId).
   useEffect(() => {
-    if (!lastEvent || !pmSessionId) return;
-    if (lastEvent.type === 'teammate:spawned') {
-      const t = lastEvent.teammate as Teammate;
-      if (t.parentSessionId === pmSessionId) {
-        setCoderSessionId(t.sessionId);
-      }
-    } else if (lastEvent.type === 'teammate:dismissed') {
-      if (coderSessionId === lastEvent.sessionId) {
-        setCoderSessionId(null);
-      }
+    if (!lastEvent) return;
+    if (lastEvent.type === 'teammate:spawned' || lastEvent.type === 'teammate:dismissed') {
+      refreshTeammates();
     }
-  }, [lastEvent, pmSessionId, coderSessionId]);
+  }, [lastEvent, refreshTeammates]);
 
   // Drag-handle resize
   const onMouseDown = useCallback((e: React.MouseEvent) => {

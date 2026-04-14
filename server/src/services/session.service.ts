@@ -191,14 +191,28 @@ export const sessionService = {
     `).run(now, sessionId);
   },
 
+  // The requested ID may be Commander's own session UUID or the Claude Code
+  // leadSessionId stored in the team config. Teams link teammates to whichever
+  // ID the PM wrote, so we resolve both and match either.
   listTeammates(parentSessionId: string): Session[] {
     const db = getDb();
+    const pm = db.prepare(
+      'SELECT id, claude_session_id FROM sessions WHERE id = ? OR claude_session_id = ? LIMIT 1'
+    ).get(parentSessionId, parentSessionId) as { id: string; claude_session_id: string | null } | undefined;
+
+    const candidates = new Set<string>([parentSessionId]);
+    if (pm) {
+      candidates.add(pm.id);
+      if (pm.claude_session_id) candidates.add(pm.claude_session_id);
+    }
+
+    const placeholders = Array.from(candidates).map(() => '?').join(',');
     const rows = db.prepare(`
       SELECT s.* FROM sessions s
       INNER JOIN agent_relationships r ON r.child_session_id = s.id
-      WHERE r.parent_session_id = ? AND r.ended_at IS NULL
+      WHERE r.parent_session_id IN (${placeholders}) AND r.ended_at IS NULL
       ORDER BY s.created_at ASC
-    `).all(parentSessionId) as Record<string, unknown>[];
+    `).all(...Array.from(candidates)) as Record<string, unknown>[];
     return rows.map((row) => rowToSession(row));
   },
 
