@@ -4,6 +4,7 @@ import { api } from '../services/api';
 interface DetectedPrompt {
   type: string;
   message: string;
+  context?: string;
   options?: string[];
 }
 

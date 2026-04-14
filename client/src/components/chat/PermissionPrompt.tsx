@@ -8,6 +8,7 @@ const M = 'Montserrat, sans-serif';
 interface DetectedPrompt {
   type: string;
   message: string;
+  context?: string;
   options?: string[];
 }
 
@@ -19,7 +20,6 @@ interface PermissionPromptProps {
 
 const getButtonResponse = (prompt: DetectedPrompt, option: string, index: number): string => {
   if (prompt.type === 'choice') {
-    // Send the number for numbered choices
     return String(index + 1);
   }
   if (prompt.type === 'trust') {
@@ -36,34 +36,6 @@ const getButtonResponse = (prompt: DetectedPrompt, option: string, index: number
   return option;
 };
 
-const getButtonStyle = (prompt: DetectedPrompt, option: string, index: number) => {
-  const isDeny = option === 'Deny' || option === 'No' || option === 'No, exit';
-  const isPrimary = index === 0 && !isDeny;
-
-  if (isDeny) {
-    return {
-      background: 'rgba(239, 68, 68, 0.08)',
-      color: 'var(--color-error)',
-      border: '1px solid rgba(239, 68, 68, 0.15)',
-      hoverBg: 'rgba(239, 68, 68, 0.15)',
-    };
-  }
-  if (isPrimary) {
-    return {
-      background: 'var(--color-accent)',
-      color: '#fff',
-      border: '1px solid transparent',
-      hoverBg: 'var(--color-accent-light)',
-    };
-  }
-  return {
-    background: 'rgba(255, 255, 255, 0.06)',
-    color: 'var(--color-text-secondary)',
-    border: '1px solid rgba(255, 255, 255, 0.08)',
-    hoverBg: 'rgba(255, 255, 255, 0.1)',
-  };
-};
-
 export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionPromptProps) => {
   const [sending, setSending] = useState(false);
   const [customInput, setCustomInput] = useState('');
@@ -75,7 +47,6 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
       await api.post(`/sessions/${sessionId}/command`, { command: response });
       onResponded();
     } catch {
-      // Allow retry
       setSending(false);
     }
   }, [sessionId, sending, onResponded]);
@@ -92,13 +63,12 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
       style={{
         fontFamily: M,
         background: 'rgba(245, 158, 11, 0.06)',
-        border: '1px solid rgba(245, 158, 11, 0.2)',
         borderLeft: '3px solid rgba(245, 158, 11, 0.5)',
         padding: 16,
       }}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2.5">
         <ShieldAlert size={16} style={{ color: 'var(--color-idle)' }} />
         <span
           className="text-sm font-semibold"
@@ -108,7 +78,17 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
         </span>
       </div>
 
-      {/* Prompt message */}
+      {/* Full context — what Claude wants to do (no border, just plain text) */}
+      {prompt.context && (
+        <pre
+          className="text-xs leading-relaxed mb-2 whitespace-pre-wrap font-mono-stats"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
+          {prompt.context}
+        </pre>
+      )}
+
+      {/* Question / prompt message */}
       <p
         className="text-sm mb-3 leading-relaxed"
         style={{ color: 'var(--color-text-primary)' }}
@@ -120,7 +100,31 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
       {options.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
           {options.map((option, i) => {
-            const style = getButtonStyle(prompt, option, i);
+            const isDeny = option === 'Deny' || option === 'No' || option === 'No, exit' || option.startsWith('3. No');
+            const isPrimary = i === 0 && !isDeny;
+
+            let bg: string;
+            let color: string;
+            let border: string;
+            let hoverBg: string;
+
+            if (isDeny) {
+              bg = 'rgba(239, 68, 68, 0.08)';
+              color = 'var(--color-error)';
+              border = '1px solid rgba(239, 68, 68, 0.15)';
+              hoverBg = 'rgba(239, 68, 68, 0.15)';
+            } else if (isPrimary) {
+              bg = 'var(--color-accent)';
+              color = '#fff';
+              border = '1px solid transparent';
+              hoverBg = 'var(--color-accent-light)';
+            } else {
+              bg = 'rgba(255, 255, 255, 0.06)';
+              color = 'var(--color-text-secondary)';
+              border = '1px solid rgba(255, 255, 255, 0.08)';
+              hoverBg = 'rgba(255, 255, 255, 0.1)';
+            }
+
             return (
               <button
                 key={i}
@@ -129,17 +133,17 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
                 className="px-3 py-1.5 rounded-md text-xs font-medium transition-all"
                 style={{
                   fontFamily: M,
-                  background: style.background,
-                  color: style.color,
-                  border: style.border,
+                  background: bg,
+                  color,
+                  border,
                   opacity: sending ? 0.5 : 1,
                   cursor: sending ? 'not-allowed' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
-                  if (!sending) e.currentTarget.style.background = style.hoverBg;
+                  if (!sending) e.currentTarget.style.background = hoverBg;
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = style.background;
+                  e.currentTarget.style.background = bg;
                 }}
               >
                 {option}

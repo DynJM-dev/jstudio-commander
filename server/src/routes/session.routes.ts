@@ -87,7 +87,28 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       const outputLines = raw.split('\n');
 
       // Detect interactive prompts
-      const prompts: { type: string; message: string; options?: string[] }[] = [];
+      const prompts: { type: string; message: string; context?: string; options?: string[] }[] = [];
+
+      // Helper: extract tool call context from terminal output
+      // Looks for the block between ─── separator and the prompt options
+      const extractToolContext = (): string | undefined => {
+        // Find the separator line (────)
+        const sepIdx = outputLines.findLastIndex((l) => /^─{4,}/.test(l.trim()));
+        if (sepIdx < 0) return undefined;
+
+        // Collect lines from separator to the question/options
+        const contextLines: string[] = [];
+        for (let j = sepIdx + 1; j < outputLines.length; j++) {
+          const line = outputLines[j]?.trim() ?? '';
+          // Stop at the question line or option markers
+          if (/^\s*[❯>]\s*\d+\./.test(outputLines[j] ?? '')) break;
+          if (line.startsWith('Esc to cancel')) break;
+          if (/^Do you want/.test(line)) break;
+          if (line === '') continue;
+          contextLines.push(line);
+        }
+        return contextLines.length > 0 ? contextLines.join('\n') : undefined;
+      };
 
       // Trust prompt
       if (raw.includes('trust this folder') || raw.includes('Yes, I trust')) {
@@ -118,13 +139,12 @@ export const sessionRoutes = async (app: FastifyInstance) => {
               break;
             }
           }
-          prompts.push({ type: 'choice', message: contextMsg, options });
+          prompts.push({ type: 'choice', message: contextMsg, context: extractToolContext(), options });
         }
       }
 
       // Allow/Deny permission prompts (tool approval)
       if (!prompts.some((p) => p.type === 'choice') && (raw.includes('Allow') && (raw.includes('Deny') || raw.includes('allow always')))) {
-        // Find the line describing what's being allowed
         const contextLine = outputLines.find((l) =>
           l.includes('Allow') && (l.includes('run:') || l.includes('to run') || l.includes('to execute'))
         );
@@ -136,6 +156,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         prompts.push({
           type: 'permission',
           message,
+          context: extractToolContext(),
           options: hasAlwaysOpt ? ['Allow', 'Allow always', 'Deny'] : ['Allow', 'Deny'],
         });
       }
@@ -144,7 +165,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       if (!prompts.some((p) => p.type === 'confirm') && (/\(y\/n\)/i.test(raw))) {
         const lastYn = outputLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
         if (lastYn) {
-          prompts.push({ type: 'confirm', message: lastYn.trim() });
+          prompts.push({ type: 'confirm', message: lastYn.trim(), context: extractToolContext() });
         }
       }
 
