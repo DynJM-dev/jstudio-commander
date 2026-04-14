@@ -72,6 +72,15 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
 
   return (
     <motion.div
+      data-escape-owner="permission-prompt"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          // ESC inside the prompt = decline — ask Claude to drop the request
+          // instead of interrupting its generation.
+          e.stopPropagation();
+          sendAction({ type: 'key', value: 'Escape' });
+        }
+      }}
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -4 }}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { CircleGauge } from 'lucide-react';
+import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
 import { api } from '../../services/api';
@@ -145,9 +146,11 @@ interface ContextBarProps {
   effortLevel?: string;
   userJustSent?: boolean;
   onInterrupt?: () => void;
+  // True while an interrupt is being delivered — button shows "Stopping..."
+  interrupting?: boolean;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt, interrupting = false }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -251,29 +254,39 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         </span>
       </div>
 
-      {/* Elapsed timer + interrupt — only when working */}
+      {/* Elapsed timer — only once we've seen a working transition */}
       {isWorking && responseStartRef.current > 0 && (
         <>
           <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
           <LiveElapsed startedAt={responseStartRef.current} />
-          {onInterrupt && (
-            <button
-              onClick={onInterrupt}
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors"
-              style={{
-                color: 'var(--color-error)',
-                background: 'rgba(239, 68, 68, 0.08)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-                fontFamily: M,
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; }}
-              title="Interrupt Claude (Esc)"
-            >
-              Stop
-            </button>
-          )}
         </>
+      )}
+
+      {/* Stop button — visible whenever Claude may still be running. Status
+          polling has up to 1.5s lag, so we err on the side of keeping the
+          button reachable rather than hiding it momentarily. `interrupting`
+          keeps it up while feedback plays. */}
+      {onInterrupt && (isWorking || hasPrompt || interrupting) && (
+        <motion.button
+          onClick={onInterrupt}
+          disabled={interrupting}
+          whileTap={{ scale: 0.96 }}
+          animate={interrupting ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+          transition={interrupting ? { duration: 0.4, repeat: Infinity } : { duration: 0.15 }}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ml-2"
+          style={{
+            color: 'var(--color-error)',
+            background: interrupting ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            fontFamily: M,
+            cursor: interrupting ? 'default' : 'pointer',
+          }}
+          onMouseEnter={(e) => { if (!interrupting) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
+          onMouseLeave={(e) => { if (!interrupting) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; }}
+          title="Interrupt Claude (Esc or Cmd+.)"
+        >
+          {interrupting ? 'Stopping…' : 'Stop'}
+        </motion.button>
       )}
 
       <span className="flex-1" />
@@ -362,6 +375,13 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         {/* Dropdown */}
         {effortOpen && (
           <div
+            data-escape-owner="effort-dropdown"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                setEffortOpen(false);
+              }
+            }}
             className="absolute bottom-full right-0 mb-1 rounded-lg overflow-hidden py-1 z-50"
             style={{
               fontFamily: M,

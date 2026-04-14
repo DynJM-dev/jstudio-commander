@@ -125,9 +125,27 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     setShowSlashMenu(val === '/' || (val.startsWith('/') && val.length < 10 && !val.includes(' ')));
   }, []);
 
-  const interruptSession = useCallback(() => {
+  const [interrupting, setInterrupting] = useState(false);
+  const [interruptError, setInterruptError] = useState<string | null>(null);
+
+  const interruptSession = useCallback(async () => {
     if (!sessionId) return;
-    api.post(`/sessions/${sessionId}/key`, { key: 'Escape' }).catch(() => {});
+    setInterrupting(true);
+    setInterruptError(null);
+    try {
+      // First Escape — stops generation. The second ~80ms later catches tmux
+      // render-cycle misses; duplicate ESC to Claude Code is idempotent.
+      await api.post(`/sessions/${sessionId}/key`, { key: 'Escape' });
+      setTimeout(() => {
+        api.post(`/sessions/${sessionId}/key`, { key: 'Escape' }).catch(() => {});
+      }, 80);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setInterruptError(`Failed to interrupt Claude — ${msg}`);
+    } finally {
+      // Keep the "Stopping…" state up long enough for the user to see it.
+      setTimeout(() => setInterrupting(false), 800);
+    }
   }, [sessionId]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -135,12 +153,9 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
       e.preventDefault();
       sendCommand();
     }
-    // Escape interrupts Claude when input is empty
-    if (e.key === 'Escape' && !command.trim()) {
-      e.preventDefault();
-      interruptSession();
-    }
-  }, [sendCommand, command, interruptSession]);
+    // Let the global ESC listener (see effect below) handle interrupts so the
+    // behavior is identical whether focus is in the textarea or anywhere else.
+  }, [sendCommand]);
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats?.totalTokens ?? 0;
@@ -173,6 +188,36 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     allMessages.length,
     userJustSent,
   );
+
+  // Global interrupt shortcuts: ESC and Cmd+./Ctrl+. anywhere on the page.
+  // Yields to any focused element inside a [data-escape-owner] subtree so
+  // modals/dropdowns/the permission prompt can close themselves first.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isEsc = e.key === 'Escape';
+      const isCmdDot = e.key === '.' && (e.metaKey || e.ctrlKey);
+      if (!isEsc && !isCmdDot) return;
+
+      if (isEsc) {
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active.closest('[data-escape-owner]')) return;
+      }
+
+      // Only fire when there's any sign Claude might be running — avoids
+      // spam-stopping an idle session when the user hits ESC.
+      const mayBeActive =
+        session?.status === 'working' ||
+        session?.status === 'waiting' ||
+        userJustSent ||
+        !!prompt;
+      if (!mayBeActive) return;
+
+      e.preventDefault();
+      interruptSession();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [session?.status, userJustSent, prompt, interruptSession]);
 
   // No session selected
   if (!sessionId) {
@@ -228,6 +273,30 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         />
       )}
 
+      {/* Interrupt error — shown briefly if the /key POST fails */}
+      <AnimatePresence>
+        {interruptError && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.2 }}
+            onAnimationComplete={() => {
+              if (interruptError) setTimeout(() => setInterruptError(null), 3500);
+            }}
+            className="shrink-0 mx-3 lg:mx-6 mb-1 px-3 py-1.5 rounded-md text-xs"
+            style={{
+              fontFamily: M,
+              color: 'var(--color-error)',
+              background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+            }}
+          >
+            {interruptError}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ContextBar — above input */}
       <ContextBar
         model={session?.model}
@@ -235,6 +304,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         totalCost={stats?.totalCost ?? 0}
         contextTokens={stats?.contextTokens}
         contextCost={stats?.contextCost}
+        interrupting={interrupting}
         messages={allMessages}
         sessionStatus={session?.status}
         sessionId={sessionId}
@@ -277,6 +347,13 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           <AnimatePresence>
             {showSlashMenu && (
               <motion.div
+                data-escape-owner="slash-menu"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setShowSlashMenu(false);
+                  }
+                }}
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 4 }}
