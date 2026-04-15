@@ -87,8 +87,9 @@ export const fileWatcherService = {
       console.log('[watcher] JSONL watcher ready');
     });
 
-    jsonlWatcher.on('error', (err: Error) => {
-      console.error('[watcher] JSONL watcher error:', err.message);
+    jsonlWatcher.on('error', (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[watcher] JSONL watcher error:', msg);
     });
 
     const handleJsonlEvent = (filePath: string) => {
