@@ -22,6 +22,7 @@ export type WSEvent =
   | { type: 'system:error'; error: string }
   | { type: 'system:heartbeat'; timestamp: string }
   | { type: 'system:health'; timestamp: string }
+  | { type: 'preference:changed'; key: string; value: unknown }
   | { type: 'teammate:spawned'; teammate: Teammate }
   | { type: 'teammate:dismissed'; sessionId: string };
 

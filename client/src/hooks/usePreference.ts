@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../services/api';
+import { wsClient } from '../services/ws';
 
 // In-memory mirror so successive mounts of the same key skip the network
 // round-trip and avoid the default-value flash. Persisted writes still go
@@ -36,6 +37,21 @@ export const usePreference = <T,>(key: string, defaultValue: T): [T, (next: T) =
       });
     return () => { cancelled = true; };
   }, [key]);
+
+  // Cross-tab sync: server broadcasts preference:changed on every PUT/DELETE.
+  // We patch the cache and local state when the event matches our key. Skip
+  // when the value already matches to keep this idempotent — avoids re-render
+  // loops if the same tab triggers the change.
+  useEffect(() => {
+    return wsClient.onEvent((event) => {
+      if (event.type !== 'preference:changed') return;
+      if (event.key !== key) return;
+      const next = (event.value ?? defaultValue) as T;
+      if (cache.get(key) === next) return;
+      cache.set(key, next);
+      setValue(next);
+    });
+  }, [key, defaultValue]);
 
   const update = useCallback((next: T) => {
     cache.set(key, next);
