@@ -16,7 +16,7 @@ const getClaudeEffortLevel = (): string => {
       if (s.effortLevel) return s.effortLevel;
     }
   } catch { /* default */ }
-  return 'medium';
+  return 'max';
 };
 
 // Auto-slug generator: adjective-noun
@@ -88,7 +88,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   stoppedAt: row.stopped_at as string | null,
   stationId: row.station_id as string | null,
   agentRole: row.agent_role as string | null,
-  effortLevel: (row.effort_level as string) ?? 'medium',
+  effortLevel: (row.effort_level as string) ?? 'max',
   parentSessionId: (row.parent_session_id as string | null) ?? null,
   teamName: (row.team_name as string | null) ?? null,
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
@@ -96,7 +96,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
 
 // Column mapping kept in one place so every write surface applies the same
 // defaults. Missing input fields fall through to schema defaults via `null`
-// — the schema owns status='idle', session_type='raw', effort_level='medium'.
+// — the schema owns status='idle', session_type='raw', effort_level='max'.
 // The one exception is effort_level, which takes the value returned by
 // getClaudeEffortLevel() when unspecified so new sessions inherit the user's
 // Claude Code default.
@@ -151,7 +151,7 @@ export const sessionService = {
     // INSERT-side defaults — only applied when the caller didn't set them.
     const defaults: Partial<Record<string, unknown>> = {
       status: 'idle',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-6[1m]',
       effort_level: getClaudeEffortLevel(),
       session_type: 'raw',
     };
@@ -194,14 +194,15 @@ export const sessionService = {
     const id = uuidv4();
     const slug = opts.name || generateSlug();
     const tmuxName = generateTmuxName(id);
-    const model = opts.model || 'claude-opus-4-6';
+    const model = opts.model || 'claude-opus-4-6[1m]';
 
     // Create tmux session (in project directory if specified)
     tmuxService.createSession(tmuxName, opts.projectPath);
 
-    // Auto-start Claude Code in the tmux session
-    // Build the claude command with the selected model
-    const modelFlag = model ? `--model ${model}` : '';
+    // Auto-start Claude Code in the tmux session. The model string can
+    // carry brackets (`[1m]` for 1M context) which zsh/bash glob-expand
+    // if unquoted — single-quote the value so strict shells don't error.
+    const modelFlag = model ? `--model '${model}'` : '';
     const claudeCmd = `claude ${modelFlag}`.trim();
 
     // Small delay to let the shell initialize, then send the claude command
@@ -232,28 +233,40 @@ export const sessionService = {
       sessionType,
     });
 
-    // PM sessions get the bootstrap prompt auto-injected once Claude's UI is
-    // ready. Fire-and-forget — the main flow doesn't wait for it.
-    if (sessionType === 'pm') {
-      const bootstrap = readPmBootstrap();
-      if (bootstrap) {
-        (async () => {
-          const ready = await waitForClaudeReady(tmuxName);
-          if (!ready) {
-            console.warn(`[sessions] ${id.slice(0, 8)} PM bootstrap skipped — Claude did not become ready`);
-            return;
-          }
-          try {
-            tmuxService.sendKeys(tmuxName, bootstrap);
-            console.log(`[sessions] ${id.slice(0, 8)} PM bootstrap injected`);
-          } catch (err) {
-            console.warn(`[sessions] ${id.slice(0, 8)} PM bootstrap send failed:`, (err as Error).message);
-          }
-        })().catch(() => {});
-      } else {
-        console.warn(`[sessions] ${id.slice(0, 8)} PM session requested but ${PM_BOOTSTRAP_PATH} missing`);
-      }
+    // Post-boot injection — every new session gets `/effort max` as the first
+    // slash command so both PM and raw sessions run at max effort by default.
+    // PM sessions additionally get their bootstrap prompt sent after the
+    // effort ack renders so `/pm` loads at max.
+    const shortId = id.slice(0, 8);
+    const bootstrap = sessionType === 'pm' ? readPmBootstrap() : null;
+    if (sessionType === 'pm' && !bootstrap) {
+      console.warn(`[sessions] ${shortId} PM session requested but ${PM_BOOTSTRAP_PATH} missing`);
     }
+
+    (async () => {
+      const ready = await waitForClaudeReady(tmuxName);
+      if (!ready) {
+        console.warn(`[sessions] ${shortId} post-boot injection skipped — Claude did not become ready`);
+        return;
+      }
+      try {
+        tmuxService.sendKeys(tmuxName, '/effort max');
+        console.log(`[sessions] ${shortId} effort set to max`);
+      } catch (err) {
+        console.warn(`[sessions] ${shortId} /effort max send failed:`, (err as Error).message);
+      }
+      if (bootstrap) {
+        // Wait for Claude to acknowledge the /effort command before firing
+        // the bootstrap so the two don't concatenate into one input line.
+        await new Promise((r) => setTimeout(r, 800));
+        try {
+          tmuxService.sendKeys(tmuxName, bootstrap);
+          console.log(`[sessions] ${shortId} PM bootstrap injected`);
+        } catch (err) {
+          console.warn(`[sessions] ${shortId} PM bootstrap send failed:`, (err as Error).message);
+        }
+      }
+    })().catch(() => {});
 
     // Log event
     db.prepare(`

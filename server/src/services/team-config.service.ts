@@ -10,6 +10,23 @@ import { tmuxService } from './tmux.service.js';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIVE_JSONL_MS = 10 * 60_000;
 
+// Team configs authored by the PM skill often use short forms like "opus" or
+// omit the [1m] suffix. Normalize in-memory before persisting so teammate
+// rows inherit the 1M context default. Does NOT mutate the on-disk config.
+const SHORT_MODEL: Record<string, string> = {
+  opus: 'claude-opus-4-6[1m]',
+  'claude-opus-4-6': 'claude-opus-4-6[1m]',
+  sonnet: 'claude-sonnet-4-6',
+  haiku: 'claude-haiku-4-5',
+};
+
+const normalizeModel = (raw: string | undefined): string | undefined => {
+  if (!raw) return undefined;
+  const base = raw.trim();
+  if (base in SHORT_MODEL) return SHORT_MODEL[base];
+  return base;
+};
+
 const projectDirFromCwd = (cwd: string): string =>
   join(homedir(), '.claude', 'projects', cwd.replace(/\//g, '-'));
 
@@ -121,7 +138,7 @@ const reconcile = (path: string): void => {
       role: lead.agentType ?? 'pm',
       teamName,
       parentSessionId: null,
-      model: lead.model,
+      model: normalizeModel(lead.model),
       live: leadLive,
     });
   }
@@ -152,7 +169,7 @@ const reconcile = (path: string): void => {
         role: member.agentType ?? 'agent',
         teamName,
         parentSessionId,
-        model: member.model,
+        model: normalizeModel(member.model),
         live: memberLive,
       });
       const teammate = buildTeammate(member, parentSessionId, teamName);

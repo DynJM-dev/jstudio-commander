@@ -47,6 +47,20 @@ export const getDb = (): Database.Database => {
     console.log('[db] Migration: added session_type column to sessions');
   }
 
+  // #188 one-time heal: promote recently-active sessions whose effort was
+  // left at 'medium' / 'low' to 'max' so they benefit from the new default
+  // without stomping user-chosen values on older rows. Idempotent — once
+  // a row is flipped it won't match the predicate on subsequent boots.
+  const healed = db.prepare(
+    `UPDATE sessions
+     SET effort_level = 'max'
+     WHERE effort_level IN ('medium','low')
+       AND updated_at > datetime('now','-24 hours')`,
+  ).run();
+  if (healed.changes > 0) {
+    console.log(`[db] Migration: promoted ${healed.changes} recent session(s) to effort=max`);
+  }
+
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;
 };

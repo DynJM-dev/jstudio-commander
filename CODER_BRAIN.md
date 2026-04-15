@@ -21,6 +21,47 @@ See `CTO_BRIEF.md` (§5) for the full feature table `cec1bc9` → `587e508` (17 
 
 ---
 
+## Context Hygiene — Mandatory
+
+Context is finite. Every token wasted on file content you don't need is a
+token stolen from reasoning. Follow these rules strictly.
+
+### Reading files
+- NEVER `cat` a full file into context. Use `Read` with offset/limit to read
+  only the section you need.
+- If you need to find something in a file, `grep -n` first to get line
+  numbers, then `Read` only those lines.
+- For large files (>200 lines), always read the first 20 lines to understand
+  structure, then target the specific section.
+- If you need a function signature but not the body, grep for it — don't
+  read the whole file.
+
+### Bash output
+- ALWAYS pipe through `head`, `tail`, or `grep` to limit output size.
+- `ls -la | head -20` not `ls -la` on large directories.
+- `find ... | head -30` not unbounded find.
+- `git log --oneline -10` not `git log`.
+- `git diff --stat` before `git diff` — only read full diff for files you need.
+
+### Editing files
+- Use targeted Edit (str_replace) with minimal context — don't re-read the
+  whole file before a one-line change.
+- If you already have the file in context from a recent Read, don't Read it
+  again before editing.
+
+### What NOT to do
+- Don't read `package.json`, `tsconfig.json`, or config files "just to check"
+  — you already know the stack from CLAUDE.md.
+- Don't read files you're about to overwrite entirely — just Write them.
+- Don't read `node_modules`, `.next`, `dist`, or build output.
+- Don't cat migration files you just wrote — you already have the content.
+
+### The test
+Before any Read or Bash command, ask yourself: *"Do I need ALL of this
+output, or just part of it?"* If just part, scope the command down.
+
+---
+
 ## Coder-9 Session (2026-04-14 → 2026-04-15)
 
 Major additions on top of coder-8's line. See `CTO_BRIEF.md` for the exhaustive feature table and architecture snapshot — this section captures the hard-won context that isn't obvious from `git log`.
