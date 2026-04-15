@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Pencil } from 'lucide-react';
+import { Pencil, SplitSquareHorizontal, Zap } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
@@ -21,6 +21,12 @@ interface SessionCardProps {
   // computes per-list to tell same-named sessions apart. Falls back to
   // the raw name when omitted so the card still works standalone.
   displayName?: string;
+  // Optional richer info — caller passes when available; card renders
+  // gracefully without. Keeps SessionCard pure and testable while
+  // enabling SessionsPage to pass live data when an aggregator endpoint
+  // exists.
+  tokensToday?: number;
+  lastMessagePreview?: string;
 }
 
 const formatUptime = (createdAt: string, stoppedAt: string | null): string => {
@@ -48,7 +54,38 @@ const shortenPath = (path: string | null): string => {
   return path.replace(/^\/Users\/[^/]+/, '~');
 };
 
-export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename, displayName }: SessionCardProps) => {
+// Compact, sortable model label — strips the "claude-" prefix and any
+// [1m] context suffix so cards show "opus-4-6" / "sonnet-4-6" instead of
+// the full identifier.
+const shortModel = (model: string | null | undefined): string => {
+  if (!model) return '—';
+  return model.replace(/^claude-/, '').replace(/\[.*?\]$/, '');
+};
+
+// Time-since helper for "last activity" hints. Returns "5m ago" / "2h ago"
+// / "yesterday" — short enough for the metadata row.
+const timeSince = (iso: string): string => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'yesterday';
+  return `${d}d ago`;
+};
+
+export const SessionCard = ({
+  session,
+  teammates,
+  onCommand,
+  onDelete,
+  onRename,
+  displayName,
+  tokensToday,
+  lastMessagePreview,
+}: SessionCardProps) => {
   const label = displayName ?? session.name;
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
@@ -182,19 +219,48 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename,
           {shortenPath(session.projectPath)}
         </p>
 
-        {/* Model pill */}
-        <div className="mt-2">
+        {/* Pill row — model + effort. */}
+        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
           <span
-            className="inline-block text-xs px-2 py-0.5 rounded-full"
+            className="inline-flex items-center text-xs px-2 py-0.5 rounded-full font-mono-stats"
             style={{
               fontFamily: M,
               background: 'rgba(255, 255, 255, 0.06)',
               color: 'var(--color-text-secondary)',
+              border: '1px solid rgba(255, 255, 255, 0.04)',
             }}
+            title={session.model ?? undefined}
           >
-            {session.model}
+            {shortModel(session.model)}
           </span>
+          {session.effortLevel && (
+            <span
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
+              style={{
+                fontFamily: M,
+                background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)',
+                color: 'var(--color-accent-light)',
+                border: '1px solid color-mix(in srgb, var(--color-accent) 22%, transparent)',
+                fontWeight: 600,
+              }}
+              title={`Effort: ${session.effortLevel}`}
+            >
+              <Zap size={10} strokeWidth={2.4} />
+              {session.effortLevel}
+            </span>
+          )}
         </div>
+
+        {/* Last message preview — caller-supplied; muted single line. */}
+        {lastMessagePreview && (
+          <p
+            className="text-xs mt-2 line-clamp-1 italic"
+            style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
+            title={lastMessagePreview}
+          >
+            {lastMessagePreview}
+          </p>
+        )}
 
         {/* Divider */}
         <div
@@ -202,16 +268,22 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename,
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.06)' }}
         />
 
-        {/* Stats row */}
-        <div className="flex items-center gap-3 font-mono-stats text-sm mb-3">
-          <span style={{ color: 'var(--color-accent-light)' }}>
-            {formatTokens(0)} tokens
+        {/* Stats row — tokens (when known), uptime, last-activity. */}
+        <div className="flex items-center gap-2 font-mono-stats text-xs mb-3 flex-wrap">
+          {typeof tokensToday === 'number' && (
+            <>
+              <span style={{ color: 'var(--color-accent-light)' }}>
+                {formatTokens(tokensToday)} today
+              </span>
+              <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
+            </>
+          )}
+          <span style={{ color: 'var(--color-text-secondary)' }}>
+            up {formatUptime(session.createdAt, isStopped ? session.stoppedAt : null)}
           </span>
           <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-          <span style={{ color: 'var(--color-working)' }}>$0.00</span>
-          <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-          <span style={{ color: 'var(--color-text-secondary)' }}>
-            {isStopped ? `stopped ${formatUptime(session.stoppedAt ?? session.createdAt, null)} ago` : formatUptime(session.createdAt, null)}
+          <span style={{ color: 'var(--color-text-tertiary)' }}>
+            {isStopped ? `stopped ${timeSince(session.stoppedAt ?? session.updatedAt)}` : timeSince(session.updatedAt)}
           </span>
         </div>
 
@@ -225,6 +297,30 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename,
                 disabled={isStopped}
               />
             </div>
+          )}
+          {!isStopped && (
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/chat/${session.id}`); }}
+              className="flex items-center justify-center rounded-lg transition-colors shrink-0"
+              style={{
+                width: 32,
+                height: 32,
+                color: 'var(--color-text-tertiary)',
+                background: 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--color-accent-light)';
+                e.currentTarget.style.background = 'rgba(42, 183, 182, 0.08)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--color-text-tertiary)';
+                e.currentTarget.style.background = 'transparent';
+              }}
+              title="Open in split view"
+              aria-label="Open in split view"
+            >
+              <SplitSquareHorizontal size={14} />
+            </button>
           )}
           <SessionActions
             sessionId={session.id}
