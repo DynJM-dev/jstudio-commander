@@ -61,6 +61,17 @@ export const getDb = (): Database.Database => {
     console.log(`[db] Migration: promoted ${healed.changes} recent session(s) to effort=max`);
   }
 
+  // Key/value preference store — replaces ad-hoc localStorage on the
+  // client so layout, sidebar, and split-pane state survive across
+  // browsers and devices.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;
 };
