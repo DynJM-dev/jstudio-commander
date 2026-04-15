@@ -32,16 +32,20 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
   const [expanded, setExpanded] = useState(false);
   const [hiddenAfterDone, setHiddenAfterDone] = useState(false);
   const [inlineVisible, setInlineVisible] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  // Stores the planKey the user dismissed. When the active plan changes to a
+  // new key, the widget surfaces again automatically — no need to reset.
+  // Previously this was a bool, which meant clicking X on plan A and then
+  // Claude starting plan B would hide plan B too until the key-change
+  // effect ran; now the comparison is direct and stable.
+  const [dismissedPlanKey, setDismissedPlanKey] = useState<string | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Reset UI state when a new plan appears. Manual dismissal is per-plan — a
-  // fresh plan key clears the flag so the widget can surface again.
+  // Reset transient UI state on plan swap. Dismissal is NOT reset here —
+  // its key-scoped compare handles that cleanly.
   useEffect(() => {
     setExpanded(false);
     setHiddenAfterDone(false);
     setInlineVisible(false);
-    setDismissed(false);
   }, [planKey]);
 
   // Auto-hide 3s after all steps complete.
@@ -85,7 +89,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     [plan],
   );
 
-  const visible = !hiddenAfterDone && !inlineVisible && !dismissed && total > 0;
+  const visible = !hiddenAfterDone && !inlineVisible && dismissedPlanKey !== planKey && total > 0;
   const reduced = prefersReducedMotion();
 
   return (
@@ -161,13 +165,13 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
                 title="Hide"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setDismissed(true);
+                  setDismissedPlanKey(planKey);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     e.stopPropagation();
-                    setDismissed(true);
+                    setDismissedPlanKey(planKey);
                   }
                 }}
                 className="shrink-0 flex items-center justify-center rounded p-0.5 -mr-0.5 cursor-pointer transition-colors"

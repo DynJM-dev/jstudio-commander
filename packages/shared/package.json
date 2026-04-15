@@ -10,9 +10,11 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
+    "tsx": "^4.20.6",
     "typescript": "^5.8.3"
   }
 }

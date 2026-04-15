@@ -1,3 +1,5 @@
+// Model limits as of 2026-04-15. Update when Claude Code changes model naming.
+
 export interface ModelPricing {
   input: number;
   output: number;
@@ -16,3 +18,37 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
 };
 
 export const DEFAULT_MODEL = 'claude-opus-4-6';
+
+// Default context window per model id (tokens). Models can opt into the
+// 1M context window with a `[1m]` suffix on the model field, regardless
+// of the base model's default — see `getContextLimit`.
+export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4-6': 1_000_000,
+  'claude-sonnet-4-6': 1_000_000,
+  'claude-haiku-4-5': 200_000,
+  'claude-haiku-4-5-20251001': 200_000,
+  'claude-opus-4-5-20251101': 1_000_000,
+  'claude-sonnet-4-5-20241022': 200_000,
+};
+
+export const DEFAULT_CONTEXT_LIMIT = 200_000;
+
+// Team configs and slash commands often use short model aliases.
+export const SHORT_MODEL_MAP: Record<string, string> = {
+  opus: 'claude-opus-4-6',
+  sonnet: 'claude-sonnet-4-6',
+  haiku: 'claude-haiku-4-5',
+};
+
+export const normalizeModelId = (model: string): string => {
+  const base = model.replace(/\[.*?\]\s*$/, '').trim();
+  return SHORT_MODEL_MAP[base] ?? base;
+};
+
+export const getContextLimit = (model?: string | null): number => {
+  if (!model) return DEFAULT_CONTEXT_LIMIT;
+  if (/\[1m\]/i.test(model)) return 1_000_000;
+  const normalized = normalizeModelId(model);
+  if (!normalized) return DEFAULT_CONTEXT_LIMIT;
+  return MODEL_CONTEXT_LIMITS[normalized] ?? DEFAULT_CONTEXT_LIMIT;
+};
