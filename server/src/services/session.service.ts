@@ -46,7 +46,34 @@ interface CreateSessionOpts {
   name?: string;
   projectPath?: string;
   model?: string;
+  sessionType?: 'pm' | 'raw';
 }
+
+const PM_BOOTSTRAP_PATH = join(homedir(), '.claude', 'prompts', 'pm-session-bootstrap.md');
+
+const readPmBootstrap = (): string | null => {
+  try {
+    if (!existsSync(PM_BOOTSTRAP_PATH)) return null;
+    return readFileSync(PM_BOOTSTRAP_PATH, 'utf-8').trim();
+  } catch {
+    return null;
+  }
+};
+
+// Poll the tmux pane until Claude Code's idle prompt shows — then we can
+// safely inject the bootstrap text. Times out after ~12s; if the UI isn't
+// ready we abort the injection quietly.
+const waitForClaudeReady = async (tmuxName: string, timeoutMs = 12_000): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const pane = tmuxService.capturePane(tmuxName, 12);
+      if (/❯/.test(pane) || /\? for shortcuts/i.test(pane)) return true;
+    } catch { /* tmux hiccup — retry */ }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+};
 
 const rowToSession = (row: Record<string, unknown>): Session => ({
   id: row.id as string,
@@ -64,6 +91,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   effortLevel: (row.effort_level as string) ?? 'medium',
   parentSessionId: (row.parent_session_id as string | null) ?? null,
   teamName: (row.team_name as string | null) ?? null,
+  sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
 });
 
 export const sessionService = {
@@ -97,10 +125,34 @@ export const sessionService = {
     // Insert into database
     const now = new Date().toISOString();
     const effortLevel = getClaudeEffortLevel();
+    const sessionType: 'pm' | 'raw' = opts.sessionType ?? 'raw';
     db.prepare(`
-      INSERT INTO sessions (id, name, tmux_session, project_path, status, model, effort_level, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?)
-    `).run(id, slug, tmuxName, opts.projectPath ?? null, model, effortLevel, now, now);
+      INSERT INTO sessions (id, name, tmux_session, project_path, status, model, effort_level, session_type, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?)
+    `).run(id, slug, tmuxName, opts.projectPath ?? null, model, effortLevel, sessionType, now, now);
+
+    // PM sessions get the bootstrap prompt auto-injected once Claude's UI is
+    // ready. Fire-and-forget — the main flow doesn't wait for it.
+    if (sessionType === 'pm') {
+      const bootstrap = readPmBootstrap();
+      if (bootstrap) {
+        (async () => {
+          const ready = await waitForClaudeReady(tmuxName);
+          if (!ready) {
+            console.warn(`[sessions] ${id.slice(0, 8)} PM bootstrap skipped — Claude did not become ready`);
+            return;
+          }
+          try {
+            tmuxService.sendKeys(tmuxName, bootstrap);
+            console.log(`[sessions] ${id.slice(0, 8)} PM bootstrap injected`);
+          } catch (err) {
+            console.warn(`[sessions] ${id.slice(0, 8)} PM bootstrap send failed:`, (err as Error).message);
+          }
+        })().catch(() => {});
+      } else {
+        console.warn(`[sessions] ${id.slice(0, 8)} PM session requested but ${PM_BOOTSTRAP_PATH} missing`);
+      }
+    }
 
     // Log event
     db.prepare(`

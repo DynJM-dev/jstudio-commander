@@ -128,6 +128,20 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename 
                 title={session.teamName ? `${session.name} · ${session.teamName}` : session.name}
               >
                 {session.name}
+                {session.sessionType === 'pm' && (
+                  <span
+                    className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full align-middle"
+                    style={{
+                      fontFamily: M,
+                      color: 'var(--color-accent-light)',
+                      background: 'rgba(42, 183, 182, 0.12)',
+                      border: '1px solid rgba(42, 183, 182, 0.22)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    PM
+                  </span>
+                )}
                 {session.teamName && (
                   <span
                     className="ml-1.5 font-normal text-sm"

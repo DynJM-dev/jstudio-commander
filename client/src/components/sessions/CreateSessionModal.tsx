@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Users, Terminal } from 'lucide-react';
 import type { Project } from '@commander/shared';
 import { api } from '../../services/api';
 
@@ -15,13 +15,14 @@ const MODEL_OPTIONS = [
 interface CreateSessionModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (opts: { name?: string; projectPath?: string; model?: string }) => Promise<void>;
+  onCreate: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => Promise<void>;
 }
 
 export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionModalProps) => {
   const [name, setName] = useState('');
   const [projectPath, setProjectPath] = useState('');
   const [model, setModel] = useState('claude-opus-4-6');
+  const [sessionType, setSessionType] = useState<'pm' | 'raw'>('pm');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -38,6 +39,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
       setName('');
       setProjectPath('');
       setModel('claude-opus-4-6');
+      setSessionType('pm');
       setIsSubmitting(false);
     }
   }, [open]);
@@ -67,6 +69,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
         name: name.trim() || undefined,
         projectPath: projectPath.trim() || undefined,
         model,
+        sessionType,
       });
       onClose();
     } catch {
@@ -128,6 +131,52 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
             </div>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              {/* Session type — PM auto-invokes /pm bootstrap; Raw is plain. */}
+              <div>
+                <label
+                  className="block text-sm font-medium mb-1.5"
+                  style={{ fontFamily: M, color: 'var(--color-text-secondary)' }}
+                >
+                  Session type
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['pm', 'raw'] as const).map((kind) => {
+                    const Icon = kind === 'pm' ? Users : Terminal;
+                    const label = kind === 'pm' ? 'PM Session' : 'Raw Session';
+                    const selected = sessionType === kind;
+                    return (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => setSessionType(kind)}
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all"
+                        style={{
+                          fontFamily: M,
+                          background: selected
+                            ? (kind === 'pm' ? 'rgba(14, 124, 123, 0.18)' : 'rgba(255, 255, 255, 0.08)')
+                            : 'rgba(255, 255, 255, 0.04)',
+                          color: selected
+                            ? (kind === 'pm' ? 'var(--color-accent-light)' : 'var(--color-text-primary)')
+                            : 'var(--color-text-secondary)',
+                          border: `1px solid ${selected
+                            ? (kind === 'pm' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.2)')
+                            : 'rgba(255, 255, 255, 0.08)'}`,
+                        }}
+                      >
+                        <Icon size={14} className="shrink-0" />
+                        <span className="font-semibold">{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p
+                  className="text-xs mt-1.5"
+                  style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}
+                >
+                  PM sessions auto-invoke <code>/pm</code> with JStudio context. Raw sessions are plain Claude Code.
+                </p>
+              </div>
+
               {/* Name */}
               <div>
                 <label

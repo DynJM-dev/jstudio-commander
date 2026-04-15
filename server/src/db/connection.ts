@@ -42,6 +42,10 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN team_name TEXT');
     console.log('[db] Migration: added team_name column to sessions');
   }
+  if (!cols.some((c) => c.name === 'session_type')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'raw'");
+    console.log('[db] Migration: added session_type column to sessions');
+  }
 
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;

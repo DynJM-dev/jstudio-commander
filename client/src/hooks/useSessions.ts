@@ -7,7 +7,7 @@ interface UseSessionsReturn {
   sessions: Session[];
   loading: boolean;
   error: string | null;
-  createSession: (opts: { name?: string; projectPath?: string; model?: string }) => Promise<Session>;
+  createSession: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => Promise<Session>;
   deleteSession: (id: string) => Promise<Session>;
   sendCommand: (id: string, command: string) => Promise<void>;
   updateSession: (id: string, updates: { name?: string; model?: string }) => Promise<Session>;
@@ -86,7 +86,7 @@ export const useSessions = (): UseSessionsReturn => {
   }, [lastEvent]);
 
   const createSession = useCallback(
-    async (opts: { name?: string; projectPath?: string; model?: string }): Promise<Session> => {
+    async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }): Promise<Session> => {
       const session = await api.post<Session>('/sessions', opts);
       return session;
     },

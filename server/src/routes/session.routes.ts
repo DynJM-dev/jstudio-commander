@@ -18,7 +18,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
   });
 
   // Create session
-  app.post<{ Body: { name?: string; projectPath?: string; model?: string } }>(
+  app.post<{ Body: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' } }>(
     '/api/sessions',
     async (request, reply) => {
       try {

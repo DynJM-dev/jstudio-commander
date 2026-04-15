@@ -16,6 +16,10 @@ export interface Session {
   effortLevel: string;
   parentSessionId: string | null;
   teamName: string | null;
+  // 'pm' sessions auto-invoke /pm after Claude boots. 'raw' sessions are
+  // plain Claude Code — no bootstrap. Defaults to 'raw' for rows created
+  // before this field existed.
+  sessionType: 'pm' | 'raw';
 }
 
 export interface Teammate {

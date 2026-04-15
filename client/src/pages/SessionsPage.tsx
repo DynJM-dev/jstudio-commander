@@ -51,7 +51,7 @@ export const SessionsPage = () => {
     return { topLevel: top, teammatesByParent: childrenOf };
   }, [activeSessions]);
 
-  const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string }) => {
+  const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => {
     await createSession(opts);
   }, [createSession]);
 
