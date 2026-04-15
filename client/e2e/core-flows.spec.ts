@@ -22,9 +22,12 @@ test('2. /api/system/health returns expected shape', async ({ request }) => {
     dbConnected: expect.any(Boolean),
     tmuxAvailable: expect.any(Boolean),
   });
-  // Post-#187: hook matcher stats are surfaced
+  // Post-#204: hook matcher stats surface the new deterministic strategies
   expect(body.hookMatchStats).toBeTruthy();
-  expect(body.hookMatchStats).toHaveProperty('rotation-detected');
+  expect(body.hookMatchStats).toHaveProperty('claudeSessionId');
+  expect(body.hookMatchStats).toHaveProperty('transcriptUUID');
+  expect(body.hookMatchStats).toHaveProperty('cwd-exclusive');
+  expect(body.hookMatchStats).toHaveProperty('skipped');
 });
 
 test('3. teammates endpoint returns array for any session id', async ({ request }) => {

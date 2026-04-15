@@ -20,6 +20,12 @@ export interface Session {
   // plain Claude Code — no bootstrap. Defaults to 'raw' for rows created
   // before this field existed.
   sessionType: 'pm' | 'raw';
+  // Ordered list of JSONL transcript absolute paths this session owns.
+  // Appended once per hook event. Chat rendering concatenates messages
+  // across every path in this list in order — so /compact, /clear, model
+  // switches, or any other rotation produces additional entries here
+  // rather than replacing the previous transcript.
+  transcriptPaths: string[];
 }
 
 export interface Teammate {

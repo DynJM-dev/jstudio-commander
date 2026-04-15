@@ -46,6 +46,10 @@ export const getDb = (): Database.Database => {
     db.exec("ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'raw'");
     console.log('[db] Migration: added session_type column to sessions');
   }
+  if (!cols.some((c) => c.name === 'transcript_paths')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN transcript_paths TEXT NOT NULL DEFAULT '[]'");
+    console.log('[db] Migration: added transcript_paths column to sessions');
+  }
 
   // #188 one-time heal: promote recently-active sessions whose effort was
   // left at 'medium' / 'low' to 'max' so they benefit from the new default

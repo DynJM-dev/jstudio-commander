@@ -75,6 +75,16 @@ const waitForClaudeReady = async (tmuxName: string, timeoutMs = 12_000): Promise
   return false;
 };
 
+const parseTranscriptPaths = (raw: unknown): string[] => {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
 const rowToSession = (row: Record<string, unknown>): Session => ({
   id: row.id as string,
   name: row.name as string,
@@ -92,6 +102,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   parentSessionId: (row.parent_session_id as string | null) ?? null,
   teamName: (row.team_name as string | null) ?? null,
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
+  transcriptPaths: parseTranscriptPaths(row.transcript_paths),
 });
 
 // Column mapping kept in one place so every write surface applies the same
@@ -115,8 +126,17 @@ interface UpsertSessionInput {
   parentSessionId?: string | null;
   sessionType?: 'pm' | 'raw';
   transcriptPath?: string | null;
+  transcriptPaths?: string[];
   stationId?: string | null;
 }
+
+// Columns whose values aren't primitive strings/numbers — SQLite doesn't
+// have a native JSON type, so we serialize to text on write and parse on
+// read (rowToSession handles the parse side).
+const serializeCol = (col: string, value: unknown): unknown => {
+  if (col === 'transcript_paths' && Array.isArray(value)) return JSON.stringify(value);
+  return value;
+};
 
 // Keys in the DB schema order — the SQL generator uses this array to build
 // both the INSERT column list and the ON CONFLICT update list.
@@ -131,6 +151,7 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
   { col: 'station_id',        key: 'stationId' },
   { col: 'agent_role',        key: 'agentRole' },
   { col: 'transcript_path',   key: 'transcriptPath' },
+  { col: 'transcript_paths',  key: 'transcriptPaths' },
   { col: 'effort_level',      key: 'effortLevel' },
   { col: 'parent_session_id', key: 'parentSessionId' },
   { col: 'team_name',         key: 'teamName' },
@@ -160,7 +181,7 @@ export const sessionService = {
         db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, input.id);
       } else {
         const sets = provided.map(({ col }) => `${col} = ?`).concat(['updated_at = ?']).join(', ');
-        const vals = provided.map(({ key }) => input[key]);
+        const vals = provided.map(({ col, key }) => serializeCol(col, input[key]));
         vals.push(now);
         vals.push(input.id);
         db.prepare(`UPDATE sessions SET ${sets} WHERE id = ?`).run(...vals);
@@ -184,7 +205,7 @@ export const sessionService = {
       const value = input[key];
       if (value !== undefined) {
         insertCols.push(col);
-        insertVals.push(value);
+        insertVals.push(serializeCol(col, value));
         placeholders.push('?');
       } else if (col in defaults) {
         insertCols.push(col);
@@ -288,6 +309,26 @@ export const sessionService = {
     const session = this.getSession(id)!;
     eventBus.emitSessionCreated(session);
     return session;
+  },
+
+  // Add a JSONL transcript to a session's ordered path list. Idempotent —
+  // calling twice with the same path is a no-op. Used by the hook-event
+  // route every time Claude Code fires a Stop/PostToolUse hook carrying
+  // a transcript_path. Replaces the old rotation-detector heuristics with
+  // a deterministic append.
+  appendTranscriptPath(sessionId: string, path: string): boolean {
+    const db = getDb();
+    const row = db.prepare('SELECT transcript_paths FROM sessions WHERE id = ?').get(sessionId) as
+      | { transcript_paths: string }
+      | undefined;
+    if (!row) return false;
+    const existing = parseTranscriptPaths(row.transcript_paths);
+    if (existing.includes(path)) return false;
+    const next = [...existing, path];
+    db.prepare(
+      "UPDATE sessions SET transcript_paths = ?, updated_at = datetime('now') WHERE id = ?",
+    ).run(JSON.stringify(next), sessionId);
+    return true;
   },
 
   // Register a teammate discovered from a team config file. The teammate's

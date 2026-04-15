@@ -4,6 +4,7 @@ import { fileWatcherService } from '../services/file-watcher.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
 import { sessionService } from '../services/session.service.js';
+import { tmuxService } from '../services/tmux.service.js';
 
 interface HookEventBody {
   event: string;
@@ -16,6 +17,26 @@ interface HookEventBody {
   };
 }
 
+// Deterministic transcript-append flow. Every hook event carries a
+// transcript_path — that's the definitive statement of "this is the JSONL
+// I'm writing." We match it to a Commander sessions row and append to the
+// row's transcript_paths list. No rotation heuristics, no cwd scans, no
+// id-as-uuid guesses. If we can't identify an owner we drop the event.
+export type MatchStrategy =
+  | 'claudeSessionId'   // hook's sessionId already present in a row's transcript_paths basename
+  | 'transcriptUUID'    // transcript_path's basename UUID already in a row's transcript_paths
+  | 'sessionId-as-row'  // hook's sessionId === sessions.id (PM/lead pattern)
+  | 'cwd-exclusive'     // exactly one session row has this cwd AND unclaimed
+  | 'skipped';
+
+export const hookMatchStats: Record<MatchStrategy, number> = {
+  claudeSessionId: 0,
+  transcriptUUID: 0,
+  'sessionId-as-row': 0,
+  'cwd-exclusive': 0,
+  skipped: 0,
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const uuidFromTranscriptPath = (path: string): string | null => {
@@ -23,98 +44,55 @@ const uuidFromTranscriptPath = (path: string): string | null => {
   return UUID_RE.test(name) ? name : null;
 };
 
-export type MatchStrategy =
-  | 'claudeSessionId'
-  | 'transcriptUUID'
-  | 'unclaimed-cwd'
-  | 'rotation-detected'
-  | 'skipped';
+interface MatchedRow {
+  id: string;
+  strategy: Exclude<MatchStrategy, 'skipped'>;
+}
 
-// Running counters for operational visibility — surfaced via /api/system/health.
-// Lightweight and in-memory; reset on server restart.
-export const hookMatchStats: Record<MatchStrategy, number> = {
-  claudeSessionId: 0,
-  transcriptUUID: 0,
-  'unclaimed-cwd': 0,
-  'rotation-detected': 0,
-  skipped: 0,
-};
-
-// Resolve the Commander sessions row that owns this hook event. Tries four
-// strategies in order so PM + teammate flows both converge on the correct
-// row without a separate polling loop. Once matched, backfills
-// claude_session_id + transcript_path on the row so future events match via
-// the fast path (strategy 1).
-const resolveSessionRow = (
-  body: HookEventBody,
-): { id: string; backfillClaudeId: string | null; strategy: Exclude<MatchStrategy, 'skipped'> } | null => {
+const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   const db = getDb();
-  const payloadClaudeId = body.sessionId ?? null;
-  const transcriptClaudeId = body.data?.transcript_path ? uuidFromTranscriptPath(body.data.transcript_path) : null;
+  const transcriptPath = body.data?.transcript_path;
+  const transcriptUuid = transcriptPath ? uuidFromTranscriptPath(transcriptPath) : null;
+  const payloadUuid = body.sessionId ?? null;
   const cwd = body.data?.cwd;
 
-  // 1. Fast path — a row already knows its Claude UUID.
-  const anyClaudeId = payloadClaudeId ?? transcriptClaudeId;
-  if (anyClaudeId) {
-    const row = db.prepare('SELECT id FROM sessions WHERE claude_session_id = ?').get(anyClaudeId) as { id: string } | undefined;
-    if (row) return { id: row.id, backfillClaudeId: null, strategy: 'claudeSessionId' };
-  }
-
-  // 2. Transcript path carries a UUID — match it against any row whose
-  // claude_session_id already points to it (already covered above) OR
-  // whose id equals it (the PM/lead pattern where leadSessionId is
-  // stored as sessions.id). A hook event carrying this transcript path
-  // is definitive evidence that the referenced Claude session is the
-  // one this row owns, so backfill is safe here (contrast with the
-  // removed boot-time id-as-uuid heal which was speculative).
-  if (transcriptClaudeId) {
+  // 1. Fast path — a row already has this transcript_path in its list.
+  if (transcriptPath) {
     const row = db.prepare(
-      'SELECT id, claude_session_id FROM sessions WHERE claude_session_id = ? OR id = ?',
-    ).get(transcriptClaudeId, transcriptClaudeId) as
-      | { id: string; claude_session_id: string | null }
-      | undefined;
+      `SELECT id FROM sessions WHERE transcript_paths LIKE ?`
+    ).get(`%${JSON.stringify(transcriptPath).slice(1, -1)}%`) as { id: string } | undefined;
+    if (row) return { id: row.id, strategy: 'claudeSessionId' };
+  }
+
+  // 2. UUID of the transcript file matches a row's legacy claude_session_id
+  // (pre-migration data) OR the row's id (PM/lead pattern where leadSessionId
+  // is stored as sessions.id).
+  const uuid = transcriptUuid ?? payloadUuid;
+  if (uuid) {
+    const row = db.prepare(
+      `SELECT id FROM sessions WHERE claude_session_id = ? OR id = ? LIMIT 1`
+    ).get(uuid, uuid) as { id: string } | undefined;
     if (row) {
-      // Exclusive-claim guard: if another row already claims this UUID,
-      // don't steal it. The hook is addressed to a different row.
-      const otherClaim = db.prepare(
-        'SELECT id FROM sessions WHERE claude_session_id = ? AND id != ?',
-      ).get(transcriptClaudeId, row.id) as { id: string } | undefined;
-      if (!otherClaim) {
-        return {
-          id: row.id,
-          backfillClaudeId: row.claude_session_id ? null : transcriptClaudeId,
-          strategy: 'transcriptUUID',
-        };
-      }
+      return {
+        id: row.id,
+        strategy: uuid === payloadUuid && payloadUuid !== transcriptUuid ? 'sessionId-as-row' : 'transcriptUUID',
+      };
     }
   }
 
-  // 3. Unclaimed row in the same cwd — prefer teammate rows (parent_session_id
-  // set) that have not yet been linked. If exactly one candidate remains after
-  // filtering, claim it. Multi-candidate is ambiguous; we still claim but flag
-  // it as a warning up the stack.
-  // Extra guard: if this Claude UUID is ALREADY claimed by some other row,
-  // don't bind — the hook is for that other row, not one of our unclaimed
-  // candidates. Prevents cross-session claim theft on shared-cwd setups.
-  if (cwd && anyClaudeId) {
-    const alreadyClaimed = db.prepare(
-      'SELECT id FROM sessions WHERE claude_session_id = ?',
-    ).get(anyClaudeId) as { id: string } | undefined;
-    if (alreadyClaimed) {
-      // Hook belongs to the existing claimant; fall through to null so the
-      // caller logs a 'skipped' warn rather than misrouting.
-      return null;
-    }
-    const candidates = db.prepare(
-      `SELECT id, parent_session_id FROM sessions
-       WHERE project_path = ? AND status != 'stopped' AND claude_session_id IS NULL
-       ORDER BY parent_session_id IS NULL ASC, updated_at DESC`
-    ).all(cwd) as Array<{ id: string; parent_session_id: string | null }>;
-
-    if (candidates.length >= 1) {
-      const teammate = candidates.find((c) => c.parent_session_id !== null);
-      const pick = teammate ?? candidates[0]!;
-      return { id: pick.id, backfillClaudeId: anyClaudeId, strategy: 'unclaimed-cwd' };
+  // 3. Last-resort cwd match — ONLY when exactly one non-stopped session
+  // has this cwd AND its transcript_paths is still empty. This handles the
+  // first hook event for a brand-new session before any transcript_path
+  // has been persisted. Multi-session cwd is ambiguous; drop the event.
+  if (cwd) {
+    const unclaimed = db.prepare(
+      `SELECT id FROM sessions
+       WHERE project_path = ?
+         AND status != 'stopped'
+         AND (transcript_paths IS NULL OR transcript_paths = '[]')`,
+    ).all(cwd) as Array<{ id: string }>;
+    if (unclaimed.length === 1) {
+      return { id: unclaimed[0]!.id, strategy: 'cwd-exclusive' };
     }
   }
 
@@ -122,8 +100,8 @@ const resolveSessionRow = (
 };
 
 export const hookEventRoutes = async (app: FastifyInstance) => {
-  // Receive hook events from Claude Code
-  // These bypass PIN auth (localhost only, fired by Claude Code process)
+  // Receive hook events from Claude Code — bypass PIN auth (localhost only,
+  // fired by the Claude process itself).
   app.post<{ Body: HookEventBody }>(
     '/api/hook-event',
     { logLevel: 'warn' as const },
@@ -132,51 +110,41 @@ export const hookEventRoutes = async (app: FastifyInstance) => {
       const event = body.event ?? 'unknown';
       const transcriptPath = body.data?.transcript_path;
 
-      console.log(`[hook] ${event}${transcriptPath ? ` → ${transcriptPath.split('/').pop()}` : ''}`);
+      console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
 
-      if (transcriptPath && transcriptPath.endsWith('.jsonl')) {
-        fileWatcherService.watchSpecificFile(transcriptPath);
+      if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
+        eventBus.emitSystemEvent(`hook:${event}`, body);
+        return { ok: true };
+      }
 
-        const match = resolveSessionRow(body);
-        if (match) {
-          hookMatchStats[match.strategy] += 1;
-          const db = getDb();
-          const sets: string[] = ['transcript_path = ?', "updated_at = datetime('now')"];
-          const values: unknown[] = [transcriptPath];
-          if (match.backfillClaudeId) {
-            sets.push('claude_session_id = ?');
-            values.push(match.backfillClaudeId);
-          }
-          values.push(match.id);
+      fileWatcherService.watchSpecificFile(transcriptPath);
 
-          const updated = db.prepare(
-            `UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`,
-          ).run(...values);
+      // Quiet the tmux guard when the hook was delivered via HTTP from the
+      // same machine — we don't probe tmux to disambiguate owners, just
+      // match by transcript identity.
+      void tmuxService; // imported for future use in the cwd fallback — keep reference
 
-          const shortId = match.id.slice(0, 30);
-          const transcriptName = transcriptPath.split('/').pop();
-          const backfillNote = match.backfillClaudeId ? ' (backfilled claude_session_id)' : '';
-          console.log(
-            `[hook-event] session=${shortId} matched via ${match.strategy} transcript=${transcriptName}${backfillNote}`,
-          );
-          // The cwd-tiebreaker path is a last-resort guess; surface it as a
-          // warning so ambiguous PM+teammate routing is visible in logs.
-          if (match.strategy === 'unclaimed-cwd') {
-            console.warn(
-              `[hook-event] WARN: cwd-fallback for session=${shortId} — ambiguous match; backfilling claude_session_id=${match.backfillClaudeId}`,
-            );
-          }
+      const match = resolveOwner(body);
+      if (!match) {
+        hookMatchStats.skipped += 1;
+        console.warn(
+          `[hook-event] WARN: no owner for hook event cwd=${body.data?.cwd ?? '?'} ` +
+          `sessionId=${body.sessionId ?? '?'} transcript=${basename(transcriptPath)}`,
+        );
+        eventBus.emitSystemEvent(`hook:${event}`, body);
+        return { ok: true };
+      }
 
-          if (updated.changes > 0) {
-            const session = sessionService.getSession(match.id);
-            if (session) eventBus.emitSessionUpdated(session);
-          }
-        } else {
-          hookMatchStats.skipped += 1;
-          console.warn(
-            `[hook-event] WARN: no match for hook event cwd=${body.data?.cwd ?? '?'} claudeSessionId=${body.sessionId ?? '?'} transcript=${transcriptPath.split('/').pop()}`,
-          );
-        }
+      hookMatchStats[match.strategy] += 1;
+      const appended = sessionService.appendTranscriptPath(match.id, transcriptPath);
+      const shortId = match.id.slice(0, 30);
+      console.log(
+        `[hook-event] session=${shortId} matched via ${match.strategy} transcript=${basename(transcriptPath)}${appended ? ' (appended)' : ' (dedup)'}`,
+      );
+
+      if (appended) {
+        const session = sessionService.getSession(match.id);
+        if (session) eventBus.emitSessionUpdated(session);
       }
 
       eventBus.emitSystemEvent(`hook:${event}`, body);

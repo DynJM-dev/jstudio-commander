@@ -1,14 +1,11 @@
 import type { SessionStatus } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { agentStatusService } from './agent-status.service.js';
-import { rotationDetectorService } from './rotation-detector.service.js';
 import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
-const ROTATION_INTERVAL = 15_000; // 15 seconds
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let rotationTimer: ReturnType<typeof setInterval> | null = null;
 
 // In-memory cache of last known statuses to avoid unnecessary DB writes
 const lastKnownStatus = new Map<string, SessionStatus>();
@@ -94,24 +91,16 @@ const poll = (): void => {
 
 export const statusPollerService = {
   start(): void {
-    console.log(`[poller] Status poller started (every ${POLL_INTERVAL / 1000}s, rotation sweep every ${ROTATION_INTERVAL / 1000}s)`);
+    console.log(`[poller] Status poller started (every ${POLL_INTERVAL / 1000}s)`);
     // Run immediately, then on interval
     poll();
     pollTimer = setInterval(poll, POLL_INTERVAL);
-    rotationTimer = setInterval(() => {
-      try { rotationDetectorService.sweep(); }
-      catch (err) { console.warn('[poller] rotation sweep failed:', (err as Error).message); }
-    }, ROTATION_INTERVAL);
   },
 
   stop(): void {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
-    }
-    if (rotationTimer) {
-      clearInterval(rotationTimer);
-      rotationTimer = null;
     }
     lastKnownStatus.clear();
     console.log('[poller] Status poller stopped');

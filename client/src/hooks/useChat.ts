@@ -21,11 +21,16 @@ interface UseChatReturn {
   hasMore: boolean;
   stats: ChatStats | null;
   loadMore: () => Promise<void>;
+  // True when the session has no transcript bound yet — post-#204 the
+  // chat endpoint reports this and the UI shows a "Waiting for first
+  // turn…" placeholder instead of a generic empty state.
+  awaitingFirstTurn: boolean;
 }
 
 interface ChatResponse {
   messages: ChatMessage[];
   total: number;
+  awaitingFirstTurn?: boolean;
 }
 
 const PAGE_SIZE = 500;
@@ -36,6 +41,7 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<ChatStats | null>(null);
+  const [awaitingFirstTurn, setAwaitingFirstTurn] = useState<boolean>(false);
   const { subscribe, unsubscribe, lastEvent } = useWebSocket();
   const mountedRef = useRef(true);
   const prevSessionRef = useRef<string | undefined>(undefined);
@@ -70,6 +76,7 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
           setMessages(chatRes.messages);
           setTotal(chatRes.total);
           setStats(statsRes);
+          setAwaitingFirstTurn(!!chatRes.awaitingFirstTurn);
           setLoading(false);
         }
       } catch (err) {
@@ -165,6 +172,7 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
           return prev;
         });
         setTotal(chatRes.total);
+        setAwaitingFirstTurn(!!chatRes.awaitingFirstTurn);
         if (statsRes) setStats(statsRes);
       } catch {
         // Silently fail on poll
@@ -198,5 +206,5 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     }
   }, [sessionId, hasMore, messages.length]);
 
-  return { messages, loading, error, hasMore, stats, loadMore };
+  return { messages, loading, error, hasMore, stats, loadMore, awaitingFirstTurn };
 };

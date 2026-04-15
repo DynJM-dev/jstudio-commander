@@ -121,50 +121,34 @@ teamConfigService.start();
     }
   }
 
-  // 1b. Clear stale transcript_path entries that point to a JSONL whose
-  // UUID doesn't match the row's claude_session_id — collateral damage from
-  // the old cwd-matching hook route. Cleared rows will re-link on next hook.
-  const misaligned = db.prepare(
-    "SELECT id, claude_session_id, transcript_path FROM sessions WHERE transcript_path IS NOT NULL AND claude_session_id IS NOT NULL"
-  ).all() as Array<{ id: string; claude_session_id: string; transcript_path: string }>;
-  for (const row of misaligned) {
-    const name = row.transcript_path.split('/').pop()?.replace(/\.jsonl$/, '') ?? '';
-    if (name !== row.claude_session_id) {
-      db.prepare('UPDATE sessions SET transcript_path = NULL WHERE id = ?').run(row.id);
-      console.log(`[startup] cleared stale transcript_path on ${row.id.slice(0, 30)}`);
+  // 1b. Migrate pre-#204 single-transcript_path + claude_session_id state
+  // into the new transcript_paths list. For each session row with an
+  // existing transcript_path whose file still exists, ensure that path is
+  // present in transcript_paths. Handles Wild-puma-style duplicates by
+  // granting the file ONLY to the most-recently-created row — olders'
+  // transcript_paths stay empty and will get populated when their own
+  // first hook event fires.
+  const legacyRows = db.prepare(
+    "SELECT id, created_at, transcript_path, transcript_paths FROM sessions WHERE transcript_path IS NOT NULL",
+  ).all() as Array<{ id: string; created_at: string; transcript_path: string; transcript_paths: string }>;
+
+  const claimedBy = new Map<string, { id: string; createdAt: string }>();
+  for (const row of legacyRows) {
+    if (!existsSync(row.transcript_path)) continue;
+    const prior = claimedBy.get(row.transcript_path);
+    if (!prior || new Date(row.created_at).getTime() > new Date(prior.createdAt).getTime()) {
+      claimedBy.set(row.transcript_path, { id: row.id, createdAt: row.created_at });
     }
   }
-
-  // 1c. Resolve duplicate claude_session_id bindings — the "Wild-puma
-  // battling" bug. Two sessions in the same cwd both had their
-  // rotation-detector independently discover + adopt the same JSONL,
-  // producing mirrored UIs that rendered one Claude's output in both.
-  // Heal: keep the most-recently-created row's claim, null out the
-  // older row(s). Orphans re-discover their own JSONL on the next
-  // rotation sweep — now with the exclusive-claim filter (Part A)
-  // preventing the same collision.
-  const dupeGroups = db.prepare(
-    `SELECT claude_session_id, COUNT(*) AS cnt, GROUP_CONCAT(id || '|' || created_at) AS rows
-     FROM sessions
-     WHERE claude_session_id IS NOT NULL
-     GROUP BY claude_session_id
-     HAVING cnt > 1`,
-  ).all() as Array<{ claude_session_id: string; cnt: number; rows: string }>;
-  for (const group of dupeGroups) {
-    const members = group.rows.split(',').map((s) => {
-      const [id, createdAt] = s.split('|');
-      return { id: id!, createdAt: createdAt! };
-    });
-    // Most-recently-created wins the claim.
-    members.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const winner = members[0]!;
-    for (const loser of members.slice(1)) {
-      db.prepare(
-        'UPDATE sessions SET claude_session_id = NULL, transcript_path = NULL WHERE id = ?',
-      ).run(loser.id);
-      console.log(
-        `[heal] session=${loser.id.slice(0, 30)} claude_session_id=${group.claude_session_id.slice(0, 8)} orphaned (duplicate; ${winner.id.slice(0, 30)} created later)`,
-      );
+  for (const row of legacyRows) {
+    const winner = claimedBy.get(row.transcript_path);
+    const existing = (() => {
+      try { return JSON.parse(row.transcript_paths || '[]') as string[]; } catch { return []; }
+    })();
+    if (winner?.id === row.id && existsSync(row.transcript_path) && !existing.includes(row.transcript_path)) {
+      const next = [...existing, row.transcript_path];
+      db.prepare('UPDATE sessions SET transcript_paths = ? WHERE id = ?').run(JSON.stringify(next), row.id);
+      console.log(`[migrate] session=${row.id.slice(0, 30)} transcript_paths += ${row.transcript_path.split('/').pop()}`);
     }
   }
 
