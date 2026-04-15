@@ -18,11 +18,15 @@ const IDLE_INDICATORS = [
   /Finished in/i,   // another Claude completion line
   /^>\s*$/, /^\$\s*$/,
 ];
+// Patterns that definitively mean "waiting for user input". Kept specific —
+// #236 removed the bare /\?\s*$/m pattern because Claude Code's idle footer
+// ("new task?", "? for shortcuts") matched it and flagged idle sessions as
+// waiting. Every entry here is either a full phrase or a bracketed choice
+// that only appears in a real permission prompt.
 const WAITING_INDICATORS = [
   /waiting for input/i,
-  /\?\s*$/m,                // question mark at end of ANY line (multiline), not just whole-string
   /\(y\/n\)/i, /\(Y\/n\)/i,
-  /\[y\/N\]/i, /\[Y\/n\]/i, // bracket-style variants
+  /\[y\/N\]/i, /\[Y\/n\]/i,
   /Do you want to proceed/i,
   /Do you want to approve/i,
   /Do you want to use/i,
@@ -32,8 +36,25 @@ const WAITING_INDICATORS = [
   /Continue\?/i,
   /Proceed\?/i,
   /^Esc to cancel/mi, /^Enter to confirm/mi,
-  // NOTE: ⏵⏵ accept edits is a MODE INDICATOR, not a prompt — don't detect as waiting
 ];
+
+// Idle-footer phrases Claude Code renders BELOW the ❯ input when no prompt
+// is active. Presence of any of these means "this pane's last lines are
+// chrome, not a prompt" — we require a strong-signal waiting pattern
+// (numbered-choice block, bracketed choice, or a "Do you want to" phrase)
+// to still classify the session as waiting despite the footer being visible.
+const IDLE_FOOTER_MARKERS = [
+  /⏵⏵ accept edits on/i,
+  /\? for shortcuts/i,
+  /new task\?/i,
+  /\/clear to save/i,
+  /shift\+tab to cycle/i,
+];
+
+const hasIdleFooter = (text: string): boolean => {
+  const tail = text.split('\n').slice(-25).join('\n');
+  return IDLE_FOOTER_MARKERS.some((re) => re.test(tail));
+};
 
 // Claude Code's numbered-choice prompts sometimes render without the
 // leading `❯` marker on the choice line (for example when the cursor
@@ -104,15 +125,24 @@ export const agentStatusService = {
     // Numbered choice prompts (❯ 1. Yes) = waiting for user selection.
     // Two variants: with the ❯ marker, or a block of consecutive numbered
     // lines (Claude sometimes redraws the UI so the marker lands on a
-    // different line than the choices).
+    // different line than the choices). Strongest waiting signal — runs
+    // ahead of the idle-footer short-circuit so a real numbered prompt
+    // sitting next to the idle-ish chrome still classifies as waiting.
     if (hasNumberedChoiceInTail(paneContent) || hasNumberedChoiceBlock(paneContent)) {
       return 'waiting';
     }
 
-    // Check for waiting patterns (interactive prompts) — highest priority
-    for (const pattern of WAITING_INDICATORS) {
-      if (pattern.test(paneContent)) {
-        return 'waiting';
+    // Idle-footer short-circuit (#236). When Claude renders its idle
+    // chrome ('⏵⏵ accept edits on', '? for shortcuts', 'new task?')
+    // below the ❯ cursor, the other WAITING_INDICATORS can over-match
+    // on chrome text. If a known idle-footer marker is present we
+    // skip the broad regex loop and fall through to the idle-prompt
+    // detection below.
+    if (!hasIdleFooter(paneContent)) {
+      for (const pattern of WAITING_INDICATORS) {
+        if (pattern.test(paneContent)) {
+          return 'waiting';
+        }
       }
     }
 
