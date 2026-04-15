@@ -253,17 +253,27 @@ export const sessionService = {
     // centralized in upsertSession. Standalone sessions boot 'working' —
     // tmux + claude launched above — so the poller's first cycle reflects
     // truth instead of bouncing idle→working.
+    //
+    // The row insert and the 'created' event log are wrapped in a
+    // transaction so a process crash between them can never produce an
+    // orphan row without its audit entry (audit #205 scenario 13).
     const sessionType: 'pm' | 'raw' = opts.sessionType ?? 'raw';
-    this.upsertSession({
-      id,
-      name: slug,
-      tmuxSession: tmuxName,
-      projectPath: opts.projectPath ?? null,
-      status: 'working',
-      model,
-      effortLevel: getClaudeEffortLevel(),
-      sessionType,
-    });
+    db.transaction(() => {
+      this.upsertSession({
+        id,
+        name: slug,
+        tmuxSession: tmuxName,
+        projectPath: opts.projectPath ?? null,
+        status: 'working',
+        model,
+        effortLevel: getClaudeEffortLevel(),
+        sessionType,
+      });
+      db.prepare(`
+        INSERT INTO session_events (session_id, event, detail)
+        VALUES (?, 'created', ?)
+      `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
+    })();
 
     // Post-boot injection — every new session gets `/effort max` as the first
     // slash command so both PM and raw sessions run at max effort by default.
@@ -299,12 +309,6 @@ export const sessionService = {
         }
       }
     })().catch(() => {});
-
-    // Log event
-    db.prepare(`
-      INSERT INTO session_events (session_id, event, detail)
-      VALUES (?, 'created', ?)
-    `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
 
     const session = this.getSession(id)!;
     eventBus.emitSessionCreated(session);
@@ -510,13 +514,16 @@ export const sessionService = {
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
-      UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?
-    `).run(now, now, id);
-    db.prepare(`
-      INSERT INTO session_events (session_id, event, detail)
-      VALUES (?, 'killed', ?)
-    `).run(id, JSON.stringify({ reason: 'user_requested' }));
+    // Atomic status flip + audit entry — see createSession comment.
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE sessions SET status = 'stopped', stopped_at = ?, updated_at = ? WHERE id = ?
+      `).run(now, now, id);
+      db.prepare(`
+        INSERT INTO session_events (session_id, event, detail)
+        VALUES (?, 'killed', ?)
+      `).run(id, JSON.stringify({ reason: 'user_requested' }));
+    })();
 
     session.status = 'stopped';
     session.stoppedAt = now;
