@@ -16,6 +16,7 @@ import { tunnelRoutes } from './routes/tunnel.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { hookEventRoutes } from './routes/hook-event.routes.js';
 import { teammatesRoutes } from './routes/teammates.routes.js';
+import { maintenanceRoutes } from './routes/maintenance.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
@@ -69,6 +70,7 @@ await app.register(tunnelRoutes);
 await app.register(authRoutes);
 await app.register(hookEventRoutes);
 await app.register(teammatesRoutes);
+await app.register(maintenanceRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
@@ -166,6 +168,12 @@ teamConfigService.start();
       console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} → added as ${liveStatus}`);
     }
   }
+
+  // 3. Sweep stopped teammate rows older than 7 days. Top-level sessions
+  // are preserved as user history; this only prunes child rows whose tmux
+  // is long gone.
+  const removed = sessionService.cleanupStaleTeammates();
+  if (removed > 0) console.log(`[cleanup] removed ${removed} stale teammate rows`);
 }
 
 // Graceful shutdown

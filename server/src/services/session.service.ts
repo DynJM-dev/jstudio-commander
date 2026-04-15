@@ -617,4 +617,19 @@ export const sessionService = {
 
     return { status: liveStatus };
   },
+
+  // Removes stopped teammate rows (parent_session_id != NULL) whose stopped_at
+  // is older than 7 days. Top-level sessions are never deleted by this hook —
+  // they're the user's history. Returns the number of rows deleted.
+  cleanupStaleTeammates(): number {
+    const db = getDb();
+    const result = db.prepare(`
+      DELETE FROM sessions
+      WHERE status = 'stopped'
+        AND parent_session_id IS NOT NULL
+        AND stopped_at IS NOT NULL
+        AND stopped_at < datetime('now', '-7 days')
+    `).run();
+    return result.changes;
+  },
 };
