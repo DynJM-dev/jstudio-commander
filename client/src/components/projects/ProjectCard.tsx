@@ -1,12 +1,17 @@
 import { useNavigate } from 'react-router-dom';
-import { Check, X } from 'lucide-react';
-import type { Project } from '@commander/shared';
+import { Check, X, FileText, Sparkles, Clock } from 'lucide-react';
+import type { Project, Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 
 const M = 'Montserrat, sans-serif';
 
 interface ProjectCardProps {
   project: Project;
+  // Sessions whose projectPath matches this project — surfaced as small
+  // status dots so the user can see "this project has 2 live sessions"
+  // at a glance and click through. SessionsPage cross-references and
+  // passes the matched list; card renders gracefully if omitted.
+  linkedSessions?: Session[];
 }
 
 const shortenPath = (path: string): string =>
@@ -30,10 +35,30 @@ const getStatusLabel = (status: string | null): string => {
   }
 };
 
-export const ProjectCard = ({ project }: ProjectCardProps) => {
+const sessionDotColor = (status: string): string => {
+  if (status === 'working') return 'var(--color-accent-light)';
+  if (status === 'waiting') return 'var(--color-idle)';
+  if (status === 'stopped') return 'var(--color-text-tertiary)';
+  return 'var(--color-text-secondary)';
+};
+
+const timeSince = (iso: string): string => {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+};
+
+export const ProjectCard = ({ project, linkedSessions }: ProjectCardProps) => {
   const navigate = useNavigate();
   const hasPhaseData = project.totalPhases > 0;
   const progress = hasPhaseData ? (project.completedPhases / project.totalPhases) * 100 : 0;
+  const liveSessions = (linkedSessions ?? []).filter((s) => s.status !== 'stopped');
+  const inProgress = project.currentPhaseStatus === 'in_progress';
 
   return (
     <GlassCard
@@ -42,13 +67,36 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
       onClick={() => navigate(`/projects/${project.id}`)}
       className="cursor-pointer"
     >
-      {/* Project name */}
-      <h3
-        className="text-lg font-semibold leading-tight mb-1"
-        style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
-      >
-        {project.name}
-      </h3>
+      {/* Header — name + linked-sessions cluster */}
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <h3
+          className="text-lg font-semibold leading-tight min-w-0 truncate"
+          style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
+        >
+          {project.name}
+        </h3>
+        {liveSessions.length > 0 && (
+          <div
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-full shrink-0"
+            style={{
+              background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-accent) 18%, transparent)',
+            }}
+            title={`${liveSessions.length} active session${liveSessions.length === 1 ? '' : 's'}`}
+          >
+            {liveSessions.slice(0, 4).map((s) => (
+              <span
+                key={s.id}
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: sessionDotColor(s.status) }}
+              />
+            ))}
+            <span className="text-[10px] font-mono-stats ml-0.5" style={{ color: 'var(--color-accent-light)', fontWeight: 600 }}>
+              {liveSessions.length}
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Path */}
       <p
@@ -62,9 +110,9 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
       {/* Phase progress */}
       {hasPhaseData ? (
         <div className="mb-3">
-          <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-baseline justify-between mb-1.5 gap-2">
             <span
-              className="text-sm"
+              className="text-sm min-w-0 truncate"
               style={{ fontFamily: M, color: 'var(--color-text-secondary)' }}
             >
               Phase {project.completedPhases} of {project.totalPhases}
@@ -74,11 +122,17 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
                 </span>
               )}
             </span>
+            <span
+              className="text-xs font-mono-stats shrink-0"
+              style={{ color: 'var(--color-accent-light)', fontWeight: 600 }}
+            >
+              {Math.round(progress)}%
+            </span>
           </div>
 
-          {/* Progress bar */}
+          {/* Progress bar — animated shimmer when actively in_progress */}
           <div
-            className="h-2 rounded-full overflow-hidden"
+            className="h-2 rounded-full overflow-hidden relative"
             style={{ background: 'rgba(255, 255, 255, 0.06)' }}
           >
             <div
@@ -86,21 +140,24 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
               style={{
                 width: `${progress}%`,
                 background: 'linear-gradient(90deg, var(--color-accent-dark), var(--color-accent-light))',
+                boxShadow: inProgress ? '0 0 8px var(--color-accent-glow)' : 'none',
               }}
             />
           </div>
 
-          {/* Status badge */}
+          {/* Status chip */}
           {project.currentPhaseStatus && (
-            <div className="mt-2">
+            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
               <span
-                className="text-xs px-2 py-0.5 rounded-full font-medium"
+                className="text-[11px] px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-1"
                 style={{
                   fontFamily: M,
                   color: getStatusColor(project.currentPhaseStatus),
-                  background: `${getStatusColor(project.currentPhaseStatus)}15`,
+                  background: `color-mix(in srgb, ${getStatusColor(project.currentPhaseStatus)} 12%, transparent)`,
+                  border: `1px solid color-mix(in srgb, ${getStatusColor(project.currentPhaseStatus)} 25%, transparent)`,
                 }}
               >
+                {inProgress && <Sparkles size={10} strokeWidth={2.4} />}
                 {getStatusLabel(project.currentPhaseStatus)}
               </span>
             </div>
@@ -115,40 +172,46 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
         </p>
       )}
 
-      {/* File indicators */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
-          {project.hasStateMd ? (
-            <Check size={12} style={{ color: 'var(--color-working)' }} />
-          ) : (
-            <X size={12} style={{ color: 'var(--color-text-tertiary)' }} />
-          )}
+      {/* Footer — file indicators + last-scanned */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <span
-            className="text-xs"
+            className="inline-flex items-center gap-1 text-[11px]"
             style={{
               fontFamily: M,
               color: project.hasStateMd ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+              opacity: project.hasStateMd ? 1 : 0.55,
             }}
           >
-            STATE.md
+            {project.hasStateMd
+              ? <Check size={11} style={{ color: 'var(--color-working)' }} />
+              : <X size={11} style={{ color: 'var(--color-text-tertiary)' }} />}
+            <FileText size={10} strokeWidth={1.8} />
+            STATE
           </span>
-        </div>
-        <div className="flex items-center gap-1">
-          {project.hasHandoffMd ? (
-            <Check size={12} style={{ color: 'var(--color-working)' }} />
-          ) : (
-            <X size={12} style={{ color: 'var(--color-text-tertiary)' }} />
-          )}
           <span
-            className="text-xs"
+            className="inline-flex items-center gap-1 text-[11px]"
             style={{
               fontFamily: M,
               color: project.hasHandoffMd ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+              opacity: project.hasHandoffMd ? 1 : 0.55,
             }}
           >
-            PM_HANDOFF.md
+            {project.hasHandoffMd
+              ? <Check size={11} style={{ color: 'var(--color-working)' }} />
+              : <X size={11} style={{ color: 'var(--color-text-tertiary)' }} />}
+            <FileText size={10} strokeWidth={1.8} />
+            HANDOFF
           </span>
         </div>
+        <span
+          className="inline-flex items-center gap-1 text-[10px] font-mono-stats"
+          style={{ color: 'var(--color-text-tertiary)' }}
+          title={`Last scanned: ${new Date(project.lastScannedAt).toLocaleString()}`}
+        >
+          <Clock size={9} strokeWidth={2} />
+          {timeSince(project.lastScannedAt)}
+        </span>
       </div>
     </GlassCard>
   );

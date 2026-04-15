@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
 import { FolderKanban, RefreshCw } from 'lucide-react';
+import type { Session } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { ProjectCard } from '../components/projects/ProjectCard';
 import { useProjects } from '../hooks/useProjects';
+import { useSessions } from '../hooks/useSessions';
 
 const M = 'Montserrat, sans-serif';
 
@@ -18,7 +20,21 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 export const ProjectsPage = () => {
   const { projects, loading, error, rescan, scanning } = useProjects();
+  const { sessions } = useSessions();
   const [filter, setFilter] = useState<Filter>('all');
+
+  // Pre-bucket sessions by projectPath so each project card lookup is O(1)
+  // instead of scanning the full session list per render.
+  const sessionsByProject = useMemo(() => {
+    const m = new Map<string, Session[]>();
+    for (const s of sessions) {
+      if (!s.projectPath) continue;
+      const bucket = m.get(s.projectPath) ?? [];
+      bucket.push(s);
+      m.set(s.projectPath, bucket);
+    }
+    return m;
+  }, [sessions]);
 
   const filtered = useMemo(() => {
     let result = [...projects];
@@ -143,7 +159,11 @@ export const ProjectsPage = () => {
       {filtered.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((project) => (
-            <ProjectCard key={project.id} project={project} />
+            <ProjectCard
+              key={project.id}
+              project={project}
+              linkedSessions={sessionsByProject.get(project.path)}
+            />
           ))}
         </div>
       )}
