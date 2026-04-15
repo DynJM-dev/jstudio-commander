@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
+import { hookMatchStats } from './hook-event.routes.js';
 
 const startTime = Date.now();
 
@@ -35,6 +36,11 @@ export const systemRoutes = async (app: FastifyInstance) => {
       uptime: Math.floor((Date.now() - startTime) / 1000),
       dbConnected: isDbConnected(),
       tmuxAvailable: isTmuxAvailable(),
+      // Hook-event match distribution since boot — a rising unclaimed-cwd
+      // count means multiple teammates are sharing a cwd faster than the
+      // hook events can disambiguate them. Rising 'skipped' means hook
+      // events arrive with no matchable Commander session at all.
+      hookMatchStats: { ...hookMatchStats },
     };
   });
 
