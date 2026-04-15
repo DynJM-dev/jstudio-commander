@@ -191,9 +191,29 @@ button:active, a:active, [role="button"]:active {
 }
 
 .thinking-shimmer {
-  background: linear-gradient(90deg, transparent 25%, rgba(14, 124, 123, 0.08) 50%, transparent 75%);
+  background: linear-gradient(90deg,
+    transparent 20%,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 50%,
+    transparent 80%);
   background-size: 200% 100%;
-  animation: shimmer 2s ease-in-out infinite;
+  animation: shimmer 1.5s ease-in-out infinite;
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  border-radius: 2px;
+}
+
+/* State variants — color + speed reflects what Claude is doing */
+.thinking-shimmer.tooling {
+  animation-duration: 0.8s;
+  background: linear-gradient(90deg,
+    transparent 20%,
+    color-mix(in srgb, var(--color-accent-light) 70%, transparent) 50%,
+    transparent 80%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-light) 45%, transparent);
+}
+.thinking-shimmer.waiting {
+  animation: none;
+  background: color-mix(in srgb, var(--color-idle) 45%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-idle) 50%, transparent);
 }
 
 /* Brain glow pulse */
@@ -255,15 +275,20 @@ button:active, a:active, [role="button"]:active {
   animation: status-pulse 2s ease-in-out infinite;
 }
 
-/* ContextBar glow when working — shadow only, no opacity/background changes */
+/* ContextBar glow when working — breathing accent strip across the top */
 @keyframes bar-glow {
-  0%, 100% { box-shadow: inset 0 1px 0 rgba(14, 124, 123, 0.1); }
-  50% { box-shadow: inset 0 1px 0 rgba(14, 124, 123, 0.25), 0 -1px 8px rgba(14, 124, 123, 0.12); }
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(42, 183, 182, 0.28); }
+  50% { box-shadow: inset 0 2px 0 rgba(42, 183, 182, 0.55), 0 -2px 14px rgba(42, 183, 182, 0.28); }
 }
 
 .bar-working {
-  animation: bar-glow 2.5s ease-in-out infinite;
-  border-top-color: rgba(14, 124, 123, 0.2) !important;
+  animation: bar-glow 1.6s ease-in-out infinite;
+  border-top-color: rgba(42, 183, 182, 0.45) !important;
+}
+.bar-working.bar-waiting {
+  animation: bar-glow 2.4s ease-in-out infinite;
+  border-top-color: color-mix(in srgb, var(--color-idle) 55%, transparent) !important;
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--color-idle) 55%, transparent), 0 -2px 14px color-mix(in srgb, var(--color-idle) 35%, transparent);
 }
 
 /* Reduced motion — disable all animations */

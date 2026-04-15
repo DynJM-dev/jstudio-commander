@@ -1,5 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { CircleGauge } from 'lucide-react';
+import {
+  CircleGauge,
+  FileText,
+  PenTool,
+  Terminal,
+  Search,
+  Zap,
+  Brain,
+  BookOpen,
+  MessageCircle,
+  type LucideIcon,
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
@@ -32,7 +43,12 @@ const getContextLimit = (model?: string): number => {
   return MODEL_CONTEXT_LIMITS[normalized] ?? 200_000;
 };
 
-const getActionLabel = (messages: ChatMessage[]): string | null => {
+interface ActionInfo {
+  label: string;
+  icon: LucideIcon | null;
+}
+
+const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
   if (messages.length === 0) return null;
   let lastMsg: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -44,37 +60,36 @@ const getActionLabel = (messages: ChatMessage[]): string | null => {
   const lastBlock = blocks[blocks.length - 1];
   if (!lastBlock) return null;
 
-  if (lastBlock.type === 'thinking') return 'Cogitating...';
-  if (lastBlock.type === 'text') return 'Composing response...';
+  if (lastBlock.type === 'thinking') return { label: 'Cogitating...', icon: Brain };
+  if (lastBlock.type === 'text') return { label: 'Composing response...', icon: null };
 
   if (lastBlock.type === 'tool_use') {
     const name = lastBlock.name;
+    const fp = typeof lastBlock.input.file_path === 'string'
+      ? lastBlock.input.file_path.split('/').pop() ?? ''
+      : '';
     if (name === 'Read') {
-      const fp = typeof lastBlock.input.file_path === 'string'
-        ? lastBlock.input.file_path.split('/').pop() ?? ''
-        : '';
-      return fp ? `Reading ${fp}...` : 'Reading file...';
+      const path = typeof lastBlock.input.file_path === 'string' ? lastBlock.input.file_path : '';
+      if (/\/\.claude\/skills\//.test(path)) return { label: `Reading skill ${fp || ''}...`, icon: Brain };
+      if (/\/memory\/[^/]+\.md$/.test(path) || /\b(CODER_BRAIN|PM_HANDOFF|STATE|CLAUDE|MEMORY)\.md$/.test(path)) {
+        return { label: `Reading ${fp}...`, icon: BookOpen };
+      }
+      return { label: fp ? `Reading ${fp}...` : 'Reading file...', icon: FileText };
     }
-    if (name === 'Edit') {
-      const fp = typeof lastBlock.input.file_path === 'string'
-        ? lastBlock.input.file_path.split('/').pop() ?? ''
-        : '';
-      return fp ? `Editing ${fp}...` : 'Editing file...';
-    }
-    if (name === 'Write') {
-      const fp = typeof lastBlock.input.file_path === 'string'
-        ? lastBlock.input.file_path.split('/').pop() ?? ''
-        : '';
-      return fp ? `Writing ${fp}...` : 'Writing file...';
-    }
-    if (name === 'Bash') return 'Running command...';
-    if (name === 'Grep' || name === 'Glob') return 'Searching...';
-    if (name === 'Agent') return 'Delegating to agent...';
-    return 'Working...';
+    if (name === 'Edit') return { label: fp ? `Editing ${fp}...` : 'Editing file...', icon: PenTool };
+    if (name === 'Write') return { label: fp ? `Writing ${fp}...` : 'Writing file...', icon: PenTool };
+    if (name === 'Bash') return { label: 'Running command...', icon: Terminal };
+    if (name === 'Grep' || name === 'Glob') return { label: 'Searching...', icon: Search };
+    if (name === 'Agent') return { label: 'Spawning agent...', icon: Zap };
+    if (name === 'Skill') return { label: 'Loading skill...', icon: Brain };
+    if (name === 'SendMessage') return { label: 'Messaging teammate...', icon: MessageCircle };
+    return { label: 'Working...', icon: null };
   }
 
   return null;
 };
+
+const getActionLabel = (messages: ChatMessage[]): string | null => getActionInfo(messages)?.label ?? null;
 
 const LiveElapsed = ({ startedAt }: { startedAt: number }) => {
   const [elapsed, setElapsed] = useState(0);
@@ -213,8 +228,9 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
 
   // Derive action label — userJustSent provides instant "working" before server confirms
   const isWorking = sessionStatus === 'working' || userJustSent;
-  const jsonlAction = isWorking ? getActionLabel(messages) : null;
-  const actionLabel = jsonlAction ?? (isWorking ? terminalHint : null) ?? null;
+  const jsonlAction = isWorking ? getActionInfo(messages) : null;
+  const actionLabel = jsonlAction?.label ?? (isWorking ? terminalHint : null) ?? null;
+  const ActionIcon = jsonlAction?.icon ?? null;
 
   // Status info (always shown)
   const effectiveStatus = userJustSent && sessionStatus !== 'working' ? 'working' : sessionStatus;
@@ -240,7 +256,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
 
   return (
     <div
-      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav ${isWorking ? 'bar-working' : ''}`}
+      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav ${isWorking ? 'bar-working' : ''} ${effectiveStatus === 'waiting' ? 'bar-waiting' : ''}`}
       style={{
         fontFamily: M,
         height: 34,
@@ -258,6 +274,13 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
               : undefined,
           }}
         />
+        {ActionIcon && (
+          <ActionIcon
+            size={13}
+            className="shrink-0"
+            style={{ color: 'var(--color-accent-light)' }}
+          />
+        )}
         <span
           className="text-sm font-medium truncate max-w-[220px]"
           style={{ color: isWorking ? 'var(--color-accent-light)' : 'var(--color-text-secondary)' }}

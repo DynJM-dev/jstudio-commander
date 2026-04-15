@@ -197,6 +197,44 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     return null;
   }, [isSessionWorking, allMessages]);
 
+  // Live activity — surface the in-flight tool_use (skill load, agent
+  // spawn, memory read) so the user sees it while it's happening, not
+  // only once the tool_result lands in the message stream.
+  const liveActivity = useMemo<{ kind: 'skill' | 'agent' | 'memory'; target: string } | null>(() => {
+    if (!isSessionWorking || allMessages.length === 0) return null;
+    const last = allMessages[allMessages.length - 1];
+    if (last?.role !== 'assistant' || last.content.length === 0) return null;
+    const block = last.content[last.content.length - 1];
+    if (block?.type !== 'tool_use') return null;
+    if (block.name === 'Skill') {
+      const input = block.input as { skill?: string };
+      return { kind: 'skill', target: input.skill ?? 'unknown' };
+    }
+    if (block.name === 'Agent') {
+      const input = block.input as { description?: string; subagent_type?: string };
+      return { kind: 'agent', target: input.description ?? input.subagent_type ?? 'subagent' };
+    }
+    if (block.name === 'Read') {
+      const input = block.input as { file_path?: string };
+      const path = input.file_path ?? '';
+      if (/\/\.claude\/skills\//.test(path)) {
+        const m = path.match(/\/skills\/([^/]+)/);
+        return { kind: 'skill', target: m?.[1] ?? 'skill' };
+      }
+      if (/\/memory\/[^/]+\.md$/.test(path) || /\b(CODER_BRAIN|PM_HANDOFF|STATE|CLAUDE|MEMORY)\.md$/.test(path)) {
+        return { kind: 'memory', target: path.split('/').pop() ?? path };
+      }
+    }
+    return null;
+  }, [isSessionWorking, allMessages]);
+
+  // Heuristic classifier for the shimmer — 'tooling' (fast accent-light),
+  // 'waiting' (idle yellow paused), otherwise 'thinking' (default sweep).
+  const shimmerState: 'thinking' | 'tooling' | 'waiting' =
+    session?.status === 'waiting' ? 'waiting'
+    : liveActivity ? 'tooling'
+    : 'thinking';
+
   // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
   const { prompt, terminalHint, messagesQueued, clearPrompt } = usePromptDetection(
     sessionId,
@@ -287,6 +325,8 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           isWorking={isSessionWorking}
           actionLabel={terminalHint}
           liveThinking={liveThinking}
+          liveActivity={liveActivity}
+          shimmerState={shimmerState}
         />
       )}
 

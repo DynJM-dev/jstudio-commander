@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { ArrowDown, Loader2, Sparkles } from 'lucide-react';
+import { ArrowDown, Loader2, Sparkles, Brain, Zap, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
@@ -102,9 +102,24 @@ interface ChatThreadProps {
   // Latest in-flight thinking text from the currently-generating assistant
   // message. Shown as a live italic preview under the working indicator.
   liveThinking?: string | null;
+  // Currently-executing tool that's worth surfacing (skill load, agent
+  // spawn, memory read). Shown as a prominent chip in the working indicator.
+  liveActivity?: { kind: 'skill' | 'agent' | 'memory'; target: string } | null;
+  // Drives the shimmer bar's color + speed: 'thinking' = calm accent,
+  // 'tooling' = fast accent-light, 'waiting' = paused idle-yellow glow.
+  shimmerState?: 'thinking' | 'tooling' | 'waiting';
 }
 
-export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, actionLabel, liveThinking }: ChatThreadProps) => {
+export const ChatThread = ({
+  messages,
+  hasMore,
+  onLoadMore,
+  isWorking = false,
+  actionLabel,
+  liveThinking,
+  liveActivity,
+  shimmerState = 'thinking',
+}: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showNewMessages, setShowNewMessages] = useState(false);
@@ -352,9 +367,40 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
                       {actionLabel || 'Thinking...'}
                     </span>
                   </div>
+                  {/* Live in-flight tool indicator — surfaces skill loads,
+                      agent spawns, and memory reads WHILE they happen, not
+                      only once the tool_result lands. */}
+                  {liveActivity && (() => {
+                    const cfgByKind = {
+                      skill:  { icon: Brain,    label: 'Loading skill',   color: '#7DD3FC' },
+                      agent:  { icon: Zap,      label: 'Spawning agent',  color: 'var(--color-accent-light)' },
+                      memory: { icon: BookOpen, label: 'Reading memory',  color: 'var(--color-idle)' },
+                    } as const;
+                    const cfg = cfgByKind[liveActivity.kind];
+                    const ActivityIcon = cfg.icon;
+                    return (
+                      <motion.div
+                        key={`${liveActivity.kind}:${liveActivity.target}`}
+                        initial={{ opacity: 0, x: -4 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex items-center gap-1.5 mt-1"
+                        style={{ fontFamily: M }}
+                      >
+                        <ActivityIcon size={13} style={{ color: cfg.color }} />
+                        <span className="text-xs font-medium" style={{ color: cfg.color }}>
+                          {cfg.label}
+                        </span>
+                        <span className="text-xs truncate" style={{ color: 'var(--color-text-secondary)', maxWidth: 360 }}>
+                          {liveActivity.target}
+                        </span>
+                      </motion.div>
+                    );
+                  })()}
+
                   <div
-                    className="thinking-shimmer h-0.5 rounded-full mt-1"
-                    style={{ maxWidth: 180 }}
+                    className={`thinking-shimmer h-1 rounded-full mt-1 ${shimmerState === 'tooling' ? 'tooling' : shimmerState === 'waiting' ? 'waiting' : ''}`}
+                    style={{ maxWidth: 220 }}
                   />
 
                   {/* Live thinking preview — actual streaming content from
