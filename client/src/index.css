@@ -18,7 +18,7 @@
 
   /* === Accent — Teal (JStudio Commander) === */
   --color-accent:         #0E7C7B;
-  --color-accent-light:   #12A5A4;
+  --color-accent-light:   #2AB7B6;
   --color-accent-dark:    #0A5C5B;
   --color-accent-glow:    rgba(14, 124, 123, 0.20);
   --color-accent-subtle:  rgba(14, 124, 123, 0.10);
@@ -33,10 +33,10 @@
   --color-stopped:        #6B7280;
 
   /* === Text === */
-  --color-text-primary:   #E6EDF3;
-  --color-text-secondary: #8B949E;
-  --color-text-tertiary:  #484F58;
-  --color-text-accent:    #12A5A4;
+  --color-text-primary:   #F0F4F8;
+  --color-text-secondary: #A6AFB8;
+  --color-text-tertiary:  #6E7680;
+  --color-text-accent:    #2AB7B6;
 
   /* === Spacing, Radius, Shadows === */
   --radius-sm:  8px;

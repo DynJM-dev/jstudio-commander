@@ -181,6 +181,22 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // change so it stays in sync with the inline plan card rendered in ChatThread.
   const activePlan = useMemo(() => getActivePlan(allMessages), [allMessages]);
 
+  // Latest in-flight thinking text — shown under the working indicator so
+  // the user sees WHAT Claude is thinking instead of staring at "Thinking…".
+  // Only pull from the very last message, and only while the session is
+  // still working, to avoid surfacing stale thinking from earlier turns.
+  const isSessionWorking = session?.status === 'working' || userJustSent;
+  const liveThinking = useMemo(() => {
+    if (!isSessionWorking || allMessages.length === 0) return null;
+    const last = allMessages[allMessages.length - 1];
+    if (last?.role !== 'assistant') return null;
+    for (let i = last.content.length - 1; i >= 0; i--) {
+      const b = last.content[i];
+      if (b?.type === 'thinking' && b.text) return b.text;
+    }
+    return null;
+  }, [isSessionWorking, allMessages]);
+
   // Prompt detection — only when JSONL messages exist (SessionTerminalPreview handles fresh sessions)
   const { prompt, terminalHint, messagesQueued, clearPrompt } = usePromptDetection(
     sessionId,
@@ -268,8 +284,9 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           messages={allMessages}
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isWorking={session?.status === 'working' || userJustSent}
+          isWorking={isSessionWorking}
           actionLabel={terminalHint}
+          liveThinking={liveThinking}
         />
       )}
 

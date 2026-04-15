@@ -91,15 +91,20 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
   );
 };
 
+const LIVE_THINKING_CHARS = 280;
+
 interface ChatThreadProps {
   messages: ChatMessage[];
   hasMore: boolean;
   onLoadMore: () => Promise<void>;
   isWorking?: boolean;
   actionLabel?: string | null;
+  // Latest in-flight thinking text from the currently-generating assistant
+  // message. Shown as a live italic preview under the working indicator.
+  liveThinking?: string | null;
 }
 
-export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, actionLabel }: ChatThreadProps) => {
+export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, actionLabel, liveThinking }: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showNewMessages, setShowNewMessages] = useState(false);
@@ -351,6 +356,34 @@ export const ChatThread = ({ messages, hasMore, onLoadMore, isWorking = false, a
                     className="thinking-shimmer h-0.5 rounded-full mt-1"
                     style={{ maxWidth: 180 }}
                   />
+
+                  {/* Live thinking preview — actual streaming content from
+                      the in-flight assistant message. Last ~280 chars, italic,
+                      accent left-bar so it reads as "here's the thought". */}
+                  <AnimatePresence mode="wait">
+                    {liveThinking && liveThinking !== actionLabel && (
+                      <motion.div
+                        key={liveThinking.slice(0, 40)}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18, ease: 'easeOut' as const }}
+                        className="mt-2 text-xs italic leading-relaxed pl-2 py-1 pr-2 max-h-20 overflow-hidden"
+                        style={{
+                          borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 35%, transparent)',
+                          color: 'var(--color-text-tertiary)',
+                          maxWidth: 560,
+                          display: '-webkit-box',
+                          WebkitLineClamp: 4,
+                          WebkitBoxOrient: 'vertical',
+                        }}
+                      >
+                        {liveThinking.length > LIVE_THINKING_CHARS
+                          ? `…${liveThinking.slice(-LIVE_THINKING_CHARS)}`
+                          : liveThinking}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </motion.div>
             )}
