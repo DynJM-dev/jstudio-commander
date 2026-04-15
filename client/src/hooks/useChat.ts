@@ -25,6 +25,11 @@ interface UseChatReturn {
   // chat endpoint reports this and the UI shows a "Waiting for first
   // turn…" placeholder instead of a generic empty state.
   awaitingFirstTurn: boolean;
+  // User-driven force-refresh — re-runs the initial fetch, bypassing
+  // the poll's ref-stability check. Exposed for the ContextBar refresh
+  // button (#237); use sparingly since it blocks the UI while the
+  // fetch resolves.
+  refetch: () => Promise<void>;
 }
 
 interface ChatResponse {
@@ -188,6 +193,27 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
 
   const hasMore = messages.length < total;
 
+  // Force re-fetch of the current session's messages + stats. Clears
+  // state first so any stale dedup cache in the poll useEffect can't
+  // resurrect the old list; the next poll tick will refill normally.
+  const refetch = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const [chatRes, statsRes] = await Promise.all([
+        api.get<ChatResponse>(`/chat/${sessionId}?limit=${PAGE_SIZE}`),
+        api.get<ChatStats>(`/chat/${sessionId}/stats`).catch(() => null),
+      ]);
+      if (mountedRef.current) {
+        setMessages(chatRes.messages);
+        setTotal(chatRes.total);
+        setAwaitingFirstTurn(!!chatRes.awaitingFirstTurn);
+        if (statsRes) setStats(statsRes);
+      }
+    } catch {
+      /* silent — user can retry */
+    }
+  }, [sessionId]);
+
   const loadMore = useCallback(async () => {
     if (!sessionId || !hasMore) return;
 
@@ -206,5 +232,5 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     }
   }, [sessionId, hasMore, messages.length]);
 
-  return { messages, loading, error, hasMore, stats, loadMore, awaitingFirstTurn };
+  return { messages, loading, error, hasMore, stats, loadMore, awaitingFirstTurn, refetch };
 };

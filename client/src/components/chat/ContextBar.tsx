@@ -9,6 +9,8 @@ import {
   Brain,
   BookOpen,
   MessageCircle,
+  RotateCw,
+  Check,
   type LucideIcon,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -152,9 +154,14 @@ interface ContextBarProps {
   onInterrupt?: () => void;
   // True while an interrupt is being delivered — button shows "Stopping..."
   interrupting?: boolean;
+  // User-triggered force re-sync (#237). Refetches chat + stats,
+  // clears any client-side dedup cache, and POSTs /sessions/:id/rescan
+  // for a server-side status re-probe (fire-and-forget; silently
+  // ignores 404 if endpoint is absent).
+  onRefresh?: () => Promise<void> | void;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt, interrupting = false }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -175,6 +182,19 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   const [effort, setEffort] = useState<EffortLevel>((effortLevel as EffortLevel) || 'medium');
   const [effortOpen, setEffortOpen] = useState(false);
   const effortRef = useRef<HTMLDivElement>(null);
+
+  // Manual refresh (#237) — tracks the spin + a brief checkmark-toast.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState(0);
+  const handleRefresh = useCallback(async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    try { await onRefresh(); } finally {
+      setRefreshing(false);
+      setRefreshedAt(Date.now());
+      setTimeout(() => setRefreshedAt(0), 1000);
+    }
+  }, [onRefresh, refreshing]);
 
   useEffect(() => {
     if (effortLevel) setEffort(effortLevel as EffortLevel);
@@ -389,6 +409,35 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         >
           {interrupting ? 'Stopping…' : 'Stop'}
         </motion.button>
+      )}
+
+      {/* Manual refresh (#237) — user-driven re-sync for suspected stale
+          chat state. 1s checkmark toast replaces the icon on success. */}
+      {onRefresh && (
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center justify-center rounded ml-2 transition-colors"
+          style={{
+            width: 26,
+            height: 22,
+            color: refreshedAt ? 'var(--color-working)' : 'var(--color-accent-light)',
+            background: refreshedAt ? 'rgba(34, 197, 94, 0.12)' : 'rgba(42, 183, 182, 0.08)',
+            border: '1px solid rgba(42, 183, 182, 0.2)',
+            cursor: refreshing ? 'default' : 'pointer',
+            opacity: refreshing && !refreshedAt ? 0.6 : 1,
+          }}
+          onMouseEnter={(e) => { if (!refreshing && !refreshedAt) e.currentTarget.style.background = 'rgba(42, 183, 182, 0.15)'; }}
+          onMouseLeave={(e) => { if (!refreshing && !refreshedAt) e.currentTarget.style.background = 'rgba(42, 183, 182, 0.08)'; }}
+          title={refreshedAt ? 'Refreshed' : 'Refresh chat (force re-sync)'}
+          aria-label={refreshedAt ? 'Refreshed' : 'Refresh chat'}
+        >
+          {refreshedAt ? (
+            <Check size={12} strokeWidth={2.4} />
+          ) : (
+            <RotateCw size={12} strokeWidth={2} className={refreshing ? 'animate-spin' : ''} />
+          )}
+        </button>
       )}
 
       <span className="flex-1" />

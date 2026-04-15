@@ -35,7 +35,20 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const sessionId = sessionIdOverride ?? urlSessionId;
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
-  const { messages, loading, error, hasMore, stats, loadMore } = useChat(sessionId, session?.status);
+  const { messages, loading, error, hasMore, stats, loadMore, refetch } = useChat(sessionId, session?.status);
+
+  // Force re-sync — clears any lingering local-command bubbles, refetches
+  // chat + stats, and fire-and-forget POSTs /sessions/:id/rescan so the
+  // server re-probes tmux status immediately instead of waiting for the
+  // next 5s poll. (#237)
+  const handleRefresh = useCallback(async () => {
+    if (!sessionId) return;
+    setLocalCommands([]);
+    api.post(`/sessions/${sessionId}/rescan`, {}).catch(() => { /* endpoint optional */ });
+    await refetch();
+    // Re-pull session so effortLevel / model / status match server.
+    api.get<Session>(`/sessions/${sessionId}`).then(setSession).catch(() => {});
+  }, [sessionId, refetch]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [command, setCommand] = useState('');
   const [sent, setSent] = useState(false);
@@ -411,6 +424,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         userJustSent={userJustSent}
         effortLevel={session?.effortLevel}
         onInterrupt={interruptSession}
+        onRefresh={handleRefresh}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}
