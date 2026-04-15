@@ -407,3 +407,49 @@ button:active, a:active, [role="button"]:active {
 .nav-btn--muted:hover {
   color: var(--color-text-primary);
 }
+
+/* === Primary CTA button ===
+   Modern accent-filled action button with stroke + glow. Used for
+   "New Session", modal submits, PIN unlock, etc. — keep chat bubbles
+   off this class; they have their own treatment. */
+.cta-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-accent-light) 40%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent-light) 95%, white) 0%,
+    var(--color-accent) 100%
+  );
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 2px 10px -3px var(--color-accent-glow),
+    0 0 0 0 var(--color-accent-glow);
+  transition: box-shadow 220ms ease, transform 120ms ease,
+              filter 180ms ease, border-color 180ms ease;
+  cursor: pointer;
+}
+.cta-btn-primary:hover {
+  filter: brightness(1.06);
+  border-color: color-mix(in srgb, var(--color-accent-light) 60%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 6px 20px -4px var(--color-accent-glow),
+    0 0 22px -4px var(--color-accent-glow);
+}
+.cta-btn-primary:active {
+  transform: scale(0.97);
+  filter: brightness(0.96);
+}
+.cta-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.15);
+}

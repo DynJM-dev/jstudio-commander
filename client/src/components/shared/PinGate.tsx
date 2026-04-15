@@ -137,13 +137,8 @@ export const PinGate = ({ children }: PinGateProps) => {
           <button
             type="submit"
             disabled={verifying || !pin.trim()}
-            className="w-full py-2.5 rounded-lg text-sm font-medium transition-colors"
-            style={{
-              fontFamily: M,
-              background: 'var(--color-accent)',
-              color: '#fff',
-              opacity: verifying || !pin.trim() ? 0.6 : 1,
-            }}
+            className="cta-btn-primary w-full"
+            style={{ fontFamily: M, justifyContent: 'center' }}
           >
             {verifying ? 'Verifying...' : 'Unlock'}
           </button>

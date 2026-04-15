@@ -335,14 +335,8 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                  style={{
-                    fontFamily: M,
-                    background: 'var(--color-accent)',
-                    color: '#fff',
-                    opacity: isSubmitting ? 0.7 : 1,
-                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                  }}
+                  className="cta-btn-primary"
+                  style={{ fontFamily: M }}
                 >
                   {isSubmitting && <Loader2 size={14} className="animate-spin" />}
                   Create

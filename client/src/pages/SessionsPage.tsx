@@ -115,14 +115,10 @@ export const SessionsPage = () => {
         </h1>
         <button
           onClick={() => setModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-          style={{
-            fontFamily: M,
-            background: 'var(--color-accent)',
-            color: '#fff',
-          }}
+          className="cta-btn-primary"
+          style={{ fontFamily: M }}
         >
-          <Plus size={16} />
+          <Plus size={16} strokeWidth={2.2} />
           New Session
         </button>
       </div>
