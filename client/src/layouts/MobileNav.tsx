@@ -28,13 +28,16 @@ export const MobileNav = ({ onMorePress }: MobileNavProps) => {
     <nav
       className="fixed bottom-0 left-0 right-0 z-50 lg:hidden flex items-stretch justify-around"
       style={{
-        height: 64,
+        // Total nav height grows by the safe-area inset (iPhone home
+        // indicator ≈ 34px) so the 64px content area is preserved and
+        // tap targets stay at 44px instead of getting squeezed.
+        height: 'calc(64px + env(safe-area-inset-bottom))',
+        paddingBottom: 'env(safe-area-inset-bottom)',
         fontFamily: M,
         background: 'rgba(15, 20, 25, 0.92)',
         backdropFilter: 'blur(24px) saturate(180%)',
         WebkitBackdropFilter: 'blur(24px) saturate(180%)',
         borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
       {TABS.map(({ path, icon: Icon, label }) => {
