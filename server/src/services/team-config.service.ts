@@ -170,6 +170,11 @@ const reconcile = (path: string): void => {
   }
 
   knownMembers.set(path, next);
+
+  // Opportunistically upgrade agent: sentinels to real pane ids. Cheap (one
+  // tmux list-panes call) and the moment a member gains a pane, send-keys
+  // starts working without waiting for a hook event.
+  sessionService.resolveSentinelTargets();
 };
 
 export const teamConfigService = {

@@ -15,8 +15,13 @@ const IDLE_COOLDOWN_MS = 8000; // 8 seconds (2 poll cycles) before confirming id
 
 const poll = (): void => {
   const db = getDb();
+  // Poll non-stopped rows PLUS any row whose tmux_session looks like a pane
+  // (e.g. "%35"). The pane may have come back alive after being transiently
+  // marked stopped by a prior glitch — if tmux still reports it live, we
+  // must re-probe and un-stick it. jsc-* session names stay filtered by
+  // status because those are Commander-created and stopping is authoritative.
   const activeSessions = db.prepare(
-    "SELECT id, tmux_session, status FROM sessions WHERE status != 'stopped'"
+    "SELECT id, tmux_session, status FROM sessions WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'"
   ).all() as Array<{ id: string; tmux_session: string; status: string }>;
 
   if (activeSessions.length === 0) return;

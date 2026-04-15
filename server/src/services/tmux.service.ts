@@ -99,4 +99,24 @@ export const tmuxService = {
   getPaneCommand(name: string): string {
     return exec(['list-panes', '-t', name, '-F', '#{pane_current_command}']);
   },
+
+  // Enumerate every pane across every tmux session. Used to resolve sentinel
+  // targets (sessions with no known pane) back to a real pane id by matching
+  // on cwd.
+  listAllPanes(): Array<{ paneId: string; cwd: string; sessionName: string; command: string }> {
+    const out = exec([
+      'list-panes',
+      '-a',
+      '-F',
+      '#{pane_id}|#{pane_current_path}|#{session_name}|#{pane_current_command}',
+    ]);
+    if (!out) return [];
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [paneId, cwd, sessionName, command] = line.split('|');
+        return { paneId: paneId!, cwd: cwd!, sessionName: sessionName!, command: command! };
+      });
+  },
 };

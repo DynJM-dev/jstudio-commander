@@ -207,6 +207,44 @@ export const sessionService = {
     return session;
   },
 
+  // For every session whose tmux_session is an `agent:<agentId>` sentinel,
+  // try to find a real tmux pane whose cwd matches project_path. If exactly
+  // one candidate pane exists (and isn't already claimed by another session
+  // row), adopt its pane id as the tmux target so send-keys starts working.
+  // Runs on boot + after each team-config reconcile.
+  resolveSentinelTargets(): number {
+    const db = getDb();
+    // Scan every sentinel row regardless of status — a 'stopped' sentinel is
+    // the most common case (no live evidence at insert time), yet it's
+    // exactly when we need to keep trying: if a pane with matching cwd
+    // exists, that's fresh evidence. The poller's pane-target branch will
+    // then un-stick status from 'stopped' on its next cycle.
+    const sentinels = db.prepare(
+      "SELECT id, project_path FROM sessions WHERE tmux_session LIKE 'agent:%' AND project_path IS NOT NULL"
+    ).all() as Array<{ id: string; project_path: string }>;
+    if (sentinels.length === 0) return 0;
+
+    const claimed = new Set(
+      (db.prepare("SELECT tmux_session FROM sessions WHERE tmux_session LIKE '\\%%' ESCAPE '\\'").all() as Array<{ tmux_session: string }>)
+        .map((r) => r.tmux_session),
+    );
+    const panes = tmuxService.listAllPanes();
+    let resolved = 0;
+    for (const s of sentinels) {
+      const candidates = panes.filter((p) => p.cwd === s.project_path && !claimed.has(p.paneId));
+      if (candidates.length !== 1) continue;
+      const paneId = candidates[0]!.paneId;
+      db.prepare("UPDATE sessions SET tmux_session = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(paneId, s.id);
+      claimed.add(paneId);
+      resolved += 1;
+      console.log(`[sessions] resolved sentinel → ${paneId} for ${s.id.slice(0, 30)} (cwd=${s.project_path.split('/').pop()})`);
+      const fresh = this.getSession(s.id);
+      if (fresh) eventBus.emitSessionUpdated(fresh);
+    }
+    return resolved;
+  },
+
   markTeammateDismissed(sessionId: string): void {
     const db = getDb();
     const now = new Date().toISOString();
