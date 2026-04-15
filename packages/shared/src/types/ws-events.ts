@@ -21,6 +21,7 @@ export type WSEvent =
   | { type: 'tunnel:error'; error: string }
   | { type: 'system:error'; error: string }
   | { type: 'system:heartbeat'; timestamp: string }
+  | { type: 'system:health'; timestamp: string }
   | { type: 'teammate:spawned'; teammate: Teammate }
   | { type: 'teammate:dismissed'; sessionId: string };
 

@@ -1,13 +1,20 @@
+import { getIsServerDown } from './serverHealth';
+
 const BASE_URL = '/api';
 
 class ApiError extends Error {
   status: number;
   requiresPin: boolean;
+  // True when the request failed during a known server-down window — UI
+  // layers should suppress error toasts in this case (the HealthBanner is
+  // already telling the user what's happening).
+  serverDown: boolean;
   constructor(status: number, message: string, requiresPin = false) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.requiresPin = requiresPin;
+    this.serverDown = getIsServerDown();
   }
 }
 
@@ -45,10 +52,15 @@ const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers,
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { headers, ...options });
+  } catch (err) {
+    // Network-level failure (server restarting, offline). Tag with
+    // serverDown so callers can decide whether to surface a toast.
+    const apiErr = new ApiError(0, err instanceof Error ? err.message : 'network_error');
+    throw apiErr;
+  }
 
   const text = await res.text();
   let body: Record<string, unknown> = {};

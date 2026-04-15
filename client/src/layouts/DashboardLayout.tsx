@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar';
 import { TopCommandBar } from './TopCommandBar';
 import { MobileNav } from './MobileNav';
 import { MobileOverflowDrawer } from './MobileOverflowDrawer';
+import { HealthBanner } from '../components/shared/HealthBanner';
 
 export const DashboardLayout = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -15,6 +16,7 @@ export const DashboardLayout = () => {
         background: 'var(--color-bg-deep)',
       }}
     >
+      <HealthBanner />
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

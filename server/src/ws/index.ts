@@ -72,5 +72,14 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('sessions', { type: 'teammate:dismissed', sessionId });
   });
 
+  // Health beacon: a separate cadence from the per-socket protocol
+  // heartbeat in handler.ts. Clients use the absence of these for ~10s
+  // as a signal that the server is restarting (typical during dev hot
+  // reloads), so they can render a non-disruptive banner instead of
+  // surfacing every queued request as an error.
+  setInterval(() => {
+    rooms.broadcastAll({ type: 'system:health', timestamp: new Date().toISOString() });
+  }, 5000);
+
   console.log('[ws] WebSocket server ready at /ws');
 };
