@@ -1,4 +1,4 @@
-import { Sparkles, Brain, BookOpen, Users, UserMinus, Send, Search, ListChecks, ListTree } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { ChatMessage, ContentBlock } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
@@ -8,30 +8,8 @@ import { AgentPlan } from './AgentPlan';
 import type { PlanTask } from './AgentPlan';
 import { ActivityChip } from './ActivityChip';
 import { AgentSpawnCard } from './AgentSpawnCard';
+import { matchChip } from './activity-chip-registry';
 import { formatTime } from '../../utils/format';
-
-// A Read is surfaced as a dedicated chip when its file_path matches one of
-// these patterns. Otherwise it renders as a generic ToolCallBlock so the
-// full path + result preview stays available.
-const SKILL_PATH_RE = /\/\.claude\/skills\//;
-const MEMORY_PATH_RE = /(\/\.claude\/(memory|projects\/[^/]+\/memory)\/)|\/memory\/[^/]+\.md$/;
-const PROJECT_DOC_NAMES = /\b(CODER_BRAIN|PM_HANDOFF|STATE|CLAUDE|MEMORY)\.md$/;
-
-const classifyRead = (filePath: string): { kind: 'skill' | 'memory' | 'project-doc' | 'generic'; label: string } => {
-  if (SKILL_PATH_RE.test(filePath)) {
-    const m = filePath.match(/\/skills\/([^/]+)/);
-    return { kind: 'skill', label: m?.[1] ?? 'skill' };
-  }
-  if (MEMORY_PATH_RE.test(filePath)) {
-    const name = filePath.split('/').pop() ?? filePath;
-    return { kind: 'memory', label: name };
-  }
-  if (PROJECT_DOC_NAMES.test(filePath)) {
-    const name = filePath.split('/').pop() ?? filePath;
-    return { kind: 'project-doc', label: name };
-  }
-  return { kind: 'generic', label: filePath };
-};
 
 const M = 'Montserrat, sans-serif';
 
@@ -72,7 +50,8 @@ const renderBlock = (
 
       const result = toolResults.get(block.id);
 
-      // Agent spawns — rich card with live status
+      // Agent spawns — rich card with live status (not registry-driven; the
+      // live-status view earns the extra pixels).
       if (block.name === 'Agent') {
         const input = block.input as { description?: string; prompt?: string; subagent_type?: string };
         return (
@@ -86,93 +65,25 @@ const renderBlock = (
         );
       }
 
-      // Skill load
-      if (block.name === 'Skill') {
-        const input = block.input as { skill?: string };
+      // Registry-driven compact chips. New activity types go in
+      // activity-chip-registry.ts — no edits here.
+      const chip = matchChip(block.name, block.input);
+      if (chip) {
+        const target = chip.target?.(block.input);
         return (
           <ActivityChip
             key={key}
-            icon={Brain}
-            tone="blue"
-            label="Loaded skill"
-            target={input.skill ?? 'unknown'}
+            icon={chip.icon}
+            tone={chip.tone}
+            label={chip.label(block.input)}
+            target={target}
           />
         );
       }
 
-      // Teammate messaging
-      if (block.name === 'SendMessage') {
-        const input = block.input as { to?: string; summary?: string; message?: string | Record<string, unknown> };
-        const msg = typeof input.message === 'string' ? input.message : input.summary ?? '';
-        return (
-          <ActivityChip
-            key={key}
-            icon={Send}
-            tone="cyan"
-            label={`Messaged ${input.to ?? 'teammate'}`}
-            target={input.summary ?? (msg ? `${msg.length} chars` : undefined)}
-          />
-        );
-      }
-
-      if (block.name === 'TeamCreate') {
-        const input = block.input as { name?: string };
-        return <ActivityChip key={key} icon={Users} tone="purple" label="Created team" target={input.name} />;
-      }
-      if (block.name === 'TeamDelete') {
-        const input = block.input as { name?: string };
-        return <ActivityChip key={key} icon={UserMinus} tone="purple" label="Dismissed team" target={input.name} />;
-      }
-
-      if (block.name === 'ToolSearch') {
-        const input = block.input as { query?: string };
-        return <ActivityChip key={key} icon={Search} tone="muted" label="Searched tools" target={input.query} />;
-      }
-
-      if (block.name === 'TaskList') {
-        const count = result?.content ? (result.content.match(/\bid\b/g) ?? []).length : undefined;
-        return (
-          <ActivityChip
-            key={key}
-            icon={ListTree}
-            tone="muted"
-            label="Listed tasks"
-            target={count ? `${count} items` : undefined}
-          />
-        );
-      }
-      if (block.name === 'TaskGet' || block.name === 'TaskStop') {
-        const input = block.input as { taskId?: string };
-        return (
-          <ActivityChip
-            key={key}
-            icon={ListChecks}
-            tone="muted"
-            label={block.name === 'TaskStop' ? 'Stopped task' : 'Inspected task'}
-            target={input.taskId ? `#${input.taskId}` : undefined}
-          />
-        );
-      }
-
-      // Read routed by path — skills / memory / project docs get chips, other
-      // reads stay as ToolCallBlock so the full path + content preview is
-      // available in the generic card.
-      if (block.name === 'Read') {
-        const input = block.input as { file_path?: string };
-        const path = input.file_path ?? '';
-        const { kind, label } = classifyRead(path);
-        if (kind === 'skill') {
-          return <ActivityChip key={key} icon={Brain} tone="blue" label="Read skill" target={label} />;
-        }
-        if (kind === 'memory') {
-          return <ActivityChip key={key} icon={BookOpen} tone="amber" label="Read memory" target={label} />;
-        }
-        if (kind === 'project-doc') {
-          return <ActivityChip key={key} icon={BookOpen} tone="muted" label="Read doc" target={label} />;
-        }
-        // fall through to generic
-      }
-
+      // Fallback for anything the registry doesn't claim (Write, Edit, Bash,
+      // generic Read, etc.) — full-fidelity card with file path + result
+      // preview.
       return (
         <ToolCallBlock
           key={key}
