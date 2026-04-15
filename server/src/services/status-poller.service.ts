@@ -15,6 +15,11 @@ const lastKnownStatus = new Map<string, SessionStatus>();
 // because a permission prompt is urgent — don't delay surfacing it.
 const idleSince = new Map<string, number>();
 const IDLE_GRACE_MS = 8_000;
+// Track when each session first entered 'working'. After >3min stuck in
+// working we log a warning the next time classification changes — makes
+// the "stuck on Thinking..." class of bug observable in server logs.
+const workingSince = new Map<string, number>();
+const STUCK_WORKING_WARN_MS = 3 * 60_000;
 
 const poll = (): void => {
   const db = getDb();
@@ -73,6 +78,23 @@ const poll = (): void => {
     }
 
     if (newStatus !== cachedStatus) {
+      // If we were stuck in 'working' for a long time and just escaped,
+      // surface it in logs — helps diagnose classification lag (#222).
+      if (cachedStatus === 'working') {
+        const enteredAt = workingSince.get(session.id);
+        if (enteredAt && Date.now() - enteredAt > STUCK_WORKING_WARN_MS) {
+          const minutes = Math.round((Date.now() - enteredAt) / 60_000);
+          console.warn(
+            `[poller] session ${session.id.slice(0, 8)} was 'working' for ~${minutes}m before transitioning to '${newStatus}' — possible detection lag`,
+          );
+        }
+      }
+      if (newStatus === 'working') {
+        workingSince.set(session.id, Date.now());
+      } else {
+        workingSince.delete(session.id);
+      }
+
       // Update DB
       db.prepare("UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?")
         .run(newStatus, session.id);
@@ -85,6 +107,9 @@ const poll = (): void => {
     } else {
       // Cache the current status even if unchanged (first run)
       lastKnownStatus.set(session.id, newStatus);
+      if (newStatus === 'working' && !workingSince.has(session.id)) {
+        workingSince.set(session.id, Date.now());
+      }
     }
   }
 };

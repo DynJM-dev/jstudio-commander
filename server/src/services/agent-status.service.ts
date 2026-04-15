@@ -14,18 +14,45 @@ const IDLE_INDICATORS = [
   /^❯\s*$/,        // bare prompt
   /^❯\s+\S/,       // prompt with user input shown (waiting for Claude)
   /Crunched for/i,  // completion indicator
+  /Cooked for/i,    // newer completion indicator variant observed in prod
+  /Finished in/i,   // another Claude completion line
   /^>\s*$/, /^\$\s*$/,
 ];
 const WAITING_INDICATORS = [
-  /waiting for input/i, /\?\s*$/, /\(y\/n\)/i, /\(Y\/n\)/i,
+  /waiting for input/i,
+  /\?\s*$/m,                // question mark at end of ANY line (multiline), not just whole-string
+  /\(y\/n\)/i, /\(Y\/n\)/i,
+  /\[y\/N\]/i, /\[Y\/n\]/i, // bracket-style variants
   /Do you want to proceed/i,
   /Do you want to approve/i,
+  /Do you want to use/i,
+  /Do you want to save/i,
   /trust this folder/i,
   /Allow.*Deny/i,
   /Continue\?/i,
+  /Proceed\?/i,
   /^Esc to cancel/mi, /^Enter to confirm/mi,
   // NOTE: ⏵⏵ accept edits is a MODE INDICATOR, not a prompt — don't detect as waiting
 ];
+
+// Claude Code's numbered-choice prompts sometimes render without the
+// leading `❯` marker on the choice line (for example when the cursor
+// is on a different line or when Claude rewrites the UI mid-frame).
+// Detect a block of 2+ consecutive numbered lines (1. , 2. , 3. ) within
+// the last 12 lines as a strong "choice list visible" signal.
+const hasNumberedChoiceBlock = (text: string, n = 12): boolean => {
+  const lines = text.split('\n').slice(-n);
+  let consecutive = 0;
+  for (const line of lines) {
+    if (/^\s*\d+\.\s+\S/.test(line)) {
+      consecutive += 1;
+      if (consecutive >= 2) return true;
+    } else if (line.trim().length > 0) {
+      consecutive = 0;
+    }
+  }
+  return false;
+};
 const ERROR_PATTERNS = [/^Error:/m, /^error:/m, /FATAL/i, /panic:/i];
 const DECORATOR_RE = /^[─━═┈┄\-]{4,}$/;
 
@@ -61,7 +88,10 @@ export const agentStatusService = {
       return 'stopped';
     }
 
-    const paneContent = tmuxService.capturePane(tmuxSessionName, 15);
+    // 25 lines (up from 15). The old window missed waiting prompts when
+    // Claude printed a long tool-output tail before the prompt — the
+    // permission UI scrolled out before detection could run.
+    const paneContent = tmuxService.capturePane(tmuxSessionName, 25);
     const lastLine = getLastMeaningfulLine(paneContent);
 
     // Check for errors first
@@ -71,8 +101,11 @@ export const agentStatusService = {
       }
     }
 
-    // Numbered choice prompts (❯ 1. Yes) = waiting for user selection
-    if (hasNumberedChoiceInTail(paneContent)) {
+    // Numbered choice prompts (❯ 1. Yes) = waiting for user selection.
+    // Two variants: with the ❯ marker, or a block of consecutive numbered
+    // lines (Claude sometimes redraws the UI so the marker lands on a
+    // different line than the choices).
+    if (hasNumberedChoiceInTail(paneContent) || hasNumberedChoiceBlock(paneContent)) {
       return 'waiting';
     }
 
