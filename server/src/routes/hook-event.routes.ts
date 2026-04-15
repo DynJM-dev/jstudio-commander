@@ -99,6 +99,17 @@ const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   return null;
 };
 
+// Hook events must be processed in the order they arrive at the server.
+// Two sessions rotating transcripts within the same second can race on
+// the cwd-exclusive matcher (both see `transcript_paths = '[]'` for a
+// split-second window). Serializing the handler through a promise chain
+// guarantees each hook's resolveOwner → appendTranscriptPath runs to
+// completion before the next one starts, so the "unclaimed" predicate
+// reflects the latest persisted state.
+let hookQueue: Promise<unknown> = Promise.resolve();
+let hookQueueDepth = 0;
+export const getHookQueueDepth = (): number => hookQueueDepth;
+
 export const hookEventRoutes = async (app: FastifyInstance) => {
   // Receive hook events from Claude Code — bypass PIN auth (localhost only,
   // fired by the Claude process itself).
@@ -107,48 +118,60 @@ export const hookEventRoutes = async (app: FastifyInstance) => {
     { logLevel: 'warn' as const },
     async (request) => {
       const body = request.body ?? ({} as HookEventBody);
-      const event = body.event ?? 'unknown';
-      const transcriptPath = body.data?.transcript_path;
-
-      console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
-
-      if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
-        eventBus.emitSystemEvent(`hook:${event}`, body);
-        return { ok: true };
+      hookQueueDepth += 1;
+      if (hookQueueDepth > 5) {
+        console.warn(`[hook-event] queue depth=${hookQueueDepth} — hooks backing up`);
       }
-
-      fileWatcherService.watchSpecificFile(transcriptPath);
-
-      // Quiet the tmux guard when the hook was delivered via HTTP from the
-      // same machine — we don't probe tmux to disambiguate owners, just
-      // match by transcript identity.
-      void tmuxService; // imported for future use in the cwd fallback — keep reference
-
-      const match = resolveOwner(body);
-      if (!match) {
-        hookMatchStats.skipped += 1;
-        console.warn(
-          `[hook-event] WARN: no owner for hook event cwd=${body.data?.cwd ?? '?'} ` +
-          `sessionId=${body.sessionId ?? '?'} transcript=${basename(transcriptPath)}`,
-        );
-        eventBus.emitSystemEvent(`hook:${event}`, body);
-        return { ok: true };
-      }
-
-      hookMatchStats[match.strategy] += 1;
-      const appended = sessionService.appendTranscriptPath(match.id, transcriptPath);
-      const shortId = match.id.slice(0, 30);
-      console.log(
-        `[hook-event] session=${shortId} matched via ${match.strategy} transcript=${basename(transcriptPath)}${appended ? ' (appended)' : ' (dedup)'}`,
-      );
-
-      if (appended) {
-        const session = sessionService.getSession(match.id);
-        if (session) eventBus.emitSessionUpdated(session);
-      }
-
-      eventBus.emitSystemEvent(`hook:${event}`, body);
-      return { ok: true };
+      const next = hookQueue.then(() => processHook(body));
+      // Keep the chain alive past individual failures so one bad hook
+      // doesn't poison the serializer for every subsequent event.
+      hookQueue = next.catch(() => {}).finally(() => { hookQueueDepth -= 1; });
+      return next;
     },
   );
+};
+
+const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
+  const event = body.event ?? 'unknown';
+  const transcriptPath = body.data?.transcript_path;
+
+  console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
+
+  if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
+    eventBus.emitSystemEvent(`hook:${event}`, body);
+    return { ok: true };
+  }
+
+  fileWatcherService.watchSpecificFile(transcriptPath);
+
+  // Quiet the tmux guard when the hook was delivered via HTTP from the
+  // same machine — we don't probe tmux to disambiguate owners, just
+  // match by transcript identity.
+  void tmuxService; // imported for future use in the cwd fallback — keep reference
+
+  const match = resolveOwner(body);
+  if (!match) {
+    hookMatchStats.skipped += 1;
+    console.warn(
+      `[hook-event] WARN: no owner for hook event cwd=${body.data?.cwd ?? '?'} ` +
+      `sessionId=${body.sessionId ?? '?'} transcript=${basename(transcriptPath)}`,
+    );
+    eventBus.emitSystemEvent(`hook:${event}`, body);
+    return { ok: true };
+  }
+
+  hookMatchStats[match.strategy] += 1;
+  const appended = sessionService.appendTranscriptPath(match.id, transcriptPath);
+  const shortId = match.id.slice(0, 30);
+  console.log(
+    `[hook-event] session=${shortId} matched via ${match.strategy} transcript=${basename(transcriptPath)}${appended ? ' (appended)' : ' (dedup)'}`,
+  );
+
+  if (appended) {
+    const session = sessionService.getSession(match.id);
+    if (session) eventBus.emitSessionUpdated(session);
+  }
+
+  eventBus.emitSystemEvent(`hook:${event}`, body);
+  return { ok: true };
 };

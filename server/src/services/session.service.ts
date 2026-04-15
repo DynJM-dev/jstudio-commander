@@ -258,22 +258,37 @@ export const sessionService = {
     // transaction so a process crash between them can never produce an
     // orphan row without its audit entry (audit #205 scenario 13).
     const sessionType: 'pm' | 'raw' = opts.sessionType ?? 'raw';
-    db.transaction(() => {
-      this.upsertSession({
-        id,
-        name: slug,
-        tmuxSession: tmuxName,
-        projectPath: opts.projectPath ?? null,
-        status: 'working',
-        model,
-        effortLevel: getClaudeEffortLevel(),
-        sessionType,
-      });
-      db.prepare(`
-        INSERT INTO session_events (session_id, event, detail)
-        VALUES (?, 'created', ?)
-      `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
-    })();
+    try {
+      db.transaction(() => {
+        this.upsertSession({
+          id,
+          name: slug,
+          tmuxSession: tmuxName,
+          projectPath: opts.projectPath ?? null,
+          status: 'working',
+          model,
+          effortLevel: getClaudeEffortLevel(),
+          sessionType,
+        });
+        db.prepare(`
+          INSERT INTO session_events (session_id, event, detail)
+          VALUES (?, 'created', ?)
+        `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
+      })();
+    } catch (err) {
+      // DB transaction rolled back — kill the tmux session we spawned
+      // above so the orphan pane doesn't linger without a Commander row
+      // tracking it. Log both the root cause and the cleanup outcome so
+      // we can tell a partial-write failure from a tmux-not-found one.
+      console.error(`[sessions] createSession txn failed for ${id.slice(0, 8)}:`, (err as Error).message);
+      try {
+        if (tmuxService.hasSession(tmuxName)) tmuxService.killSession(tmuxName);
+        console.log(`[sessions] orphan tmux ${tmuxName} killed after txn failure`);
+      } catch (killErr) {
+        console.warn(`[sessions] orphan tmux ${tmuxName} cleanup failed:`, (killErr as Error).message);
+      }
+      throw err;
+    }
 
     // Post-boot injection — every new session gets `/effort max` as the first
     // slash command so both PM and raw sessions run at max effort by default.
