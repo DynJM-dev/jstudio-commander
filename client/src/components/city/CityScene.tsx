@@ -67,19 +67,22 @@ export const CityScene = ({ sessions }: CitySceneProps) => {
     return () => clearTimeout(t);
   }, [lastEvent]);
 
-  // Group sessions: top-level parents + their teammates. Stopped parents
-  // are still shown as darkened buildings for a 5-minute fade window so
-  // the city doesn't feel like it empties instantly on a session death.
+  // Group sessions: top-level parents + their teammates. Live-only — the
+  // city skyline reflects currently-running work, so stopped sessions
+  // are excluded rather than rendered as dark buildings. Per-user
+  // request on #214 follow-up: dead dupes from rotations shouldn't
+  // clutter the view.
   const { topLevel, teammatesByParent } = useMemo(() => {
+    const live = sessions.filter((s) => s.status !== 'stopped' && !s.stoppedAt);
     const byId = new Map<string, Session>();
     const byClaude = new Map<string, Session>();
-    for (const s of sessions) {
+    for (const s of live) {
       byId.set(s.id, s);
       if (s.claudeSessionId) byClaude.set(s.claudeSessionId, s);
     }
     const childIds = new Set<string>();
     const childrenOf = new Map<string, Session[]>();
-    for (const s of sessions) {
+    for (const s of live) {
       if (!s.parentSessionId) continue;
       const parent = byId.get(s.parentSessionId) ?? byClaude.get(s.parentSessionId);
       if (!parent) continue;
@@ -88,7 +91,7 @@ export const CityScene = ({ sessions }: CitySceneProps) => {
       bucket.push(s);
       childrenOf.set(parent.id, bucket);
     }
-    const top = sessions
+    const top = live
       .filter((s) => !childIds.has(s.id))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     return { topLevel: top, teammatesByParent: childrenOf };
