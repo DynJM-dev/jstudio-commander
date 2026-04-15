@@ -179,6 +179,19 @@ export const ChatThread = ({
     });
   }, []);
 
+  // Follow streaming growth: when the messages reference changes but the
+  // count didn't (Claude wrote more into an existing assistant message),
+  // keep the viewport pinned to the bottom if the user was already there.
+  // Fires on every useChat update so in-place block growth actually pushes
+  // the scroll position with the content instead of letting it fall below.
+  useEffect(() => {
+    if (!isAtBottom) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 300;
+    if (near) el.scrollTop = el.scrollHeight;
+  }, [messages, isAtBottom]);
+
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     setShowNewMessages(false);

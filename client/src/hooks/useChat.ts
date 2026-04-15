@@ -139,13 +139,29 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
           api.get<ChatStats>(`/chat/${sessionId}/stats`).catch(() => null),
         ]);
         setMessages((prev) => {
-          // Server response is source of truth — simple compare and replace
+          // Server is source of truth. Keep ref stability when nothing
+          // changed, but don't stop at matching IDs — Claude Code streams
+          // new content blocks INTO an existing assistant message during
+          // a composing phase, so the length + last id can be identical
+          // while the content is growing. The old id-only comparison
+          // froze the UI and broke every downstream useMemo([messages]).
           if (chatRes.messages.length === 0) return prev;
           if (chatRes.messages.length !== prev.length) return chatRes.messages;
-          // Same count — check if last message changed
           const lastNew = chatRes.messages[chatRes.messages.length - 1];
           const lastOld = prev[prev.length - 1];
           if (lastNew?.id !== lastOld?.id) return chatRes.messages;
+          // Same last id — check block count + last-block deep-equality
+          // so in-place growth is detected. JSON.stringify is cheap at
+          // our block sizes and avoids missing tool_use/tool_result
+          // updates that mutate existing block input/content.
+          if ((lastNew?.content?.length ?? 0) !== (lastOld?.content?.length ?? 0)) {
+            return chatRes.messages;
+          }
+          const tailNew = lastNew?.content[lastNew.content.length - 1];
+          const tailOld = lastOld?.content[lastOld.content.length - 1];
+          if (JSON.stringify(tailNew) !== JSON.stringify(tailOld)) {
+            return chatRes.messages;
+          }
           return prev;
         });
         setTotal(chatRes.total);
