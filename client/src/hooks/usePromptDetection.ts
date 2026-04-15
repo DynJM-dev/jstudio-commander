@@ -133,8 +133,11 @@ export const usePromptDetection = (
     const isActive = sessionStatus === 'working' || sessionStatus === 'waiting' || userJustSent;
     if (!isActive) return;
 
-    // Poll faster when user just sent (1s) for instant feedback
-    const pollInterval = userJustSent ? 1000 : 2000;
+    // 1s when user just sent (instant echo) or the session is in 'waiting'
+    // (permission prompts must surface fast — the 2s default left users
+    // staring at a waiting tab with no prompt card for several ticks).
+    // 2s for steady 'working' so the poll doesn't hammer tmux on long turns.
+    const pollInterval = userJustSent || sessionStatus === 'waiting' ? 1000 : 2000;
 
     const poll = async () => {
       try {
@@ -142,15 +145,18 @@ export const usePromptDetection = (
           `/sessions/${sessionId}/output?lines=15`
         );
 
-        // Prompts — only show when:
-        // 1. Session is 'waiting' (not actively working with spinner/output)
-        // 2. Not within dismiss debounce window
-        // 3. Backend detected a prompt in the last 3 lines
+        // Trust the server — if it found a prompt, surface it regardless of
+        // the current status classification (the status poller runs on a
+        // separate 5s cadence, so it can lag behind a fresh prompt that's
+        // already on the pane). Only suppress during the manual-dismiss
+        // debounce window.
         const isDismissed = Date.now() < dismissedUntilRef.current;
-        const isWaiting = sessionStatus === 'waiting';
-        if (!isDismissed && isWaiting && res.prompts && res.prompts.length > 0) {
+        if (!isDismissed && res.prompts && res.prompts.length > 0) {
           setPrompt(res.prompts[res.prompts.length - 1]!);
-        } else {
+        } else if (sessionStatus !== 'waiting') {
+          // Not waiting and no prompt — clear any stale prompt card. When
+          // we ARE waiting, keep the last-known prompt until the server
+          // confirms it's gone, so brief detection misses don't blink.
           setPrompt(null);
         }
 

@@ -219,6 +219,22 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         });
       }
 
+      // Final fallback — pane tail contains a question mark or numbered-list
+      // shape but nothing above matched. Better to surface a generic prompt
+      // than leave the user staring at a waiting tab with no card.
+      if (prompts.length === 0) {
+        const tail10 = outputLines.slice(-10).join('\n');
+        const hasQuestion = /\?\s*$/m.test(tail10) || /\?\s*\(/m.test(tail10);
+        const hasNumberedList = /^\s*[❯ ]?\s*\d+\)\s+/m.test(tail10);
+        if (hasQuestion || hasNumberedList) {
+          prompts.push({
+            type: 'confirm',
+            message: 'Waiting on input — see terminal',
+            context: extractToolContext(),
+          });
+        }
+      }
+
       return {
         output: raw,
         lines: outputLines,

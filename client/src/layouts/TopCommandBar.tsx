@@ -81,10 +81,11 @@ export const TopCommandBar = () => {
 
   const SessionTab = ({ s }: { s: Session }) => {
     const isActive = s.id === currentSessionId;
+    const isWaiting = s.status === 'waiting';
     return (
       <button
         onClick={() => goToSession(s.id)}
-        className="flex items-center gap-2 px-3 h-full shrink-0 relative transition-all"
+        className={`flex items-center gap-2 px-3 h-full shrink-0 relative transition-all ${isWaiting ? 'waiting-tab-alarm' : ''}`}
         style={{
           fontFamily: M,
           color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
@@ -155,10 +156,11 @@ export const TopCommandBar = () => {
           </div>
           {tabs.map((s) => {
             const isActive = s.id === currentSessionId;
+            const isWaiting = s.status === 'waiting';
             return (
               <button
                 key={s.id}
-                className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 transition-colors"
+                className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 transition-colors ${isWaiting ? 'waiting-tab-alarm' : ''}`}
                 style={{
                   fontFamily: M,
                   fontSize: 13,
@@ -167,10 +169,10 @@ export const TopCommandBar = () => {
                 }}
                 onClick={() => goToSession(s.id)}
                 onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                  if (!isActive && !isWaiting) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent';
+                  if (!isWaiting) e.currentTarget.style.background = isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent';
                 }}
               >
                 <StatusBadge status={s.status} size="sm" />

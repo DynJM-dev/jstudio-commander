@@ -19,8 +19,11 @@ const IDLE_INDICATORS = [
 const WAITING_INDICATORS = [
   /waiting for input/i, /\?\s*$/, /\(y\/n\)/i, /\(Y\/n\)/i,
   /Do you want to proceed/i,
+  /Do you want to approve/i,
   /trust this folder/i,
   /Allow.*Deny/i,
+  /Continue\?/i,
+  /^Esc to cancel/mi, /^Enter to confirm/mi,
   // NOTE: ⏵⏵ accept edits is a MODE INDICATOR, not a prompt — don't detect as waiting
 ];
 const ERROR_PATTERNS = [/^Error:/m, /^error:/m, /FATAL/i, /panic:/i];
