@@ -117,28 +117,13 @@ export const Sidebar = () => {
       <nav className="flex-1 flex flex-col gap-1 px-2 mt-2">
         {NAV_ITEMS.map(({ path, icon: Icon, label }) => {
           const active = location.pathname === path || location.pathname.startsWith(path + '/');
+          const cls = [
+            'nav-btn',
+            active ? 'nav-btn--active' : '',
+            collapsed ? 'nav-btn--collapsed' : '',
+          ].filter(Boolean).join(' ');
           return (
-            <button
-              key={path}
-              onClick={() => navigate(path)}
-              className="flex items-center gap-3 rounded-lg transition-colors relative"
-              style={{
-                height: 44,
-                padding: collapsed ? '0 12px' : '0 12px',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                background: active ? 'rgba(14, 124, 123, 0.08)' : 'transparent',
-                color: active ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
-                borderLeft: active ? '3px solid var(--color-accent)' : '3px solid transparent',
-              }}
-              onMouseEnter={(e) => {
-                if (!active) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                if (!active) e.currentTarget.style.color = 'var(--color-text-primary)';
-              }}
-              onMouseLeave={(e) => {
-                if (!active) e.currentTarget.style.background = 'transparent';
-                if (!active) e.currentTarget.style.color = 'var(--color-text-secondary)';
-              }}
-            >
+            <button key={path} onClick={() => navigate(path)} className={cls} aria-current={active ? 'page' : undefined}>
               <Icon size={20} strokeWidth={1.8} />
               {!collapsed && (
                 <span className="text-sm font-medium whitespace-nowrap">{label}</span>
@@ -152,21 +137,8 @@ export const Sidebar = () => {
       <div className="px-2 pb-3 flex flex-col gap-1">
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-3 rounded-lg transition-colors"
-          style={{
-            height: 44,
-            padding: '0 12px',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            color: 'var(--color-text-tertiary)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = 'var(--color-text-primary)';
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--color-text-tertiary)';
-            e.currentTarget.style.background = 'transparent';
-          }}
+          className={`nav-btn nav-btn--muted ${collapsed ? 'nav-btn--collapsed' : ''}`}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed ? <ChevronsRight size={20} /> : <ChevronsLeft size={20} />}
           {!collapsed && <span className="text-sm font-medium">Collapse</span>}
@@ -176,20 +148,11 @@ export const Sidebar = () => {
         <button
           onClick={toggleTunnel}
           disabled={tunnelLoading}
-          className="flex items-center gap-3 rounded-lg transition-colors"
+          className={`nav-btn nav-btn--muted ${collapsed ? 'nav-btn--collapsed' : ''}`}
           style={{
             height: collapsed ? 36 : 'auto',
             minHeight: 36,
             padding: collapsed ? '0 12px' : '8px 12px',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            color: 'var(--color-text-tertiary)',
-            position: 'relative',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent';
           }}
         >
           <Globe size={16} className={tunnelLoading ? 'animate-spin' : ''} />
@@ -227,19 +190,15 @@ export const Sidebar = () => {
         {!collapsed && tunnelActive && tunnelUrl && (
           <button
             onClick={(e) => { e.stopPropagation(); copyUrl(); }}
-            className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs transition-colors"
+            className="nav-btn nav-btn--muted"
             style={{
+              height: 30,
+              padding: '0 12px',
               color: copied ? 'var(--color-working)' : 'var(--color-text-tertiary)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
             }}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? 'Copied!' : 'Copy URL'}
+            <span className="text-xs">{copied ? 'Copied!' : 'Copy URL'}</span>
           </button>
         )}
       </div>
