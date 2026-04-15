@@ -97,17 +97,12 @@ export const ProjectsPage = () => {
         <button
           onClick={rescan}
           disabled={scanning}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-          style={{
-            fontFamily: M,
-            background: 'rgba(255, 255, 255, 0.04)',
-            color: 'var(--color-text-secondary)',
-            border: '1px solid rgba(255, 255, 255, 0.06)',
-            opacity: scanning ? 0.6 : 1,
-          }}
+          className="nav-btn nav-btn--muted"
+          style={{ fontFamily: M, height: 32, padding: '0 12px', opacity: scanning ? 0.6 : 1 }}
+          aria-label={scanning ? 'Rescanning projects' : 'Rescan projects'}
         >
           <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
-          Rescan
+          <span className="text-sm font-medium">Rescan</span>
         </button>
       </div>
 
@@ -117,13 +112,8 @@ export const ProjectsPage = () => {
           <button
             key={f.key}
             onClick={() => setFilter(f.key)}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-            style={{
-              fontFamily: M,
-              background: filter === f.key ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.04)',
-              color: filter === f.key ? '#fff' : 'var(--color-text-secondary)',
-              border: `1px solid ${filter === f.key ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.06)'}`,
-            }}
+            className={`filter-chip ${filter === f.key ? 'filter-chip--active' : ''}`}
+            aria-pressed={filter === f.key}
           >
             {f.label}
           </button>
