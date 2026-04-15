@@ -1,17 +1,105 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-14 — Coder-8 post-verification + plan-attach
-> Coders: Coder-7 (48 polish commits) → Coder-8 (verified + UX polish)
+> Last updated: 2026-04-15 — Coder-9 pre-compaction sweep
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17 feature commits this week)
 
 ## HEAD of main
 
 ```
-fb32b50 feat(chat): attach plan card to user message instead of assistant response
-b3f6d73 docs: coder-8 verification sweep — 50/50 PASS, no fixes required
-7ffdeaa docs: pre-shutdown brain dump for coder-8
-fa6380d feat: show all Claude activity in real-time — agents, tools, thinking
-fb25ec4 feat: long message truncation + fix idle flashing during edits
+587e508 feat(sessions): PM vs Raw session toggle + /pm bootstrap auto-injection
+043dc5f feat(chat): brighter state-aware shimmer + live skill/agent/memory indicators
+95aacef fix(sessions): resolve sentinel tmux targets to real pane IDs + poller idle-vs-stopped
+38023cb feat(chat): brighten text tokens + show live thinking content during working indicator
+53c32c5 fix(sessions): only heal sessions with live tmux or recent activity + add session delete
+853e477 feat(sessions): display team name on PM cards to disambiguate multiple team-leads
+a42a1b4 feat(chat): surface skills, agent spawns, memory reads, and teammate messages as activity chips
+9a2531b fix(chat): handle deleted task status and add defensive lookup fallback
+8d2d981 fix(chat): walk plan across assistant groups + add close button
 ```
+
+See `CTO_BRIEF.md` (§5) for the full feature table `cec1bc9` → `587e508` (17 commits this session).
+
+---
+
+## Coder-9 Session (2026-04-14 → 2026-04-15)
+
+Major additions on top of coder-8's line. See `CTO_BRIEF.md` for the exhaustive feature table and architecture snapshot — this section captures the hard-won context that isn't obvious from `git log`.
+
+### What shipped (feature summary)
+
+| Area | Features |
+|---|---|
+| **Plan widget** | Fix attribution (plan renders in Claude's bubble, not user's) · real Claude-Code task IDs parsed from `"Task #N created"` tool_result so live updates land · walk across assistant groups so "Proceed"-split turns don't break · handle `deleted` status (remove from Map) + defensive `STATUS_CONFIG[x] ?? pending` fallback · `getActivePlan` + `buildPlanFromMessages` in `utils/plans.ts` are the single source of truth for both inline card and sticky widget |
+| **Sticky plan widget** | Bottom-docked glass pill above input · IntersectionObserver (threshold 0.5) hides when inline card visible · 3s auto-fade on allDone · local X close button per-plan (dismissed state resets on planKey change) |
+| **Split-screen teammates** | `~/.claude/teams/*/config.json` chokidar watcher emits `teammate:spawned` / `teammate:dismissed` WS · `agent_relationships` table used for edges · SplitChatLayout mounts ChatPage twice (prop `sessionIdOverride` suppresses URL read) · drag-resize 30–70% · localStorage `jsc-split-state-v1` restore · TeammateRow primes that localStorage on click so nested-card → split opens directly to that teammate |
+| **Nested session tree** | SessionsPage groups flat sessions into top-level + buckets (resolves parent by Commander UUID OR claudeSessionId) · parent card glows yellow if any teammate is waiting |
+| **Compaction** | `ContentBlock` gains `compact_boundary` variant · jsonl-parser emits `{trigger, preTokens}` · stats endpoint returns `contextTokens/contextCost` as the slice post-last-boundary · ContextBar shows context-scoped by default, hover shows full session total |
+| **Waiting state** | `STATUS_COLORS.waiting` + `--color-waiting` → yellow · new `.waiting-glow` pulse keyframe · SessionCard / ContextBar dot / SplitChatLayout pane all glow idle-yellow when status=waiting; server already detects via numbered-choice + WAITING_INDICATORS |
+| **Bulletproof interrupt** | Global `window.keydown` listener (no textarea-empty gate); ESC + Cmd+./Ctrl+.; `data-escape-owner` on menus/permission prompts yields ESC to them; `interruptSession` sends two ESCs 80ms apart; Stop button visible whenever isWorking∨hasPrompt∨interrupting; "Stopping…" optimistic state; inline red error banner on failure |
+| **Per-session stats isolation** | Model `[1m]` suffix + short forms (`opus`, `sonnet`) normalized in ContextBar · `/stats` + `/chat` skip cwd-fallback when row has `parent_session_id` · `hook-event.routes` rewrite: 4-strategy matcher (by claudeSessionId → by id-as-UUID → by unclaimed-cwd → skip); backfills `claude_session_id` on match; boot-heal clears stomped transcript_paths |
+| **Teammate lifecycle** | `upsertTeammateSession({ live: bool })` — only flips stopped→idle with real evidence (tmux pane alive OR JSONL mtime <10min) · `agent_relationships` upsert clears `ended_at` on respawn · `deleteSession` routes team rows to `purgeTeamSession` which archives team config to `.trash/<name>-<ts>/` (lead) or filters the `members[]` (teammate), hard-deletes row + relationships · boot + reconcile skip sentinel targets via `tmux_session LIKE 'agent:%'` |
+| **PM tmux pane capture** | `tmuxService.listAllPanes()` + `sessionService.resolveSentinelTargets()` — matches cwd, adopts pane id when exactly one unclaimed candidate · status-poller WHERE clause extended to re-probe pane-backed rows regardless of stored status (un-sticks zombies) |
+| **Activity visibility** | `ActivityChip` + `AgentSpawnCard` dispatch in AssistantMessage: Skill/Brain-blue, SendMessage/Send-cyan, TeamCreate/Users-purple, ToolSearch/Search-muted, TaskList/ListTree, Read path-classified (skills → Brain-blue, memory → BookOpen-amber, project-doc → muted) · in-flight `liveActivity` indicator shown between Claude header and shimmer while tool_result is still pending |
+| **Shimmer + theming** | Bumped opacity 0.08 → 0.55, height 2→4px, 6px accent glow · `.thinking-shimmer.tooling` (fast accent-light) / `.waiting` (paused idle-yellow) · `.bar-working` + `.bar-waiting` on ContextBar · text tokens brightened (~5-10%, biggest lift on `--color-text-tertiary`) · live thinking preview under shimmer (4-line clamp, 280-char tail, crossfade on content-hash key) · `getActionInfo` in ContextBar returns `{label, icon}` with per-tool-family icons |
+| **PM bootstrap** | `Session.sessionType: 'pm' \| 'raw'` · `session_type` DB column (default `raw`) · `CreateSessionModal` PM/Raw segmented toggle (default PM) · server polls `capture-pane` up to 12s for `❯` / `? for shortcuts`, then `sendKeys` contents of `~/.claude/prompts/pm-session-bootstrap.md` · teal PM pill on SessionCard |
+| **UX polish** | `teamName` muted suffix on cards to disambiguate duplicate team-leads |
+
+### PM Initialization System (Parts 1–3) — DO NOT BREAK
+
+Three pieces work together; breaking any one re-opens the OvaGas failure mode:
+
+1. **`~/.claude/skills/jstudio-pm/SKILL.md`** (outside repo) has a mandatory Cold Start section: read `~/.claude/CLAUDE.md`, inventory `~/.claude/skills/`, read local `STATE.md`/`PM_HANDOFF.md`, scan memory, report readiness. Plus "Skill invocation is mandatory" + Skill-vs-Agent-vs-TeamCreate matrix.
+2. **`~/.claude/prompts/pm-session-bootstrap.md`** (outside repo) — one line: *"You are the Lead PM for JStudio. Invoke /pm and run its cold-start protocol. Wait for my pitch. Do not begin work until I provide it."*
+3. **Commander auto-injection** — see `session.service.ts` `createSession` flow: reads the bootstrap file, polls for Claude ready, `sendKeys`. Missing file → warn + skip; never fails session create. Raw sessions skip entirely.
+
+If a future refactor touches `createSession`, the bootstrap block and `waitForClaudeReady` helper must survive intact. The `sessionType` flag is the switch.
+
+### Critical lessons from this session
+
+1. **Vite can serve stale code from stale duplicate processes.** Mid-session, the user saw "plan never updates" despite the fix being committed. Two `pnpm dev` processes were running (5173 + 5174); Chrome was connected to the stale one. Diagnosis: `lsof -ti:5173 -ti:5174 -ti:3002`. Recovery: kill all jsc-related processes, `rm -rf client/node_modules/.vite node_modules/.vite`, restart. **Verify the served code matches git HEAD with `curl -s localhost:<port>/src/<file>.ts | grep -c <deleted-symbol>`** — zero matches means the new bundle is actually serving.
+2. **Skill tool ≠ Agent tool.** The Skill tool loads a skill into the current context (equivalent to reading its SKILL.md). The Agent tool spawns a sandboxed subagent (one of 4 built-in `subagent_type`s: general-purpose, statusline-setup, Explore, Plan, claude-code-guide). Never call `Agent({ subagent_type: "ui-ux-pro-max" })` — that's a skill, not a subagent type. The PM skill's SKILL.md now documents this explicitly.
+3. **Boot-heal must check liveness, not just membership.** The first pass at `upsertTeammateSession` unconditionally flipped stopped → idle on any reconcile. User killed vetcare team-lead, restarted Commander, zombie came back. Fix: `hasLiveEvidence()` — real tmux pane OR JSONL mtime within 10min. Member in config alone is NOT evidence.
+4. **Pane-target vs sentinel-target tmux sessions.** `tmux send-keys -t %35` works; `tmux send-keys -t agent:foo` does not. `tmux has-session -t %35` ALSO does not (panes aren't sessions); had to special-case via `display-message -p -t %35 '#{pane_id}'`. Anywhere the code branches on "is this a real tmux target" the test is `!row.tmux_session.startsWith('agent:')`.
+5. **Polling + `WHERE status != 'stopped'` is a trap.** Once a row lands in `stopped`, the poller never re-probes it. A transient glitch that stamps a live pane as stopped becomes permanent. Extended the poller to include `OR tmux_session LIKE '%'` so pane-backed rows are always probed; `jsc-*` named rows still respect the filter (stopping those is authoritative).
+6. **Task_assignment echoes.** The PM's teammate-messaging system sometimes re-fires old `task_assignment` messages after I've already shipped the task. Always check `git log` before redoing work.
+7. **`--escape-owner` pattern for global ESC.** When you add a global keydown listener, any modal/dropdown/prompt in the app must be able to claim ESC first. Add `data-escape-owner="..."` to their root `motion.div` and have the global handler check `document.activeElement.closest('[data-escape-owner]')` — if set, bail.
+
+### Tech debt / follow-ups for future-you
+
+1. **server/src/services/file-watcher.service.ts(90)** — pre-existing `err: Error vs unknown` type mismatch. Ignored throughout this session. Fix by typing the chokidar error callback param as `unknown` then narrowing.
+2. **Agent-status heuristic is brittle.** The regex list in `agent-status.service.ts` (ACTIVE_INDICATORS, WAITING_INDICATORS, IDLE_INDICATORS) evolves every time Claude Code adds a new spinner verb. Consider a positive ID via Claude Code's `.claude/status.json` if they ever expose one.
+3. **Boot heal writes to DB unconditionally.** `index.ts` startup-recovery iterates every non-stopped row on boot and may fire many status-update events. Harmless but noisy.
+4. **teamConfig poll interval is 10s.** New team dirs created after boot take up to 10s to be picked up by `setInterval` in `team-config.service.ts`. Chokidar would be more responsive but globs were dropped in v4.
+5. **No DB migration framework.** Schema changes happen via idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` in `db/connection.ts`. Works for tiny changes; consider drizzle-kit or something when adding tables.
+6. **Status poller detectStatus isn't cached.** Each poll cycle shells out to `tmux capture-pane` per row. Fine for ~10 rows; not for 100.
+7. **localStorage keys are unnamespaced.** `jsc-split-state-v1`, `jsc-sidebar-collapsed` etc — fine for now. If we ever allow multiple Commander instances on one machine, namespace by server URL.
+8. **`.waiting-glow` CSS pulses border and box-shadow.** On low-power devices this is a 60fps repaint on the whole card border. Add `will-change: box-shadow` if profile shows hitches.
+9. **SplitChatLayout renders two full ChatPages.** Both run their own `useChat` poll at 1.5s while working. Doubles polling traffic vs a single-pane view.
+10. **TeamCreate / TeamDelete chips rely on the caller using those tool names.** Real TeamCreate isn't a tool name I've observed in JSONL from PM sessions (the PM invokes it but Claude Code logs it differently). Verify once a real TeamCreate fires post-#184.
+11. **`hook-event.routes` backfills `claude_session_id` opportunistically.** The "claim unclaimed cwd match" strategy is best-effort. If the PM and a teammate both spin up in the exact same cwd within a race window, we might mis-claim. Acceptable for current use; revisit if it misfires.
+
+### Known-open (PM confirmed)
+
+- **Multi-tab teammate pane** (Task 170.1) — SplitChatLayout currently shows ONE teammate at a time. Multi-teammate flows want ≤3 tabs in the right pane.
+- **Direct Mode badge** on the PM pane when the user is focused in the coder pane — informational, no routing change.
+- **jstudio-init-project helper** — spec from PM: a slash command or skill that scaffolds `STATE.md` / `PM_HANDOFF.md` / initial directory with one prompt.
+- **Playwright E2E** — no browser-control tests have been written. CI-ready harness needed before the user can catch visual regressions automatically.
+- **Memory/skill inventory view** inside Commander — surface `~/.claude/skills/` and `~/.claude/projects/<slug>/memory/` as a browsable sidebar panel.
+- **Audit stopped teammates older than N days** — auto-archive to `.trash/` so the Sessions page doesn't accumulate zombies.
+- **Unit tests on `client/src/utils/plans.ts`** — the plan-building logic is the most logic-heavy util in the codebase and has been broken twice this session. Test `buildPlanFromMessages` against fixture JSONLs (GG3 session exercised the multi-group bug).
+- **`tmux_session` for rows without panes.** `agent:<id>` sentinel works for now; a Claude-Code-provided pane-ID hook event would make resolution immediate instead of via `list-panes -a` + cwd match.
+
+### Verify-before-compact checklist (if you need to reproduce any of the above)
+
+- HEAD commits visible via `git log --oneline -20`
+- Run `pnpm -C client run typecheck` and `pnpm -C server run typecheck` — the ONLY expected error is the pre-existing file-watcher line 90.
+- `~/.claude/prompts/pm-session-bootstrap.md` exists (134 bytes).
+- `~/.claude/skills/jstudio-pm/SKILL.md` has a Cold Start section at the top of the body.
+- `curl http://localhost:3002/api/chat/<any-team-lead>/stats` returns non-zero `totalTokens` AND `contextTokens`.
+- `sqlite3 ~/.jstudio-commander/commander.db 'SELECT id, status FROM sessions WHERE parent_session_id IS NOT NULL'` shows teammates' real status (coder-9 should be working if this conversation is alive).
+
+---
+
 
 ## Coder-8 Output (2026-04-14)
 
