@@ -31,7 +31,7 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
         {label ? formatDate(label) : ''}
       </p>
       <p className="text-sm font-bold font-mono-stats" style={{ color: 'var(--color-working)' }}>
-        ${payload[0]!.value.toFixed(2)}
+        ${(payload[0]?.value ?? 0).toFixed(2)}
       </p>
     </div>
   );

@@ -1,11 +1,10 @@
 import { formatTokens, formatCost } from '../../utils/format';
-import { GlassCard } from '../shared/GlassCard';
 
 const M = 'Montserrat, sans-serif';
 
 interface SessionCostEntry {
-  sessionId: string;
-  sessionName: string;
+  sessionId: string | null;
+  sessionName: string | null;
   totalCost: number;
   totalTokens: number;
   messageCount: number;
@@ -50,14 +49,14 @@ export const SessionCostTable = ({ data }: SessionCostTableProps) => {
         <tbody>
           {data.map((row, i) => (
             <tr
-              key={row.sessionId}
+              key={row.sessionId ?? `row-${i}`}
               style={{
                 borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
                 background: i % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.01)',
               }}
             >
               <td className="px-3 py-2 truncate max-w-[200px]" style={{ color: 'var(--color-text-secondary)' }}>
-                {row.sessionName || row.sessionId.slice(0, 8)}
+                {row.sessionName ?? (row.sessionId?.slice(0, 8) ?? 'unknown')}
               </td>
               <td className="px-3 py-2 text-right font-mono-stats" style={{ color: 'var(--color-accent-light)' }}>
                 {formatTokens(row.totalTokens)}

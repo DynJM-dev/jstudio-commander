@@ -37,7 +37,7 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<
     <div className="glass-card px-3 py-2" style={{ fontFamily: M }}>
       <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{d.name}</p>
       <p className="text-sm font-bold font-mono-stats" style={{ color: 'var(--color-working)' }}>
-        ${d.cost.toFixed(2)}
+        ${(d.cost ?? 0).toFixed(2)}
       </p>
       <p className="text-xs font-mono-stats" style={{ color: 'var(--color-text-tertiary)' }}>
         {formatTokens(d.tokens)} tokens
