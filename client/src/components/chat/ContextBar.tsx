@@ -16,33 +16,9 @@ import type { ChatMessage } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
 import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
+import { getContextLimit } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
-
-const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  'claude-opus-4-6': 1_000_000,
-  'claude-sonnet-4-6': 1_000_000,
-  'claude-haiku-4-5': 200_000,
-  'claude-opus-4-5-20251101': 1_000_000,
-  'claude-sonnet-4-5-20241022': 200_000,
-};
-
-// Team configs + slash commands use short forms. The model field can also
-// carry a `[1m]` suffix flag that explicitly opts into the 1M context window
-// regardless of the base model's default.
-const SHORT_MODEL_MAP: Record<string, string> = {
-  opus: 'claude-opus-4-6',
-  sonnet: 'claude-sonnet-4-6',
-  haiku: 'claude-haiku-4-5',
-};
-
-const getContextLimit = (model?: string): number => {
-  if (!model) return 200_000;
-  if (/\[1m\]/i.test(model)) return 1_000_000;
-  const base = model.replace(/\[.*?\]$/, '').trim();
-  const normalized = SHORT_MODEL_MAP[base] ?? base;
-  return MODEL_CONTEXT_LIMITS[normalized] ?? 200_000;
-};
 
 interface ActionInfo {
   label: string;
