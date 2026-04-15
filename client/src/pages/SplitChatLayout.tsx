@@ -5,38 +5,42 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { usePreference } from '../hooks/usePreference';
 import { api } from '../services/api';
 import type { Session } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
-const STORAGE_KEY = 'jsc-split-state-v1';
+const LEGACY_STORAGE_KEY = 'jsc-split-state-v1';
 const MIN_PERCENT = 30;
 const MAX_PERCENT = 70;
 const DEFAULT_PERCENT = 55;
 const STRIP_WIDTH = 48;
 const MAX_TEAMMATES = 3;
 
-// Persistent UI shape. Back-compat with v1's single `coderSessionId` — the
-// loader normalizes it into the multi-tab form so existing installations
-// don't lose their pinned teammate on upgrade.
 interface SplitState {
-  pmSessionId: string;
   activeTabId: string | null;
   tabIds?: string[];
   minimized?: boolean;
   percent: number;
   /** @deprecated v1 field — read for migration only. */
   coderSessionId?: string;
+  /** @deprecated v1 field — read for migration only. */
+  pmSessionId?: string;
 }
 
-const loadSplit = (pmSessionId: string): SplitState | null => {
+// One-time localStorage → preferences migration. Reads the old v1 shape,
+// normalizes coderSessionId → activeTabId/tabIds, and returns it as the
+// initial value for the current PM. The legacy key is cleared after read
+// so a later server-side reset can't be stomped by a stale local copy.
+const readLegacySplit = (pmSessionId: string): SplitState | null => {
+  if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SplitState;
     if (parsed.pmSessionId !== pmSessionId) return null;
-    // v1 migration: promote coderSessionId → activeTabId + tabIds.
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
     if (!parsed.activeTabId && parsed.coderSessionId) {
       parsed.activeTabId = parsed.coderSessionId;
       parsed.tabIds = [parsed.coderSessionId];
@@ -47,59 +51,39 @@ const loadSplit = (pmSessionId: string): SplitState | null => {
   }
 };
 
-const saveSplit = (state: SplitState | null): void => {
-  try {
-    if (state) localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    else localStorage.removeItem(STORAGE_KEY);
-  } catch { /* quota — split will re-derive from server on next mount */ }
-};
-
 export const SplitChatLayout = () => {
   const { sessionId: pmSessionId } = useParams<{ sessionId: string }>();
   const { lastEvent, subscribe } = useWebSocket();
   // Known teammates (non-stopped), capped at MAX_TEAMMATES. Authoritative
   // source is the server's /teammates list refreshed on WS transitions.
   const [teammates, setTeammates] = useState<Session[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [minimized, setMinimized] = useState<boolean>(false);
+  // Persisted state lives on the server now (preferences table). usePreference
+  // caches in-memory + hydrates async, so we keep a sane default and let
+  // writes propagate. Key scoped per PM so switching sessions doesn't
+  // inherit a mismatched layout.
+  const prefKey = `split-state.${pmSessionId ?? 'none'}`;
+  const legacy = useMemo(() => (pmSessionId ? readLegacySplit(pmSessionId) : null), [pmSessionId]);
+  const defaultSplit = useMemo<SplitState>(() => legacy ?? {
+    activeTabId: null,
+    minimized: false,
+    percent: DEFAULT_PERCENT,
+  }, [legacy]);
+  const [split, setSplit] = usePreference<SplitState>(prefKey, defaultSplit);
+  const activeTabId = split.activeTabId ?? null;
+  const minimized = !!split.minimized;
+  const percent = split.percent ?? DEFAULT_PERCENT;
+  const setActiveTabId = useCallback((next: string | null) => setSplit({ ...split, activeTabId: next }), [split, setSplit]);
+  const setMinimized = useCallback((next: boolean) => setSplit({ ...split, minimized: next }), [split, setSplit]);
+  const setPercent = useCallback((next: number) => setSplit({ ...split, percent: next }), [split, setSplit]);
   // Fires when a new teammate arrives while the pane is minimized — drives
   // a one-shot pulse on the strip icon so the user doesn't miss the spawn.
   const [pulseSessionId, setPulseSessionId] = useState<string | null>(null);
   // Whichever teammate input the user is currently focused in drives the
   // Direct Mode badge on the PM pane.
   const [directModeRole, setDirectModeRole] = useState<string | null>(null);
-  const [percent, setPercent] = useState<number>(DEFAULT_PERCENT);
   const containerRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
-
-  // Restore on pmSession change
-  useEffect(() => {
-    if (!pmSessionId) return;
-    const saved = loadSplit(pmSessionId);
-    if (saved) {
-      setActiveTabId(saved.activeTabId ?? null);
-      setMinimized(!!saved.minimized);
-      setPercent(saved.percent ?? DEFAULT_PERCENT);
-    } else {
-      setActiveTabId(null);
-      setMinimized(false);
-      setPercent(DEFAULT_PERCENT);
-    }
-  }, [pmSessionId]);
-
-  // Persist
-  useEffect(() => {
-    if (!pmSessionId) return;
-    if (teammates.length === 0) { saveSplit(null); return; }
-    saveSplit({
-      pmSessionId,
-      activeTabId,
-      tabIds: teammates.map((t) => t.id),
-      minimized,
-      percent,
-    });
-  }, [pmSessionId, teammates, activeTabId, minimized, percent]);
 
   useEffect(() => { subscribe(['sessions']); }, [subscribe]);
 
@@ -119,12 +103,10 @@ export const SplitChatLayout = () => {
       // Drop any active tab that's no longer in the list; promote first
       // remaining teammate when the previously-active one got dismissed.
       setTeammates(active);
-      setActiveTabId((prev) => {
-        if (prev && active.some((t) => t.id === prev)) return prev;
-        return active[0]?.id ?? null;
-      });
+      const next = activeTabId && active.some((t) => t.id === activeTabId) ? activeTabId : (active[0]?.id ?? null);
+      if (next !== activeTabId) setActiveTabId(next);
     } catch { /* transient — next WS event will retry */ }
-  }, [pmSessionId]);
+  }, [pmSessionId, activeTabId, setActiveTabId]);
 
   useEffect(() => { refreshTeammates(); }, [refreshTeammates]);
 
@@ -214,9 +196,8 @@ export const SplitChatLayout = () => {
 
   const closeCoderPane = useCallback(() => {
     setTeammates([]);
-    setActiveTabId(null);
-    setMinimized(false);
-  }, []);
+    setSplit({ activeTabId: null, minimized: false, percent });
+  }, [setSplit, percent]);
 
   const activeTab = useMemo(
     () => teammates.find((t) => t.id === activeTabId) ?? null,

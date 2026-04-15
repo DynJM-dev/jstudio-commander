@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Logo } from '../components/shared/Logo';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { usePreference } from '../hooks/usePreference';
 import { api } from '../services/api';
 import type { WSEvent } from '@commander/shared';
 
@@ -27,13 +28,23 @@ const NAV_ITEMS = [
   { path: '/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 
-const STORAGE_KEY = 'jsc-sidebar-collapsed';
+// One-time migration: lift the existing localStorage value onto the new
+// server-backed preference the first time the hook renders. Dropped once
+// a prefs write lands, so a stale false value can't stomp a fresh one.
+const LEGACY_SIDEBAR_KEY = 'jsc-sidebar-collapsed';
+const legacySidebarCollapsed = ((): boolean | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const raw = window.localStorage.getItem(LEGACY_SIDEBAR_KEY);
+  if (raw === null) return undefined;
+  window.localStorage.removeItem(LEGACY_SIDEBAR_KEY);
+  return raw !== 'false';
+})();
 
 export const Sidebar = () => {
-  const [collapsed, setCollapsed] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored !== 'false'; // Default collapsed
-  });
+  const [collapsed, setCollapsed] = usePreference<boolean>(
+    'ui.sidebar.collapsed',
+    legacySidebarCollapsed ?? true, // default collapsed
+  );
   const location = useLocation();
   const navigate = useNavigate();
   const { connected, lastEvent } = useWebSocket();
@@ -41,10 +52,6 @@ export const Sidebar = () => {
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, String(collapsed));
-  }, [collapsed]);
 
   // Fetch initial tunnel status
   useEffect(() => {

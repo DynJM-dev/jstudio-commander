@@ -1,10 +1,10 @@
 import type { Session } from '@commander/shared';
 import { motion } from 'framer-motion';
 import { StatusBadge } from '../shared/StatusBadge';
+import { api } from '../../services/api';
 
 const M = 'Montserrat, sans-serif';
 
-const STORAGE_KEY = 'jsc-split-state-v1';
 const DEFAULT_PERCENT = 55;
 
 interface TeammateRowProps {
@@ -19,14 +19,14 @@ const shortenPath = (path: string | null): string => {
 };
 
 // Prime the split-pane state so clicking a teammate row opens directly to
-// that teammate instead of whichever was previously saved.
+// that teammate instead of whichever was previously saved. Writes to the
+// server-backed preference — SplitChatLayout's usePreference hook will
+// pick it up on mount via its in-memory cache → async hydration path.
 const primeSplitState = (parentId: string, teammate: Session): void => {
-  try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ pmSessionId: parentId, coderSessionId: teammate.id, percent: DEFAULT_PERCENT }),
-    );
-  } catch { /* quota — split will default-open on mount */ }
+  const key = `split-state.${parentId}`;
+  void api.put(`/preferences/${encodeURIComponent(key)}`, {
+    value: { activeTabId: teammate.id, minimized: false, percent: DEFAULT_PERCENT },
+  }).catch(() => { /* banner surfaces server downtime */ });
 };
 
 export const TeammateRow = ({ teammate, parentId, onOpen }: TeammateRowProps) => {
