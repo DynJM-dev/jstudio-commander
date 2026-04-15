@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Wifi, WifiOff, ChevronDown, MoreHorizontal } from 'lucide-react';
 import type { Session, DailyStats } from '@commander/shared';
@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/shared/StatusBadge';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
 import { formatTokens, formatCost } from '../utils/format';
+import { buildDisplayNameMap } from '../utils/sessionDisplay';
 
 const M = 'Montserrat, sans-serif';
 
@@ -50,6 +51,7 @@ export const TopCommandBar = () => {
   }, []);
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
+  const displayNames = useMemo(() => buildDisplayNameMap(sessions), [sessions]);
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
 
   const goToSession = (id: string) => {
@@ -108,7 +110,7 @@ export const TopCommandBar = () => {
         }}
       >
         <StatusBadge status={s.status} size="sm" />
-        <span className="text-sm font-medium truncate max-w-[130px]">{s.name}</span>
+        <span className="text-sm font-medium truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
         {isActive && (
           <span
             className="font-mono-stats hidden xl:inline-block"
@@ -177,7 +179,7 @@ export const TopCommandBar = () => {
               >
                 <StatusBadge status={s.status} size="sm" />
                 <div className="flex flex-col min-w-0">
-                  <span className="truncate font-medium">{s.name}</span>
+                  <span className="truncate font-medium">{displayNames.get(s.id) ?? s.name}</span>
                   <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
                     {s.model?.replace('claude-', '')}
                   </span>
@@ -289,7 +291,7 @@ export const TopCommandBar = () => {
                 />
                 <span className="text-sm font-medium truncate flex-1 text-left">
                   {currentSessionId
-                    ? activeSessions.find((s) => s.id === currentSessionId)?.name ?? 'Session'
+                    ? (displayNames.get(currentSessionId) ?? activeSessions.find((s) => s.id === currentSessionId)?.name ?? 'Session')
                     : `${activeSessions.length} session${activeSessions.length !== 1 ? 's' : ''}`
                   }
                 </span>
@@ -335,7 +337,7 @@ export const TopCommandBar = () => {
                   >
                     <StatusBadge status={s.status} size="sm" />
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-sm font-medium truncate">{s.name}</span>
+                      <span className="text-sm font-medium truncate">{displayNames.get(s.id) ?? s.name}</span>
                       <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
                         {s.model?.replace('claude-', '')}
                       </span>

@@ -17,6 +17,10 @@ interface SessionCardProps {
   onCommand: (id: string, command: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, name: string) => Promise<void>;
+  // Optional disambiguated label (e.g. "PM - OvaGas · e16a1c") — caller
+  // computes per-list to tell same-named sessions apart. Falls back to
+  // the raw name when omitted so the card still works standalone.
+  displayName?: string;
 }
 
 const formatUptime = (createdAt: string, stoppedAt: string | null): string => {
@@ -44,7 +48,8 @@ const shortenPath = (path: string | null): string => {
   return path.replace(/^\/Users\/[^/]+/, '~');
 };
 
-export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename }: SessionCardProps) => {
+export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename, displayName }: SessionCardProps) => {
+  const label = displayName ?? session.name;
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
   // Glow the parent card yellow when its teammate needs attention — makes
@@ -125,9 +130,9 @@ export const SessionCard = ({ session, teammates, onCommand, onDelete, onRename 
                 className="text-lg font-semibold leading-tight cursor-pointer flex-1 min-w-0 truncate"
                 style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
                 onClick={handleCardClick}
-                title={session.teamName ? `${session.name} · ${session.teamName}` : session.name}
+                title={session.teamName ? `${label} · ${session.teamName}` : label}
               >
-                {session.name}
+                {label}
                 {session.sessionType === 'pm' && (
                   <span
                     className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full align-middle"
