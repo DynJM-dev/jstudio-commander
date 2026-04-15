@@ -24,6 +24,7 @@ import { teamConfigService } from './services/team-config.service.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
 import { pinAuthMiddleware } from './middleware/pin-auth.js';
+import { securityHeadersMiddleware } from './middleware/security-headers.js';
 import { projectScannerService } from './services/project-scanner.service.js';
 import { fileWatcherService } from './services/file-watcher.service.js';
 import { statusPollerService } from './services/status-poller.service.js';
@@ -52,6 +53,9 @@ if (existsSync(clientDist)) {
     wildcard: false,
   });
 }
+
+// Security headers — runs on every response, including static assets.
+app.addHook('onRequest', securityHeadersMiddleware);
 
 // PIN auth for remote access
 app.addHook('onRequest', pinAuthMiddleware);

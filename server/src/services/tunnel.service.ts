@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { eventBus } from '../ws/event-bus.js';
+import { config } from '../config.js';
+import { loadConfig } from '../middleware/pin-auth.js';
 
 let tunnelProcess: ChildProcess | null = null;
 let tunnelUrl: string | null = null;
@@ -26,8 +28,21 @@ export const tunnelService = {
       throw new Error('cloudflared is not installed. Install it with: brew install cloudflared');
     }
 
+    // Refuse to expose the server publicly without a PIN configured. The
+    // tunnel makes Commander reachable from the open internet — without a
+    // PIN, anyone with the URL can drive sessions, read JSONL transcripts,
+    // and run shell commands via terminal endpoints.
+    const appConfig = loadConfig();
+    if (!appConfig.pin) {
+      throw new Error(
+        'Refusing to start tunnel: no PIN configured. Set a numeric PIN in ~/.jstudio-commander/config.json before exposing Commander to the internet.',
+      );
+    }
+
+    const target = `http://localhost:${config.port}`;
+
     return new Promise<string>((resolve, reject) => {
-      const proc = spawn('cloudflared', ['tunnel', '--url', 'http://localhost:3001'], {
+      const proc = spawn('cloudflared', ['tunnel', '--url', target], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
 
@@ -82,11 +97,19 @@ export const tunnelService = {
 
   stop(): void {
     if (tunnelProcess) {
+      const proc = tunnelProcess;
       try {
-        tunnelProcess.kill('SIGTERM');
+        proc.kill('SIGTERM');
       } catch {
         // Already dead
       }
+      // SIGKILL fallback — cloudflared occasionally hangs on shutdown
+      // (especially on a flaky network), and a zombie holds the loopback
+      // port open across our restart, blocking the next tunnel start.
+      const killTimer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* gone */ }
+      }, 2000);
+      proc.once('exit', () => clearTimeout(killTimer));
       tunnelProcess = null;
       tunnelUrl = null;
       eventBus.emitTunnelStopped();

@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply, HookHandlerDoneFunction } from 'fastify';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -42,16 +43,74 @@ const isLocalRequest = (request: FastifyRequest): boolean => {
   return host === 'localhost' || host === '127.0.0.1' || host.startsWith('localhost:');
 };
 
-const extractPin = (request: FastifyRequest): string | null => {
-  // Check header first
+const extractPin = (request: FastifyRequest, allowQueryParam: boolean): string | null => {
+  // Header is the preferred channel — never logged by Cloudflare's proxy.
   const headerPin = request.headers['x-commander-pin'];
   if (typeof headerPin === 'string' && headerPin) return headerPin;
 
-  // Check query param
-  const queryPin = (request.query as Record<string, string>).pin;
-  if (typeof queryPin === 'string' && queryPin) return queryPin;
+  // Query param is rejected on remote requests because Cloudflare and any
+  // intermediate proxy may log the URL, leaking the PIN. Only accepted when
+  // the request originates from localhost (used by some legacy callers).
+  if (allowQueryParam) {
+    const queryPin = (request.query as Record<string, string>).pin;
+    if (typeof queryPin === 'string' && queryPin) return queryPin;
+  }
 
   return null;
+};
+
+// Constant-time PIN comparison — `===` would leak the PIN length and a
+// bit of byte-position info via timing under repeated probing. PINs are
+// short, but the cost is negligible.
+export const pinsMatch = (provided: string, expected: string): boolean => {
+  if (provided.length !== expected.length) {
+    // Still do a constant-time compare against expected to keep the
+    // timing profile flat regardless of length.
+    const dummy = Buffer.alloc(expected.length, 0);
+    timingSafeEqual(dummy, Buffer.from(expected, 'utf-8'));
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(provided, 'utf-8'), Buffer.from(expected, 'utf-8'));
+};
+
+// Per-IP attempt tracker. Five wrong PINs in five minutes → 15-minute
+// lockout. Counters reset on a successful PIN. Map is in-memory only
+// (no need to persist — restart already disrupts an attacker's state).
+interface AttemptState { count: number; firstAt: number; lockedUntil: number }
+const attempts = new Map<string, AttemptState>();
+const ATTEMPT_WINDOW_MS = 5 * 60_000;
+const LOCKOUT_MS = 15 * 60_000;
+const MAX_ATTEMPTS = 5;
+
+export const recordPinAttempt = (ip: string, ok: boolean): { lockedUntil: number | null } => {
+  const now = Date.now();
+  const state = attempts.get(ip);
+  if (ok) {
+    attempts.delete(ip);
+    return { lockedUntil: null };
+  }
+  if (!state || now - state.firstAt > ATTEMPT_WINDOW_MS) {
+    attempts.set(ip, { count: 1, firstAt: now, lockedUntil: 0 });
+    return { lockedUntil: null };
+  }
+  state.count += 1;
+  if (state.count >= MAX_ATTEMPTS) {
+    state.lockedUntil = now + LOCKOUT_MS;
+    return { lockedUntil: state.lockedUntil };
+  }
+  return { lockedUntil: null };
+};
+
+export const pinLockoutRemainingMs = (ip: string): number => {
+  const state = attempts.get(ip);
+  if (!state || !state.lockedUntil) return 0;
+  const remaining = state.lockedUntil - Date.now();
+  if (remaining <= 0) {
+    // Expired — clear so the user can retry fresh.
+    attempts.delete(ip);
+    return 0;
+  }
+  return remaining;
 };
 
 export const pinAuthMiddleware = (
@@ -79,9 +138,9 @@ export const pinAuthMiddleware = (
     return;
   }
 
-  const providedPin = extractPin(request);
+  const providedPin = extractPin(request, isLocalRequest(request));
 
-  if (providedPin === config.pin) {
+  if (providedPin && pinsMatch(providedPin, config.pin)) {
     done();
     return;
   }

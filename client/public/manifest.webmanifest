@@ -1,0 +1,19 @@
+{
+  "name": "JStudio Commander",
+  "short_name": "Commander",
+  "description": "JStudio Commander — control plane for Claude Code agent sessions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0A0E14",
+  "theme_color": "#0E7C7B",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    }
+  ]
+}
