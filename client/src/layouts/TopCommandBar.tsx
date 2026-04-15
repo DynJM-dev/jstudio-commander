@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Wifi, WifiOff, ChevronDown, MoreHorizontal } from 'lucide-react';
 import type { Session, DailyStats } from '@commander/shared';
 import { StatusBadge } from '../components/shared/StatusBadge';
+import { TunnelBadge } from '../components/shared/TunnelBadge';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
 import { formatTokens, formatCost } from '../utils/format';
@@ -197,7 +198,8 @@ export const TopCommandBar = () => {
         </div>
 
         {/* Right: stats + connection */}
-        <div className="flex items-center gap-5 shrink-0 pl-4">
+        <div className="flex items-center gap-3 shrink-0 pl-4">
+          <TunnelBadge />
           <div className="flex items-center gap-3 font-mono-stats text-xs">
             <span style={{ color: 'var(--color-accent-light)' }}>{formatTokens(totalTokens)}</span>
             <span style={{ color: 'var(--color-text-tertiary)' }}>·</span>
