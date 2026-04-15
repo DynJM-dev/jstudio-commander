@@ -25,7 +25,6 @@ const uuidFromTranscriptPath = (path: string): string | null => {
 
 export type MatchStrategy =
   | 'claudeSessionId'
-  | 'id-as-uuid'
   | 'transcriptUUID'
   | 'unclaimed-cwd'
   | 'rotation-detected'
@@ -35,7 +34,6 @@ export type MatchStrategy =
 // Lightweight and in-memory; reset on server restart.
 export const hookMatchStats: Record<MatchStrategy, number> = {
   claudeSessionId: 0,
-  'id-as-uuid': 0,
   transcriptUUID: 0,
   'unclaimed-cwd': 0,
   'rotation-detected': 0,
@@ -62,37 +60,51 @@ const resolveSessionRow = (
     if (row) return { id: row.id, backfillClaudeId: null, strategy: 'claudeSessionId' };
   }
 
-  // 2. The session's Commander id IS the Claude UUID (PM pattern: leadSessionId
-  // stored as sessions.id). Backfill so subsequent events hit strategy 1.
-  if (anyClaudeId) {
-    const row = db.prepare('SELECT id, claude_session_id FROM sessions WHERE id = ?').get(anyClaudeId) as
+  // 2. Transcript path carries a UUID — match it against any row whose
+  // claude_session_id already points to it (already covered above) OR
+  // whose id equals it (the PM/lead pattern where leadSessionId is
+  // stored as sessions.id). A hook event carrying this transcript path
+  // is definitive evidence that the referenced Claude session is the
+  // one this row owns, so backfill is safe here (contrast with the
+  // removed boot-time id-as-uuid heal which was speculative).
+  if (transcriptClaudeId) {
+    const row = db.prepare(
+      'SELECT id, claude_session_id FROM sessions WHERE claude_session_id = ? OR id = ?',
+    ).get(transcriptClaudeId, transcriptClaudeId) as
       | { id: string; claude_session_id: string | null }
       | undefined;
     if (row) {
-      return {
-        id: row.id,
-        backfillClaudeId: row.claude_session_id ? null : anyClaudeId,
-        strategy: 'id-as-uuid',
-      };
+      // Exclusive-claim guard: if another row already claims this UUID,
+      // don't steal it. The hook is addressed to a different row.
+      const otherClaim = db.prepare(
+        'SELECT id FROM sessions WHERE claude_session_id = ? AND id != ?',
+      ).get(transcriptClaudeId, row.id) as { id: string } | undefined;
+      if (!otherClaim) {
+        return {
+          id: row.id,
+          backfillClaudeId: row.claude_session_id ? null : transcriptClaudeId,
+          strategy: 'transcriptUUID',
+        };
+      }
     }
-  }
-
-  // 2b. Transcript path carries a different UUID than the payload sessionId —
-  // rare, but possible during session rotation. Match the transcript UUID
-  // against any sessions row whose id equals it.
-  if (transcriptClaudeId && transcriptClaudeId !== payloadClaudeId) {
-    const row = db.prepare('SELECT id FROM sessions WHERE claude_session_id = ? OR id = ?').get(
-      transcriptClaudeId,
-      transcriptClaudeId,
-    ) as { id: string } | undefined;
-    if (row) return { id: row.id, backfillClaudeId: transcriptClaudeId, strategy: 'transcriptUUID' };
   }
 
   // 3. Unclaimed row in the same cwd — prefer teammate rows (parent_session_id
   // set) that have not yet been linked. If exactly one candidate remains after
   // filtering, claim it. Multi-candidate is ambiguous; we still claim but flag
   // it as a warning up the stack.
+  // Extra guard: if this Claude UUID is ALREADY claimed by some other row,
+  // don't bind — the hook is for that other row, not one of our unclaimed
+  // candidates. Prevents cross-session claim theft on shared-cwd setups.
   if (cwd && anyClaudeId) {
+    const alreadyClaimed = db.prepare(
+      'SELECT id FROM sessions WHERE claude_session_id = ?',
+    ).get(anyClaudeId) as { id: string } | undefined;
+    if (alreadyClaimed) {
+      // Hook belongs to the existing claimant; fall through to null so the
+      // caller logs a 'skipped' warn rather than misrouting.
+      return null;
+    }
     const candidates = db.prepare(
       `SELECT id, parent_session_id FROM sessions
        WHERE project_path = ? AND status != 'stopped' AND claude_session_id IS NULL

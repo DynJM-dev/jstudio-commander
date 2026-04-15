@@ -91,14 +91,39 @@ export const rotationDetectorService = {
     const files = jsonlDiscoveryService.findSessionFiles(row.project_path);
     if (files.length === 0) return;
 
-    // Candidates: JSONLs newer than the tracked file that aren't IT, modified
-    // within the freshness window. Sorted by recency (service returns desc).
+    // Exclusive-claim filter: any claude_session_id already bound to a
+    // DIFFERENT sessions row is off-limits. Without this guard two
+    // Commander sessions sharing a cwd both bind to the same JSONL (the
+    // "Wild-puma battling" bug — mirrored UIs, one Claude's writes
+    // rendered in both chats). Even if one of those rows is stopped, we
+    // still don't steal the claim because it belongs to its own history.
+    const db = getDb();
+    const claimedRows = db.prepare(
+      'SELECT claude_session_id FROM sessions WHERE claude_session_id IS NOT NULL AND id != ?',
+    ).all(row.id) as Array<{ claude_session_id: string }>;
+    const claimed = new Set(claimedRows.map((r) => r.claude_session_id));
+
+    // Candidates: JSONLs not currently pinned (IT), not claimed by another
+    // session, modified within the freshness window. Sorted by recency.
     const rawCandidates = files.filter((f) => {
       if (f.filePath === row.transcript_path) return false;
       if (f.sessionId === row.claude_session_id) return false;
+      if (claimed.has(f.sessionId)) return false;
       return now - f.modifiedAt.getTime() < freshnessWindowMs;
     });
-    if (rawCandidates.length === 0) return;
+    if (rawCandidates.length === 0) {
+      // Log the claim exclusion once so the user can tell why their chat
+      // stayed empty (the only recent JSONL in this cwd is claimed).
+      const excluded = files
+        .filter((f) => claimed.has(f.sessionId) && now - f.modifiedAt.getTime() < freshnessWindowMs)
+        .map((f) => f.sessionId.slice(0, 8));
+      if (excluded.length > 0) {
+        console.warn(
+          `[rotation] ${row.id.slice(0, 30)}: no unclaimed candidate — excluded ${excluded.join(', ')} (owned by another session)`,
+        );
+      }
+      return;
+    }
 
     // Enrich each with size + continuation signal so ranking and the
     // post-mortem log have everything in one place.

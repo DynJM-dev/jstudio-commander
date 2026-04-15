@@ -121,19 +121,7 @@ teamConfigService.start();
     }
   }
 
-  // 1b. Heal UUID-shaped session IDs (the PM/lead pattern): when a row's id
-  // is a Claude UUID and claude_session_id is empty, backfill it so future
-  // hook events match via the fast path instead of fighting over cwd.
-  const uuidShaped = db.prepare(
-    "SELECT id FROM sessions WHERE claude_session_id IS NULL AND id LIKE '________-____-____-____-____________'"
-  ).all() as Array<{ id: string }>;
-  for (const row of uuidShaped) {
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.id)) continue;
-    db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ? AND claude_session_id IS NULL')
-      .run(row.id, row.id);
-  }
-
-  // 1c. Clear stale transcript_path entries that point to a JSONL whose
+  // 1b. Clear stale transcript_path entries that point to a JSONL whose
   // UUID doesn't match the row's claude_session_id — collateral damage from
   // the old cwd-matching hook route. Cleared rows will re-link on next hook.
   const misaligned = db.prepare(
@@ -144,6 +132,39 @@ teamConfigService.start();
     if (name !== row.claude_session_id) {
       db.prepare('UPDATE sessions SET transcript_path = NULL WHERE id = ?').run(row.id);
       console.log(`[startup] cleared stale transcript_path on ${row.id.slice(0, 30)}`);
+    }
+  }
+
+  // 1c. Resolve duplicate claude_session_id bindings — the "Wild-puma
+  // battling" bug. Two sessions in the same cwd both had their
+  // rotation-detector independently discover + adopt the same JSONL,
+  // producing mirrored UIs that rendered one Claude's output in both.
+  // Heal: keep the most-recently-created row's claim, null out the
+  // older row(s). Orphans re-discover their own JSONL on the next
+  // rotation sweep — now with the exclusive-claim filter (Part A)
+  // preventing the same collision.
+  const dupeGroups = db.prepare(
+    `SELECT claude_session_id, COUNT(*) AS cnt, GROUP_CONCAT(id || '|' || created_at) AS rows
+     FROM sessions
+     WHERE claude_session_id IS NOT NULL
+     GROUP BY claude_session_id
+     HAVING cnt > 1`,
+  ).all() as Array<{ claude_session_id: string; cnt: number; rows: string }>;
+  for (const group of dupeGroups) {
+    const members = group.rows.split(',').map((s) => {
+      const [id, createdAt] = s.split('|');
+      return { id: id!, createdAt: createdAt! };
+    });
+    // Most-recently-created wins the claim.
+    members.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const winner = members[0]!;
+    for (const loser of members.slice(1)) {
+      db.prepare(
+        'UPDATE sessions SET claude_session_id = NULL, transcript_path = NULL WHERE id = ?',
+      ).run(loser.id);
+      console.log(
+        `[heal] session=${loser.id.slice(0, 30)} claude_session_id=${group.claude_session_id.slice(0, 8)} orphaned (duplicate; ${winner.id.slice(0, 30)} created later)`,
+      );
     }
   }
 
