@@ -161,20 +161,36 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const totalTokens = stats?.totalTokens ?? 0;
 
   // Keep local commands until JSONL contains a user message with matching text
-  // This ensures the local bubble stays visible until the real message appears
+  // — or until Claude clearly received our input another way. #224 hardens the
+  // prior trim-equality dedup that produced duplicate bubbles when JSONL text
+  // had trailing whitespace variations, mixed case, or collapsed newlines.
+  //
+  // Normalization — lowercase, trim, collapse every whitespace run to a single
+  // space. Matches even when Claude Code mangles or reflows the original input.
+  const normalize = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
   const jsonlUserTexts = new Set(
     messages
       .filter((m) => m.role === 'user')
       .flatMap((m) => m.content)
       .filter((b) => b.type === 'text')
-      .map((b) => (b as { type: 'text'; text: string }).text.trim())
+      .map((b) => normalize((b as { type: 'text'; text: string }).text))
   );
-  const pendingLocal = localCommands.filter(
-    (lc) => {
-      const text = lc.content[0]?.type === 'text' ? lc.content[0].text.trim() : '';
-      return !jsonlUserTexts.has(text);
-    }
-  );
+  const now = Date.now();
+  const pendingLocal = localCommands.filter((lc) => {
+    const text = lc.content[0]?.type === 'text' ? lc.content[0].text : '';
+    const normalized = normalize(text);
+    if (jsonlUserTexts.has(normalized)) return false;
+
+    // Time-based safety valve: once the session has clearly ingested the input
+    // (transitioned to working or waiting) AND the local is older than 10s,
+    // drop it regardless of text match. Prevents the local bubble from lingering
+    // forever when the JSONL capture is delayed or text normalization misses.
+    const age = now - new Date(lc.timestamp).getTime();
+    const sessionAck = session?.status === 'working' || session?.status === 'waiting';
+    if (age > 10_000 && sessionAck) return false;
+
+    return true;
+  });
   const allMessages = [...messages, ...pendingLocal];
 
   // Active plan — drives the sticky plan widget. Rebuilt on every messages
