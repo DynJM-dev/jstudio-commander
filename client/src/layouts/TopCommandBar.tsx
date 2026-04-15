@@ -84,33 +84,17 @@ export const TopCommandBar = () => {
   const SessionTab = ({ s }: { s: Session }) => {
     const isActive = s.id === currentSessionId;
     const isWaiting = s.status === 'waiting';
+    const cls = [
+      'session-tab shrink-0',
+      isActive ? 'session-tab--active' : '',
+      s.status === 'working' ? 'session-tab--working' : '',
+      s.status === 'stopped' ? 'session-tab--stopped' : '',
+      isWaiting ? 'waiting-tab-alarm' : '',
+    ].filter(Boolean).join(' ');
     return (
-      <button
-        onClick={() => goToSession(s.id)}
-        className={`flex items-center gap-2 px-3 h-full shrink-0 relative transition-all ${isWaiting ? 'waiting-tab-alarm' : ''}`}
-        style={{
-          fontFamily: M,
-          color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-          borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-          background: isActive ? 'rgba(14, 124, 123, 0.08)' : 'transparent',
-        }}
-        onMouseEnter={(e) => {
-          if (!isActive) {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
-            e.currentTarget.style.color = 'var(--color-text-primary)';
-            e.currentTarget.style.borderBottomColor = 'rgba(14, 124, 123, 0.3)';
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isActive) {
-            e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.color = 'var(--color-text-secondary)';
-            e.currentTarget.style.borderBottomColor = 'transparent';
-          }
-        }}
-      >
+      <button onClick={() => goToSession(s.id)} className={cls} aria-current={isActive ? 'page' : undefined}>
         <StatusBadge status={s.status} size="sm" />
-        <span className="text-sm font-medium truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
+        <span className="truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
         {isActive && (
           <span
             className="font-mono-stats hidden xl:inline-block"
@@ -156,37 +140,30 @@ export const TopCommandBar = () => {
               More sessions
             </span>
           </div>
-          {tabs.map((s) => {
-            const isActive = s.id === currentSessionId;
-            const isWaiting = s.status === 'waiting';
-            return (
-              <button
-                key={s.id}
-                className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 transition-colors ${isWaiting ? 'waiting-tab-alarm' : ''}`}
-                style={{
-                  fontFamily: M,
-                  fontSize: 13,
-                  color: isActive ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
-                  background: isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
-                }}
-                onClick={() => goToSession(s.id)}
-                onMouseEnter={(e) => {
-                  if (!isActive && !isWaiting) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!isWaiting) e.currentTarget.style.background = isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent';
-                }}
-              >
-                <StatusBadge status={s.status} size="sm" />
-                <div className="flex flex-col min-w-0">
-                  <span className="truncate font-medium">{displayNames.get(s.id) ?? s.name}</span>
-                  <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
-                    {s.model?.replace('claude-', '')}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+          <div className="flex flex-col gap-1 p-1">
+            {tabs.map((s) => {
+              const isActive = s.id === currentSessionId;
+              const isWaiting = s.status === 'waiting';
+              const cls = [
+                'session-tab session-tab--stack',
+                isActive ? 'session-tab--active' : '',
+                s.status === 'working' ? 'session-tab--working' : '',
+                s.status === 'stopped' ? 'session-tab--stopped' : '',
+                isWaiting ? 'waiting-tab-alarm' : '',
+              ].filter(Boolean).join(' ');
+              return (
+                <button key={s.id} className={cls} onClick={() => goToSession(s.id)} aria-current={isActive ? 'page' : undefined}>
+                  <StatusBadge status={s.status} size="sm" />
+                  <div className="flex flex-col min-w-0 text-left">
+                    <span className="truncate font-medium">{displayNames.get(s.id) ?? s.name}</span>
+                    <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
+                      {s.model?.replace('claude-', '')}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -321,33 +298,30 @@ export const TopCommandBar = () => {
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
               }}
             >
-              {activeSessions.map((s) => {
-                const isActive = s.id === currentSessionId;
-                return (
-                  <button
-                    key={s.id}
-                    className="w-full text-left px-4 py-3 flex items-center gap-3 transition-colors"
-                    style={{
-                      fontFamily: M,
-                      color: isActive ? 'var(--color-accent-light)' : 'var(--color-text-primary)',
-                      background: isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
-                      borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                    }}
-                    onClick={() => goToSession(s.id)}
-                  >
-                    <StatusBadge status={s.status} size="sm" />
-                    <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-sm font-medium truncate">{displayNames.get(s.id) ?? s.name}</span>
-                      <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
-                        {s.model?.replace('claude-', '')}
-                      </span>
-                    </div>
-                    {isActive && (
-                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'var(--color-accent)' }} />
-                    )}
-                  </button>
-                );
-              })}
+              <div className="flex flex-col gap-1 p-1">
+                {activeSessions.map((s) => {
+                  const isActive = s.id === currentSessionId;
+                  const isWaiting = s.status === 'waiting';
+                  const cls = [
+                    'session-tab session-tab--stack',
+                    isActive ? 'session-tab--active' : '',
+                    s.status === 'working' ? 'session-tab--working' : '',
+                    s.status === 'stopped' ? 'session-tab--stopped' : '',
+                    isWaiting ? 'waiting-tab-alarm' : '',
+                  ].filter(Boolean).join(' ');
+                  return (
+                    <button key={s.id} className={cls} onClick={() => goToSession(s.id)} aria-current={isActive ? 'page' : undefined}>
+                      <StatusBadge status={s.status} size="sm" />
+                      <div className="flex flex-col min-w-0 flex-1 text-left">
+                        <span className="text-sm font-medium truncate">{displayNames.get(s.id) ?? s.name}</span>
+                        <span className="font-mono-stats" style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>
+                          {s.model?.replace('claude-', '')}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

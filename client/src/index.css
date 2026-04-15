@@ -453,3 +453,80 @@ button:active, a:active, [role="button"]:active {
   cursor: not-allowed;
   filter: grayscale(0.15);
 }
+
+/* === Session tabs (top command bar) ===
+   Button-style tabs with state-aware glow. Replaces the old underline-bar
+   look so the user can spot active / working / waiting sessions at a
+   glance across a row of similarly-named tabs. Composes with the existing
+   .waiting-tab-alarm animation for the highest-priority "needs you" state. */
+.session-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: 'Montserrat', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background 180ms ease, color 180ms ease,
+              border-color 180ms ease, box-shadow 220ms ease,
+              transform 120ms ease;
+  cursor: pointer;
+  position: relative;
+}
+.session-tab:hover {
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--color-text-primary);
+}
+.session-tab:active {
+  transform: scale(0.98);
+}
+.session-tab--active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  color: var(--color-accent-light);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 18%, transparent),
+    0 0 14px -4px var(--color-accent-glow);
+}
+.session-tab--active:hover {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 65%, transparent);
+}
+.session-tab--working {
+  border-color: color-mix(in srgb, var(--color-accent-light) 35%, transparent);
+  box-shadow: 0 0 10px -3px color-mix(in srgb, var(--color-accent-light) 50%, transparent);
+}
+.session-tab--working.session-tab--active {
+  /* When active AND working, accent the active glow further. */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent),
+    0 0 18px -4px color-mix(in srgb, var(--color-accent-light) 65%, transparent);
+}
+.session-tab--stopped {
+  border-color: rgba(255, 255, 255, 0.03);
+  color: color-mix(in srgb, var(--color-text-tertiary) 70%, transparent);
+  box-shadow: none;
+  opacity: 0.7;
+}
+/* .waiting-tab-alarm composes on top via className concat — its keyframe
+   already drives the box-shadow, so .session-tab's transition on
+   box-shadow is fine; the alarm wins because it sets !important via the
+   inset shadow strategy. */
+
+/* Vertical stacked variant for dropdowns/overflow lists where tabs need
+   subtitles (model name, etc.). Same state classes apply. */
+.session-tab--stack {
+  flex-direction: row;
+  align-items: flex-start;
+  height: auto;
+  padding: 8px 12px;
+  border-radius: 8px;
+  width: 100%;
+}
