@@ -23,7 +23,13 @@ const uuidFromTranscriptPath = (path: string): string | null => {
   return UUID_RE.test(name) ? name : null;
 };
 
-export type MatchStrategy = 'claudeSessionId' | 'id-as-uuid' | 'transcriptUUID' | 'unclaimed-cwd' | 'skipped';
+export type MatchStrategy =
+  | 'claudeSessionId'
+  | 'id-as-uuid'
+  | 'transcriptUUID'
+  | 'unclaimed-cwd'
+  | 'rotation-detected'
+  | 'skipped';
 
 // Running counters for operational visibility — surfaced via /api/system/health.
 // Lightweight and in-memory; reset on server restart.
@@ -32,6 +38,7 @@ export const hookMatchStats: Record<MatchStrategy, number> = {
   'id-as-uuid': 0,
   transcriptUUID: 0,
   'unclaimed-cwd': 0,
+  'rotation-detected': 0,
   skipped: 0,
 };
 

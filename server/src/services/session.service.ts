@@ -147,8 +147,28 @@ export const sessionService = {
     const db = getDb();
     const now = new Date().toISOString();
     const provided = SESSION_COL_MAP.filter(({ key }) => input[key] !== undefined);
+    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(input.id) as { id: string } | undefined;
 
-    // INSERT-side defaults — only applied when the caller didn't set them.
+    if (existing) {
+      // Sparse UPDATE — only the fields the caller actually provided. Uses
+      // the parameterized path rather than INSERT ... ON CONFLICT because
+      // SQLite evaluates NOT NULL constraints on the INSERT attempt BEFORE
+      // resolving the conflict, which would 500 any partial update
+      // (e.g. rotation detector touching only claude_session_id).
+      if (provided.length === 0) {
+        // Nothing to change — just bump updated_at for signal.
+        db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, input.id);
+      } else {
+        const sets = provided.map(({ col }) => `${col} = ?`).concat(['updated_at = ?']).join(', ');
+        const vals = provided.map(({ key }) => input[key]);
+        vals.push(now);
+        vals.push(input.id);
+        db.prepare(`UPDATE sessions SET ${sets} WHERE id = ?`).run(...vals);
+      }
+      return this.getSession(input.id)!;
+    }
+
+    // Fresh INSERT — defaults only applied here, never on update.
     const defaults: Partial<Record<string, unknown>> = {
       status: 'idle',
       model: 'claude-opus-4-6[1m]',
@@ -173,18 +193,9 @@ export const sessionService = {
       }
     }
 
-    const updateSet = provided
-      .map(({ col }) => `${col} = excluded.${col}`)
-      .concat(["updated_at = excluded.updated_at"])
-      .join(', ');
-
-    const sql = `
-      INSERT INTO sessions (${insertCols.join(', ')})
-      VALUES (${placeholders.join(', ')})
-      ON CONFLICT(id) DO UPDATE SET ${updateSet}
-    `;
-
-    db.prepare(sql).run(...insertVals);
+    db.prepare(
+      `INSERT INTO sessions (${insertCols.join(', ')}) VALUES (${placeholders.join(', ')})`,
+    ).run(...insertVals);
 
     return this.getSession(input.id)!;
   },
