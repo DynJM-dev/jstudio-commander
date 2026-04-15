@@ -92,6 +92,7 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
 };
 
 const LIVE_THINKING_CHARS = 280;
+const LIVE_COMPOSING_CHARS = 320;
 
 interface ChatThreadProps {
   messages: ChatMessage[];
@@ -102,6 +103,10 @@ interface ChatThreadProps {
   // Latest in-flight thinking text from the currently-generating assistant
   // message. Shown as a live italic preview under the working indicator.
   liveThinking?: string | null;
+  // Latest streaming prose/code text. Shown as a rolling tail preview so
+  // the user sees progress during 'Composing response...' windows. Takes
+  // precedence over liveThinking when both are present.
+  liveComposing?: string | null;
   // Currently-executing tool that's worth surfacing (skill load, agent
   // spawn, memory read). Shown as a prominent chip in the working indicator.
   liveActivity?: { kind: 'skill' | 'agent' | 'memory'; target: string } | null;
@@ -117,6 +122,7 @@ export const ChatThread = ({
   isWorking = false,
   actionLabel,
   liveThinking,
+  liveComposing,
   liveActivity,
   shimmerState = 'thinking',
 }: ChatThreadProps) => {
@@ -403,13 +409,36 @@ export const ChatThread = ({
                     style={{ maxWidth: 220 }}
                   />
 
-                  {/* Live thinking preview — actual streaming content from
-                      the in-flight assistant message. Last ~280 chars, italic,
-                      accent left-bar so it reads as "here's the thought". */}
+                  {/* Live composing preview — streaming prose/code the user
+                      is waiting on. Takes precedence over liveThinking since
+                      composing supersedes thinking in the turn lifecycle. */}
                   <AnimatePresence mode="wait">
-                    {liveThinking && liveThinking !== actionLabel && (
+                    {liveComposing && (
                       <motion.div
-                        key={liveThinking.slice(0, 40)}
+                        key={`c:${liveComposing.slice(0, 40)}`}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18, ease: 'easeOut' as const }}
+                        className="mt-2 text-xs leading-relaxed pl-2 py-1 pr-2 max-h-20 overflow-hidden"
+                        style={{
+                          borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)',
+                          color: 'var(--color-text-secondary)',
+                          maxWidth: 560,
+                          display: '-webkit-box',
+                          WebkitLineClamp: 4,
+                          WebkitBoxOrient: 'vertical',
+                          whiteSpace: 'pre-wrap',
+                        }}
+                      >
+                        {liveComposing.length > LIVE_COMPOSING_CHARS
+                          ? `…${liveComposing.slice(-LIVE_COMPOSING_CHARS)}`
+                          : liveComposing}
+                      </motion.div>
+                    )}
+                    {!liveComposing && liveThinking && liveThinking !== actionLabel && (
+                      <motion.div
+                        key={`t:${liveThinking.slice(0, 40)}`}
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}

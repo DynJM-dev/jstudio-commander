@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   CircleGauge,
   FileText,
@@ -14,6 +14,7 @@ import {
 import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
+import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
 
 const M = 'Montserrat, sans-serif';
@@ -240,8 +241,84 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     ? { ...statusInfo, label: `${statusInfo.label} (queued)` }
     : statusInfo;
 
+  // Token-rate sampler — ring buffer of the last 10 (tokens, timestamp)
+  // observations. Every stats update pushes a sample; the rate is computed
+  // as the delta between oldest and newest, smoothed by 2-sample averaging.
+  // Capped at 10 entries to prevent unbounded growth.
+  const tokenSamplesRef = useRef<Array<{ tokens: number; ts: number }>>([]);
+  const [tokenRate, setTokenRate] = useState<number>(0);
+  useEffect(() => {
+    if (!isWorking) {
+      tokenSamplesRef.current = [];
+      setTokenRate(0);
+      return;
+    }
+    const buf = tokenSamplesRef.current;
+    const now = Date.now();
+    // Dedup consecutive identical token counts (polling returned no growth)
+    const last = buf[buf.length - 1];
+    if (!last || last.tokens !== totalTokens) {
+      buf.push({ tokens: totalTokens, ts: now });
+      if (buf.length > 10) buf.shift();
+    }
+    if (buf.length >= 2) {
+      const oldest = buf[0]!;
+      const newest = buf[buf.length - 1]!;
+      const dt = (newest.ts - oldest.ts) / 1000;
+      if (dt > 0) {
+        const raw = (newest.tokens - oldest.tokens) / dt;
+        // 2-sample moving average against the previous reported rate
+        setTokenRate((prev) => prev > 0 ? Math.round((prev + raw) / 2) : Math.round(raw));
+      }
+    }
+  }, [totalTokens, isWorking]);
+
+  // Long-running detection — ticks once per second while working, flips to
+  // true past 60s elapsed so we can surface a "Long task" badge. setInterval
+  // rather than rAF so the cadence is cheap; cleaned up on unmount/stop.
+  const [elapsedSecs, setElapsedSecs] = useState(0);
+
+  // Active-plan progress readout for the Long-task pill. Computed from the
+  // same getActivePlan pipeline the StickyPlanWidget uses so the counter
+  // stays in lockstep with the plan card.
+  const planProgress = useMemo(() => {
+    const active = getActivePlan(messages);
+    if (!active || active.plan.length === 0) return null;
+    const done = active.plan.filter((t) => t.status === 'completed').length;
+    return { done, total: active.plan.length };
+  }, [messages]);
+
+  // Token-rate tone — green when healthy, amber after 15s of underspeed.
+  const underspeedSinceRef = useRef<number>(0);
+  const tokenRateTone = useMemo(() => {
+    if (!isWorking || tokenRate <= 0) { underspeedSinceRef.current = 0; return 'neutral'; }
+    if (tokenRate >= 8) { underspeedSinceRef.current = 0; return 'healthy'; }
+    if (tokenRate < 3) {
+      if (underspeedSinceRef.current === 0) underspeedSinceRef.current = Date.now();
+      return Date.now() - underspeedSinceRef.current > 15_000 ? 'slow' : 'neutral';
+    }
+    underspeedSinceRef.current = 0;
+    return 'neutral';
+  }, [tokenRate, isWorking]);
+  const rateColor =
+    tokenRateTone === 'healthy' ? 'var(--color-working)'
+    : tokenRateTone === 'slow' ? 'var(--color-idle)'
+    : 'var(--color-text-tertiary)';
+
   // Track response start time
   const responseStartRef = useRef<number>(0);
+
+  // Cheap 1s ticker — drives the Long-task threshold (60s) without hammering
+  // re-renders. Cleared when isWorking flips off so no stuck state.
+  useEffect(() => {
+    if (!isWorking) { setElapsedSecs(0); return; }
+    const id = setInterval(() => {
+      const started = responseStartRef.current;
+      setElapsedSecs(started > 0 ? Math.floor((Date.now() - started) / 1000) : 0);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isWorking]);
+  const isLongTask = isWorking && elapsedSecs >= 60;
   useEffect(() => {
     if (isWorking && messages.length > 0) {
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -294,6 +371,20 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         <>
           <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
           <LiveElapsed startedAt={responseStartRef.current} />
+          {isLongTask && (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded-full shrink-0"
+              style={{
+                fontFamily: M,
+                color: 'var(--color-accent-light)',
+                background: 'rgba(42, 183, 182, 0.1)',
+                border: '1px solid rgba(42, 183, 182, 0.22)',
+              }}
+              title={planProgress ? `Plan progress: ${planProgress.done}/${planProgress.total}` : 'Long-running response'}
+            >
+              {planProgress ? `Step ${planProgress.done}/${planProgress.total}` : 'Long task'}
+            </span>
+          )}
         </>
       )}
 
@@ -336,6 +427,22 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
       >
         {formatTokens(displayTokens)} tokens
       </span>
+
+      {/* Streaming token rate — only while working and we've collected at
+          least two samples. Color reflects tone (healthy/neutral/slow). */}
+      {isWorking && tokenRate > 0 && (
+        <span
+          className="font-mono-stats text-xs shrink-0 hidden sm:inline"
+          style={{ color: rateColor }}
+          title={
+            tokenRateTone === 'slow'
+              ? 'Rate has been below 3 tok/s for > 15s — Claude may be stuck'
+              : `${tokenRate} tokens/sec`
+          }
+        >
+          · {tokenRate}/s
+        </span>
+      )}
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
 

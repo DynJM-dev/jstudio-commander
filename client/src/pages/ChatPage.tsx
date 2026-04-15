@@ -228,6 +228,29 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     return null;
   }, [isSessionWorking, allMessages]);
 
+  // Live composing preview — Claude is writing prose/code (the last block is
+  // a streaming `text` block) and we surface the tail so the user sees
+  // progress during long 'Composing response...' windows. Only valid when
+  // the text block is THE LAST content block on the latest message — a
+  // tool_use landing after it means composing has ended for this turn.
+  const liveComposingRaw = useMemo(() => {
+    if (!isSessionWorking || allMessages.length === 0) return null;
+    const last = allMessages[allMessages.length - 1];
+    if (last?.role !== 'assistant' || last.content.length === 0) return null;
+    const block = last.content[last.content.length - 1];
+    if (block?.type !== 'text' || !block.text) return null;
+    return block.text;
+  }, [isSessionWorking, allMessages]);
+
+  // One-cycle sticky so a transient empty derivation between polls doesn't
+  // blink the preview out. Cleared when the working flag flips off.
+  const lastComposingRef = useRef<string | null>(null);
+  const liveComposing = useMemo(() => {
+    if (!isSessionWorking) { lastComposingRef.current = null; return null; }
+    if (liveComposingRaw) { lastComposingRef.current = liveComposingRaw; return liveComposingRaw; }
+    return lastComposingRef.current;
+  }, [isSessionWorking, liveComposingRaw]);
+
   // Heuristic classifier for the shimmer — 'tooling' (fast accent-light),
   // 'waiting' (idle yellow paused), otherwise 'thinking' (default sweep).
   const shimmerState: 'thinking' | 'tooling' | 'waiting' =
@@ -325,6 +348,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           isWorking={isSessionWorking}
           actionLabel={terminalHint}
           liveThinking={liveThinking}
+          liveComposing={liveComposing}
           liveActivity={liveActivity}
           shimmerState={shimmerState}
         />
