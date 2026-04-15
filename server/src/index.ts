@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { getDb, closeDb } from './db/connection.js';
+import { acquireInstanceLock, releaseInstanceLock } from './db/instance-lock.js';
 import { sessionRoutes } from './routes/session.routes.js';
 import { systemRoutes } from './routes/system.routes.js';
 import { chatRoutes } from './routes/chat.routes.js';
@@ -53,6 +54,11 @@ if (existsSync(clientDist)) {
 
 // PIN auth for remote access
 app.addHook('onRequest', pinAuthMiddleware);
+
+// Singleton lock — exits with code 1 if another Commander instance is
+// already pointed at this dataDir. Must run before getDb() to keep the
+// SQLite file from being touched by a second writer.
+acquireInstanceLock();
 
 // Initialize database
 getDb();
@@ -193,6 +199,7 @@ const shutdown = async () => {
   terminalService.cleanup();
   tunnelService.cleanup();
   closeDb();
+  releaseInstanceLock();
   await app.close();
   process.exit(0);
 };
