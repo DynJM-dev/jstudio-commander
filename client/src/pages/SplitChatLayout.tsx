@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { X, GripVertical, Minimize2, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
@@ -51,8 +51,30 @@ const readLegacySplit = (pmSessionId: string): SplitState | null => {
   }
 };
 
+// Below this width the side-by-side split becomes unreadable. Force the
+// minimized strip layout so the active chat takes full width and the
+// teammate strip stays accessible. Tapping a teammate icon on mobile
+// navigates to that session's own /chat/:id route (single-pane) rather
+// than expanding into a dual-pane that wouldn't fit.
+const MOBILE_BREAKPOINT_PX = 768;
+const useIsNarrow = (): boolean => {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window === 'undefined' ? false : window.innerWidth < MOBILE_BREAKPOINT_PX,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    setNarrow(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return narrow;
+};
+
 export const SplitChatLayout = () => {
   const { sessionId: pmSessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
+  const isNarrow = useIsNarrow();
   const { lastEvent, subscribe } = useWebSocket();
   // Known teammates (non-stopped), capped at MAX_TEAMMATES. Authoritative
   // source is the server's /teammates list refreshed on WS transitions.
@@ -210,7 +232,10 @@ export const SplitChatLayout = () => {
   }
 
   // Minimized: PM full-width minus the 48px strip on the right.
-  if (minimized) {
+  // Mobile viewports always render this variant — dual-pane below 768px
+  // would squeeze each chat to <50% of an already-small screen.
+  const useStrip = minimized || isNarrow;
+  if (useStrip) {
     return (
       <div ref={containerRef} className="flex h-full w-full min-h-0" style={{ fontFamily: M }}>
         <div className="h-full min-h-0 overflow-hidden flex-1 relative">
@@ -227,21 +252,23 @@ export const SplitChatLayout = () => {
             borderLeft: '1px solid rgba(255,255,255,0.06)',
           }}
         >
-          <button
-            onClick={() => setMinimized(false)}
-            title="Expand teammates"
-            className="flex items-center justify-center rounded-md transition-colors"
-            style={{
-              width: 32, height: 32,
-              color: 'var(--color-text-secondary)',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-          >
-            <Users size={14} />
-          </button>
+          {!isNarrow && (
+            <button
+              onClick={() => setMinimized(false)}
+              title="Expand teammates"
+              className="flex items-center justify-center rounded-md transition-colors"
+              style={{
+                width: 32, height: 32,
+                color: 'var(--color-text-secondary)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+            >
+              <Users size={14} />
+            </button>
+          )}
           <AnimatePresence>
             {teammates.map((t) => (
               <motion.button
@@ -251,7 +278,17 @@ export const SplitChatLayout = () => {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.8 }}
                 transition={{ duration: 0.2 }}
-                onClick={() => { setActiveTabId(t.id); setMinimized(false); }}
+                onClick={() => {
+                  if (isNarrow) {
+                    // Mobile: jump to the teammate's own /chat/:id route so
+                    // they get the full viewport instead of cramming into
+                    // half a small screen.
+                    navigate(`/chat/${t.id}`);
+                  } else {
+                    setActiveTabId(t.id);
+                    setMinimized(false);
+                  }
+                }}
                 title={`${t.name}${t.agentRole ? ` · ${t.agentRole}` : ''}`}
                 className={`relative flex flex-col items-center justify-center rounded-md px-0.5 py-1 transition-all ${pulseSessionId === t.id ? 'waiting-tab-alarm' : ''} ${t.status === 'waiting' ? 'waiting-tab-alarm' : ''}`}
                 style={{
