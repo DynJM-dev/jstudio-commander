@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { TerminalSquare } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
+import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { TerminalTabs } from '../components/terminal/TerminalTabs';
 import { TerminalPanel } from '../components/terminal/TerminalPanel';
 import { CreateSessionModal } from '../components/sessions/CreateSessionModal';
@@ -36,8 +37,8 @@ export const TerminalPage = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full" style={{ fontFamily: M }}>
-        <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Loading sessions...</span>
+      <div className="p-4 lg:p-6 pb-24 lg:pb-6" style={{ fontFamily: M }}>
+        <LoadingSkeleton variant="card" count={2} />
       </div>
     );
   }

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, ChevronRight, FolderKanban, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, FolderKanban } from 'lucide-react';
 import { EmptyState } from '../components/shared/EmptyState';
+import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { PhaseTimeline } from '../components/projects/PhaseTimeline';
 import { ModuleMap } from '../components/projects/ModuleMap';
 import { StateViewer } from '../components/projects/StateViewer';
@@ -51,8 +52,8 @@ export const ProjectDetailPage = () => {
 
   if (loading) {
     return (
-      <div className="p-4 lg:p-6 pb-24 lg:pb-6 flex items-center justify-center min-h-[50vh]" style={{ fontFamily: M }}>
-        <Loader2 size={24} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
+      <div className="p-4 lg:p-6 pb-24 lg:pb-6" style={{ fontFamily: M }}>
+        <LoadingSkeleton variant="card" count={3} />
       </div>
     );
   }
