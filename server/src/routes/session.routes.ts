@@ -255,4 +255,12 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       return session;
     },
   );
+
+  // Manual rescan for #237 — refresh-chat button. Re-detects status,
+  // re-counts JSONL messages, broadcasts session:updated on the WS bus.
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/rescan', async (request, reply) => {
+    const result = sessionService.rescan(request.params.id);
+    if (!result) return reply.status(404).send({ error: 'Session not found' });
+    return { ok: true, ...result };
+  });
 };

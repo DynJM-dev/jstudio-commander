@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { Session, SessionStatus } from '@commander/shared';
@@ -679,6 +679,63 @@ export const sessionService = {
     }
 
     return { status: liveStatus };
+  },
+
+  // Manual re-sync for the "refresh chat" button (#237). Re-detects status
+  // against live tmux, re-counts JSONL messages across all tracked
+  // transcript paths, and emits a session:updated so every subscribed
+  // client patches at once. Returns null on missing session so the route
+  // can 404 cleanly.
+  rescan(id: string): { status: SessionStatus; messageCount: number; transcriptMtime: string | null } | null {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+
+    const session = rowToSession(row);
+    const now = new Date().toISOString();
+
+    // Status rescan: mirrors getSessionStatus so the poller's next tick
+    // doesn't overwrite the fresh read.
+    let status: SessionStatus = session.status;
+    if (session.status !== 'stopped') {
+      status = tmuxService.hasSession(session.tmuxSession)
+        ? agentStatusService.detectStatus(session.tmuxSession)
+        : 'stopped';
+    }
+
+    // Transcript stats: sum line counts across all tracked JSONL files and
+    // pick the latest mtime as the "last activity" signal.
+    let messageCount = 0;
+    let latestMtimeMs = 0;
+    for (const path of session.transcriptPaths) {
+      if (!existsSync(path)) continue;
+      try {
+        const contents = readFileSync(path, 'utf-8');
+        // JSONL: one event per line; ignore trailing newline.
+        messageCount += contents.length > 0
+          ? contents.split('\n').filter((l) => l.length > 0).length
+          : 0;
+        const mtime = statSync(path).mtimeMs;
+        if (mtime > latestMtimeMs) latestMtimeMs = mtime;
+      } catch {
+        /* unreadable transcript — skip */
+      }
+    }
+    const transcriptMtime = latestMtimeMs > 0 ? new Date(latestMtimeMs).toISOString() : null;
+
+    // Persist the fresh status if it drifted; always bump updated_at so
+    // the client sees a changed row and can invalidate caches.
+    if (status !== session.status) {
+      db.prepare('UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
+    } else {
+      db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(now, id);
+    }
+
+    // Emit session:updated so every WS subscriber reconciles without polling.
+    const fresh = this.getSession(id);
+    if (fresh) eventBus.emitSessionUpdated(fresh);
+
+    return { status, messageCount, transcriptMtime };
   },
 
   // Removes stopped teammate rows (parent_session_id != NULL) whose stopped_at
