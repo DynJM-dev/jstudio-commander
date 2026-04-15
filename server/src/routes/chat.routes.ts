@@ -28,27 +28,14 @@ const fallForwardJsonl = (
     | undefined;
   if (!row) return currentPath;
 
-  // checkOne bails if session isn't working/waiting. The HTTP path gets a
-  // wider door — adopt a newer file even from idle since the user is
-  // actively looking at the chat. Reproduce the matcher logic here.
+  // Cheap short-circuit: nothing in the cwd to bind to.
   const files = jsonlDiscoveryService.findSessionFiles(projectPath);
-  const now = Date.now();
-  const candidates = files.filter((f) => {
-    if (f.filePath === row.transcript_path) return false;
-    if (f.sessionId === row.claude_session_id) return false;
-    return now - f.modifiedAt.getTime() < 60_000;
-  });
-  if (candidates.length === 0) return currentPath;
-  if (candidates.length === 1) {
-    rotationDetectorService.checkOne(row);
-    const fresh = db.prepare('SELECT transcript_path FROM sessions WHERE id = ?').get(sessionId) as
-      | { transcript_path: string | null }
-      | undefined;
-    return fresh?.transcript_path ?? currentPath;
-  }
-  // Ambiguous — multiple candidates. Defer to the detector's conservative
-  // logic (it'll skip unless one looks like a continuation).
-  rotationDetectorService.checkOne(row);
+  if (files.length === 0) return currentPath;
+  // HTTP fall-forward opts out of the sweep's status gate AND its freshness
+  // window — the user is actively requesting this session's chat right now,
+  // so even a currently-dormant but most-recent transcript should bind.
+  // checkOne owns all the ranking + guard logic so this path stays thin.
+  rotationDetectorService.checkOne(row, { requireActive: false, freshnessWindowMs: Infinity });
   const fresh = db.prepare('SELECT transcript_path FROM sessions WHERE id = ?').get(sessionId) as
     | { transcript_path: string | null }
     | undefined;

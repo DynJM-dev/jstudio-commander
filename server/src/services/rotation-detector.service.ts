@@ -1,4 +1,4 @@
-import { existsSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs'; // statSync used in ranking
 import { getDb } from '../db/connection.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 import { sessionService } from './session.service.js';
@@ -68,53 +68,86 @@ export const rotationDetectorService = {
     }
   },
 
-  checkOne(row: TrackedSession): void {
+  checkOne(row: TrackedSession, opts: { requireActive?: boolean; freshnessWindowMs?: number } = {}): void {
+    const requireActive = opts.requireActive ?? true;
+    // Default 60s window keeps the periodic sweep conservative (skips files
+    // that stopped being written). HTTP fall-forward passes Infinity so a
+    // currently-dormant-but-most-recent transcript still qualifies — the
+    // user is reading NOW, better to serve a slightly stale-live file than
+    // nothing.
+    const freshnessWindowMs = opts.freshnessWindowMs ?? FRESH_CANDIDATE_MS;
     if (!row.project_path) return;
     const trackedMtime = this.mtimeOf(row.transcript_path);
     const now = Date.now();
 
     // Fresh? Nothing to do.
     if (trackedMtime && now - trackedMtime < STALE_MS) return;
-    // Only act on sessions where rotation matters — `idle` sessions can keep
-    // a stale transcript until they resume (no UX impact).
-    if (row.status !== 'working' && row.status !== 'waiting') return;
+    // Status gate — default on for the periodic sweep so we don't re-bind
+    // sessions nobody is looking at (guards against sibling Claude processes
+    // in the same cwd). The HTTP fall-forward opts out (user is actively
+    // reading this session's chat, so serving fresh data wins).
+    if (requireActive && row.status !== 'working' && row.status !== 'waiting') return;
 
     const files = jsonlDiscoveryService.findSessionFiles(row.project_path);
     if (files.length === 0) return;
 
     // Candidates: JSONLs newer than the tracked file that aren't IT, modified
     // within the freshness window. Sorted by recency (service returns desc).
-    const candidates = files.filter((f) => {
+    const rawCandidates = files.filter((f) => {
       if (f.filePath === row.transcript_path) return false;
       if (f.sessionId === row.claude_session_id) return false;
-      return now - f.modifiedAt.getTime() < FRESH_CANDIDATE_MS;
+      return now - f.modifiedAt.getTime() < freshnessWindowMs;
     });
-    if (candidates.length === 0) return;
+    if (rawCandidates.length === 0) return;
 
-    let chosen = candidates[0]!;
-    if (candidates.length > 1) {
-      // Prefer a continuation-shaped candidate when multiple qualify so we
-      // don't adopt a sibling agent's transcript by accident.
-      const continuation = candidates.find((c) => looksLikeContinuation(c.filePath));
-      if (continuation) {
-        chosen = continuation;
-      } else {
+    // Enrich each with size + continuation signal so ranking and the
+    // post-mortem log have everything in one place.
+    const candidates = rawCandidates.map((c) => {
+      let size = 0;
+      try { size = statSync(c.filePath).size; } catch { /* vanished */ }
+      return {
+        ...c,
+        size,
+        ageMs: now - c.modifiedAt.getTime(),
+        continuation: looksLikeContinuation(c.filePath),
+      };
+    });
+
+    // Ranking — composite score, lowest wins:
+    //   1. currentlyWriting (mtime ≤ 10s) + size ≥ 50KB           (strongest)
+    //   2. continuation fingerprint                                (prior default)
+    //   3. greatest size                                           (activity proxy)
+    //   4. most recent mtime                                       (tiebreaker)
+    // A currently-writing file beats a frozen bootstrap-shaped one because
+    // the active-write signal is stronger evidence of liveness than a
+    // starting-prefix match. That's exactly the OvaGas case where the
+    // live 1.4MB transcript lacked the PM bootstrap fingerprint and got
+    // rejected in favor of a tiny frozen one that had it.
+    // 30s captures files actively being appended to — the PM's spec uses
+    // this threshold specifically so a file that was written a few polling
+    // cycles ago still counts as live. Tighter (10s) missed real-active
+    // transcripts that paused briefly between token bursts.
+    const CURRENTLY_WRITING_MS = 30_000;
+    const SIZE_FLOOR = 50_000;
+    const rank = (c: (typeof candidates)[number]): number => {
+      const writingNow = c.ageMs <= CURRENTLY_WRITING_MS && c.size >= SIZE_FLOOR ? 0 : 1;
+      // Lower is better; negate size and mtime so big/new wins in ascending sort.
+      return writingNow * 1e12 + (c.continuation ? 0 : 5e11) - c.size - (10_000_000 - c.ageMs);
+    };
+    candidates.sort((a, b) => rank(a) - rank(b));
+    const chosen = candidates[0]!;
+
+    // Hard guard: if the tracked file exists and nothing currently-writing
+    // AND the top candidate has no continuation signal AND it's small, bail.
+    // Avoids hopping to an unrelated sibling agent's transcript.
+    if (!chosen.continuation && chosen.ageMs > CURRENTLY_WRITING_MS && chosen.size < SIZE_FLOOR) {
+      const stale = !row.transcript_path || !existsSync(row.transcript_path);
+      if (!stale) {
         console.warn(
-          `[rotation] ${row.id.slice(0, 30)}: ${candidates.length} fresh candidates, none look like continuations — skipping`,
+          `[rotation] ${row.id.slice(0, 30)}: ${candidates.length} candidate(s) — none look live (${candidates.map((c) => `${c.sessionId.slice(0, 8)}(${Math.round(c.size / 1024)}KB, ${Math.round(c.ageMs / 1000)}s-old, boot${c.continuation ? '✓' : '✗'})`).join(', ')}) — skipping`,
         );
         return;
       }
-    }
-
-    // Single candidate or continuation winner — only adopt if it was written
-    // recently enough OR it looks like a continuation. A lone fresh file
-    // with nothing identifying is ambiguous; don't bind.
-    if (candidates.length === 1 && !looksLikeContinuation(chosen.filePath)) {
-      // Still adopt IF the old transcript is missing entirely (hard rotation)
-      // OR the candidate's start time is after the tracked file's mtime —
-      // otherwise we'd risk swapping to an unrelated session.
-      const stale = !row.transcript_path || !existsSync(row.transcript_path);
-      if (!stale) return;
     }
 
     sessionService.upsertSession({
@@ -124,8 +157,13 @@ export const rotationDetectorService = {
     });
     fileWatcherService.watchSpecificFile(chosen.filePath);
     hookMatchStats['rotation-detected'] += 1;
+    const whyPicked = chosen.ageMs <= CURRENTLY_WRITING_MS && chosen.size >= SIZE_FLOOR
+      ? 'currently-writing'
+      : chosen.continuation
+      ? 'continuation-fingerprint'
+      : 'largest-recent';
     console.log(
-      `[rotation] ${row.id.slice(0, 30)}: ${row.claude_session_id?.slice(0, 8) ?? 'none'} → ${chosen.sessionId.slice(0, 8)} (${chosen.filePath.split('/').pop()})`,
+      `[rotation] ${row.id.slice(0, 30)}: candidates=[${candidates.map((c) => `${c.sessionId.slice(0, 8)}(${Math.round(c.size / 1024)}KB, ${Math.round(c.ageMs / 1000)}s-old, boot${c.continuation ? '✓' : '✗'})`).join(', ')}] → picked ${chosen.sessionId.slice(0, 8)} via ${whyPicked}`,
     );
 
     const session = sessionService.getSession(row.id);
