@@ -150,15 +150,19 @@ teamConfigService.start();
       .map((r) => r.tmux_session)
   );
 
+  const { sessionService } = await import('./services/session.service.js');
   for (const tmuxSession of liveTmuxSessions) {
     if (!knownTmuxNames.has(tmuxSession.name)) {
-      // Orphaned tmux session — add to DB
+      // Orphaned tmux session — add to DB via the single write surface so
+      // defaults stay consistent with every other path.
       const id = tmuxSession.name.replace('jsc-', '') + '-0000-0000-0000-000000000000';
       const liveStatus = agentStatusService.detectStatus(tmuxSession.name);
-      db.prepare(`
-        INSERT OR IGNORE INTO sessions (id, name, tmux_session, status, model, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'claude-opus-4-6', ?, ?)
-      `).run(id, `recovered-${tmuxSession.name}`, tmuxSession.name, liveStatus, now, now);
+      sessionService.upsertSession({
+        id,
+        name: `recovered-${tmuxSession.name}`,
+        tmuxSession: tmuxSession.name,
+        status: liveStatus,
+      });
       console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} → added as ${liveStatus}`);
     }
   }

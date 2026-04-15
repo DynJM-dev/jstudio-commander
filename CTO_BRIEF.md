@@ -1,90 +1,95 @@
 # JStudio Commander — CTO Brief
 
-**Prepared:** 2026-04-14
-**Status:** v1 Shipped + 42 Post-v1 Polish Commits. 50/50 verification PASS.
-**Total commits:** 75 (no-merge)
-**Stack:** Fastify 5 + SQLite + React 19 + Vite 6 + Tailwind 4 + WebSockets
+**Prepared:** 2026-04-15
+**Status:** v1 shipped + 40+ polish commits + 17 feature commits this week (plan widget, sticky plan, split-screen, PM init system, etc.)
+**Stack:** Fastify 5 + SQLite (better-sqlite3) + React 19 + Vite 7 + Tailwind v4 + WebSockets + chokidar
+**Deployment:** local-first; server on port 3002 (Codeman owns 3001), Vite dev on 5173, optional Cloudflare Quick Tunnel for remote access
+**Repo:** `~/Desktop/Projects/jstudio-commander`
 
 ---
 
-## 1. Executive Summary
+## 1. Executive summary
 
-JStudio Commander is a local-first web command center for Claude Code agent sessions. It replaces Codeman with a modern chat UI, real-time activity streaming, per-session isolation, persistent token/cost tracking, and remote access via Cloudflare Quick Tunnels with PIN auth.
+Commander is a local-first web command center replacing Codeman: connects to tmux sessions running Claude Code, renders JSONL transcripts as a structured chat UI, tracks projects via `STATE.md` / `PM_HANDOFF.md` parsing, supports remote access via Cloudflare tunnels with PIN auth. The v1 shipped earlier, followed by 40+ polish commits and a focused session this week that:
 
-**Delivered v1 in 10 phases.** Shipped 42 additional post-v1 commits addressing real-world bugs discovered during dogfooding. Current state is verified bulletproof (50-item smoke test PASS).
+- Fixed Plan widget attribution (Feature 1)
+- Shipped Sticky Plan Widget (Feature 2)
+- Shipped PM↔Coder split-screen (Feature 3 MVP)
+- Added compaction awareness, `waiting`-state yellow highlight, bulletproof interrupt
+- Added activity chips for skill/agent/memory events
+- Added nested teammate cards on the Sessions page
+- Fixed per-session stats isolation (hook-event linking)
+- Shipped a **PM initialization system** (auto-invoked `/pm` cold-start for every new PM session)
 
-**Architecture philosophy:**
-- Commander is a *viewer/controller*, not an execution engine — Claude Code runs in tmux sessions independently; Commander observes JSONL logs and pane state
-- Claude Code *hooks* deliver transcript paths on every `Stop`/`PostToolUse` event (identical mechanism to Codeman)
-- SQLite is the single source of truth for session state; JSONL files are the source of truth for conversation content
+The OvaGas-class failure — *"Claude didn't invoke `/pm` or `/ui-expert` despite the task clearly needing them"* — is architecturally fixed.
 
 ---
 
-## 2. File Tree (High Level)
+## 2. Architecture snapshot
+
+- **Stack:** React 19 + Vite 7 + TS strict + Tailwind v4 (frontend) · Fastify 5 + SQLite (better-sqlite3) + WebSockets + chokidar (backend) · Cloudflare Quick Tunnels + PIN auth
+- **Monorepo:** pnpm workspaces — `packages/shared` (types, constants), `server`, `client`, `packages/ui` stub
+- **Process model:** Claude Code runs independently in tmux. Commander is a *viewer/controller* — it reads JSONL transcripts, observes pane state, writes via `tmux send-keys`. Hook events deliver `transcript_path` for reliable per-session JSONL identification.
+- **Design language:** dark glassmorphism, teal accent (#0E7C7B), Montserrat, lucide-react icons only, no emojis in code
+
+### Why a PM Initialization System
+
+Claude Code has an auto-skill-invocation heuristic. For standard tasks it often works, but we hit a clear failure mode with the OvaGas dogfood: user asked for a UI review, Claude did a `ToolSearch` + `Read STATE.md` + `Bash git status` + generic Agent spawn — never loaded `/pm` or `/ui-expert` despite both existing and being the canonical specialists. Fix is in three parts, described in §6.
+
+### File tree (condensed)
 
 ```
-jstudio-commander/
-├── CODER_BRAIN.md              # Coder state / memory (living doc)
-├── STATE.md                    # Phase status
-├── PM_HANDOFF.md               # Original master plan
-├── packages/shared/            # Types shared by server + client
-│   ├── types/                  # 6 domain types
-│   └── constants/              # Model pricing, status colors
-├── server/                     # Fastify + SQLite
-│   ├── db/                     # schema.sql (11 tables), connection.ts
-│   ├── middleware/             # pin-auth.ts (remote-only PIN)
-│   ├── routes/                 # 9 route modules
-│   ├── services/               # 12 domain services (tmux, jsonl, hooks, tunnel, etc.)
-│   └── ws/                     # event-bus, rooms, handler (channel-based WS)
-└── client/                     # React 19 + Vite 6
-    ├── components/             # ~35 components across chat/sessions/projects/analytics/terminal/shared
-    ├── hooks/                  # 7 custom hooks (useChat, useSessions, etc.)
-    ├── layouts/                # DashboardLayout + Sidebar + TopCommandBar + Mobile nav
-    ├── pages/                  # 6 pages (Sessions, Chat, Projects, Terminal, Analytics, ProjectDetail)
-    ├── services/               # api.ts, ws.ts
-    └── utils/                  # format, text-renderer (markdown + plan detection)
+client/src/
+  components/
+    chat/        ActivityChip, AgentPlan, AgentSpawnCard, AssistantMessage,
+                 ChatThread, CodeBlock, ContextBar, MessageMeta, PermissionPrompt,
+                 SessionTerminalPreview, StickyPlanWidget, ThinkingBlock,
+                 ToolCallBlock, UserMessage
+    sessions/    CommandInput, CreateSessionModal, SessionActions, SessionCard,
+                 TeammateRow
+    analytics/   CostChart, ModelBreakdown, SessionCostTable, TokenCard
+    projects/    ModuleMap, PhaseTimeline, ProjectCard, StateViewer
+    terminal/    TerminalPanel, TerminalTabs
+    shared/      EmptyState, ErrorBoundary, GlassCard, LoadingSkeleton, Logo,
+                 PinGate, StatusBadge
+  hooks/         useAnalytics, useChat, useProjects, usePromptDetection,
+                 useSessions, useTerminal, useWebSocket
+  layouts/       DashboardLayout, MobileNav, MobileOverflowDrawer, Sidebar,
+                 TopCommandBar
+  pages/         AnalyticsPage, ChatPage, ProjectDetailPage, ProjectsPage,
+                 SessionsPage, SplitChatLayout, TerminalPage
+  services/      api.ts, ws.ts
+  utils/         format.ts, plans.ts, text-renderer.tsx
+
+server/src/
+  routes/        analytics, auth, chat, hook-event, project, session, system,
+                 teammates, terminal, tunnel
+  services/      agent-status, file-watcher, jsonl-discovery, jsonl-parser,
+                 project-scanner, session, status-poller, team-config,
+                 terminal, tmux, token-tracker, tunnel, watcher-bridge
+  db/            connection.ts (auto-migration), schema.sql
+  ws/            event-bus.ts, handler.ts, index.ts, rooms.ts
+
+packages/shared/src/
+  constants/     models.ts, status.ts
+  types/         analytics.ts, chat.ts, project.ts, session.ts, terminal.ts,
+                 ws-events.ts
 ```
 
-**Total TS/TSX files:** ~95
-
 ---
 
-## 3. Database Schema (SQLite — 11 tables)
+## 3. Current JSONL parser types
 
-**Active (v1):**
-
-| Table | Purpose |
-|-------|---------|
-| `sessions` | Session lifecycle + `transcript_path` + `effort_level` |
-| `projects` | FS-discovered projects with parsed STATE.md/PM_HANDOFF.md |
-| `token_usage` | Per-message token accounting with cost_usd |
-| `cost_entries` | Daily aggregates (UNIQUE on date/session/model) |
-| `session_events` | Append-only lifecycle log |
-| `file_watch_state` | Incremental JSONL byte offsets |
-
-**Placeholder (v2 schema ready, not populated):**
-- `agent_relationships` — PM→coder→subagent graph
-- `phase_logs` — per-phase cost & duration tracking
-- `skill_usage` — skill invocation stats
-- `notifications` — push notification queue
-
-**All indexes in place** for common query patterns (session lookups, daily stats, event timelines).
-
----
-
-## 4. JSONL Parser Output
-
-The parser transforms Claude Code's native JSONL records into `ChatMessage[]`. All content is represented as discriminated-union `ContentBlock[]`.
-
-```typescript
-type ContentBlock =
+```ts
+export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string; signature?: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
-  | { type: 'system_note'; text: string };
+  | { type: 'system_note'; text: string }
+  | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number };
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   parentId: string | null;
   role: 'user' | 'assistant' | 'system';
@@ -97,7 +102,7 @@ interface ChatMessage {
   agentId?: string;
 }
 
-interface TokenUsage {
+export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -105,228 +110,186 @@ interface TokenUsage {
 }
 ```
 
-**Critical parser behaviors:**
-- Filters `isMeta: true` records (harness bookkeeping)
-- Strips `<command-name>`, `<local-command-stdout>`, and other internal Claude Code tags
-- Malformed JSON lines are skipped silently (graceful degradation)
-- `tool_result` blocks on `user` records are linked to preceding `tool_use` by ID via `toolResultMap`
-- Consecutive `assistant` records are grouped into single visual blocks in the UI (one Claude header per turn)
+Claude Code JSONL records are mapped 1:1 to `ChatMessage`. The parser handles `permission-mode`, `file-history-snapshot`, `attachment`, and `system/subtype=compact_boundary` synthetic events. `tool_result` content is normalized to a string regardless of raw shape (array of text blocks, plain string, etc.).
 
 ---
 
-## 5. WebSocket Event Catalog
+## 4. WebSocket event list
 
-Single WebSocket connection at `/ws` with **channel subscriptions**. Clients auto-subscribe to `sessions` + `system`, and can subscribe to `chat:{sessionId}`, `projects`, `analytics`.
+```ts
+// Server → Client
+session:created | session:updated | session:deleted | session:status
+chat:message   | chat:messages
+project:updated | project:scanned
+terminal:data  | terminal:resize
+analytics:token | analytics:daily
+tunnel:started | tunnel:stopped | tunnel:error
+system:error   | system:heartbeat
+teammate:spawned | teammate:dismissed
 
-**Server→Client events (18 types):**
+// Client → Server
+terminal:input | terminal:resize
+session:command
+subscribe | unsubscribe   // channels: sessions, chat:<id>, terminal:<id>, analytics, tunnels
+```
 
-| Event | Payload | Channel |
-|-------|---------|---------|
-| `session:created` | `{ session }` | sessions |
-| `session:updated` | `{ session }` | sessions |
-| `session:deleted` | `{ sessionId }` | sessions |
-| `session:status` | `{ sessionId, status }` | sessions |
-| `chat:message` | `{ sessionId, message }` | chat:{id} |
-| `chat:messages` | `{ sessionId, messages }` | chat:{id} |
-| `project:updated` | `{ project }` | projects |
-| `project:scanned` | `{ projects }` | projects |
-| `terminal:data` | `{ sessionId, data }` | — (direct route) |
-| `terminal:resize` | `{ sessionId, cols, rows }` | — |
-| `analytics:token` | `{ entry }` | analytics |
-| `analytics:daily` | `{ stats }` | analytics |
-| `tunnel:started` | `{ url }` | system |
-| `tunnel:stopped` | — | system |
-| `tunnel:error` | `{ error }` | system |
-| `system:error` | `{ error }` | system |
-| `system:heartbeat` | `{ timestamp }` | all (every 15s) |
+Channel-based subscriptions; `rooms.ts` manages fan-out. `event-bus.ts` is the internal pub/sub; WS forwarding is thin.
 
-**Client→Server commands (5 types):**
+### Session model
 
-| Command | Payload |
-|---------|---------|
-| `subscribe` | `{ channels: string[] }` |
-| `unsubscribe` | `{ channels: string[] }` |
-| `session:command` | `{ sessionId, command }` |
-| `terminal:input` | `{ sessionId, data }` |
-| `terminal:resize` | `{ sessionId, cols, rows }` |
+```ts
+export type SessionStatus = 'idle' | 'working' | 'waiting' | 'stopped' | 'error';
 
-**Additional real-time channels (non-WebSocket):**
-- Adaptive REST polling: chat at 1.5s when `working`, 5s when `idle`
-- Terminal hints polling: tmux pane capture every 2s
-- Hook events: Claude Code fires `curl POST /api/hook-event` on `Stop` and `PostToolUse`
+export interface Session {
+  id: string;
+  name: string;
+  tmuxSession: string;          // pane ID (%35) or sentinel (agent:…)
+  projectPath: string | null;
+  claudeSessionId: string | null;
+  status: SessionStatus;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+  stoppedAt: string | null;
+  stationId: string | null;
+  agentRole: string | null;
+  effortLevel: string;
+  parentSessionId: string | null;  // set when spawned via TeamCreate
+  teamName: string | null;         // which team config this belongs to
+  sessionType: 'pm' | 'raw';       // controls bootstrap auto-injection
+}
 
----
-
-## 6. Architecture Decisions
-
-### 6.1 Session Isolation via Hook-Delivered Transcript Paths
-**Decision:** Store `transcript_path` from Claude Code hooks per session. Never scan for "latest JSONL" in the project directory.
-
-**Rationale:** Multiple Commander sessions on the same project path would share the same Claude projects directory. Scanning for "latest" loaded stale conversations from killed sessions. Hooks deliver the exact transcript path on every event — identical mechanism to Codeman.
-
-**Fallback:** If no hook has fired yet (new session), use `findLatestSessionFile` filtered by `session.created_at - 5s` so old files are ignored.
-
-### 6.2 Message Grouping: Role-Based, Skip Tool-Result-Only Records
-**Decision:** Consecutive `assistant` records group into one visual block with one "Claude" header. `user` records that contain ONLY `tool_result` content blocks are skipped entirely (they don't break grouping).
-
-**Rationale:** Claude Code's JSONL emits a `user` record with `tool_result` content after every tool call. Without this skip, every tool call created a new "Claude" header, fragmenting the UI. Tool results are instead linked to their `tool_use` blocks via `toolResultMap` and rendered inside the ToolCallBlock.
-
-### 6.3 Pagination Returns Last N When offset=0
-**Decision:** `chat.routes.ts` detects `offset === 0` and returns the LAST `limit` messages via `slice(total - limit)`. Pagination with `offset > 0` paginates from the start (for "Load older messages").
-
-**Rationale:** Previous implementation returned FIRST 200 messages, meaning active work (newest tool calls) was cut off in sessions with >200 history. This was the single biggest real-time bug — fixed in `fa6380d`.
-
-### 6.4 Optimistic UI for User Intent
-**Decision:** When user sends a message, immediately show `userJustSent` state → "Processing..." in ContextBar BEFORE server confirms. Clear only when server status becomes `working` or new assistant messages arrive.
-
-**Rationale:** Status detection lag (1.5s poll + 8s cooldown) makes the UI feel dead. Optimistic state bridges the gap with zero latency.
-
-### 6.5 Status Detection: Heuristics + Cooldown, Not Claude API
-**Decision:** Detect `working`/`idle`/`waiting` from tmux pane content via regex patterns on active indicators (`Thinking`, `Cogitat`, `Nesting`, `✶`, `⏺`, spinners, `esc to interrupt`) and prompt indicators (`❯` at tail). Add 8s cooldown before transitioning from `working` → `idle`.
-
-**Rationale:** Claude Code doesn't expose a "busy" API. Heuristics work because the TUI is predictable. The 8s cooldown prevents flickering during brief pauses between tool calls.
-
-### 6.6 Per-Session Effort Level (DB, not Global Settings)
-**Decision:** `sessions.effort_level` column stores per-session effort. `/effort` commands update both the active tmux session AND the DB. New sessions inherit the global Claude setting.
-
-**Rationale:** Originally persisted to `~/.claude/settings.json` globally. User explicitly requested per-session persistence. Global settings remain authoritative for NEW session defaults only.
-
-### 6.7 `send-keys -l` Literal Flag + Separate Enter
-**Decision:** tmux commands split into two calls: `send-keys -l "{text}"` then `send-keys Enter`. The `-l` flag prevents tmux from interpreting special characters in user input.
-
-**Rationale:** Rapid commands (e.g. `/effort` followed immediately by a user message) caused tmux to concatenate inputs (`"/effort highTake it from where..."`). Literal + separate Enter resolves this reliably.
-
-### 6.8 Claude Code Hooks for Real-Time Triggers
-**Decision:** Configure `Stop` and `PostToolUse` hooks in `~/.claude/settings.json` that `curl POST /api/hook-event`. Server starts `fs.watch()` on the specific JSONL file named in the hook payload.
-
-**Rationale:** Polling-based JSONL detection has latency. Hook-delivered transcript paths enable sub-second real-time detection of new content, identical to Codeman's approach. Directory-level `chokidar` remains as a fallback for sessions without hooks.
-
-### 6.9 Server Port 3002 (Not 3001)
-**Decision:** Default port moved to 3002.
-
-**Rationale:** Codeman occupies 3001 on the dev machine. Both systems run in parallel.
-
-### 6.10 TypeScript Strict + Discriminated Unions Everywhere
-**Decision:** No `any` types. All domain types (ChatMessage, ContentBlock, WSEvent, SessionStatus) use discriminated unions for exhaustive type narrowing.
-
-**Rationale:** Catch misuse at compile time; enable full IDE autocomplete.
-
-### 6.11 Service Layer Strict Separation
-**Decision:** UI components NEVER call SQLite or tmux directly. All data operations go through `services/api.ts` → REST → `server/services/*` → SQLite/tmux.
-
-**Rationale:** Testability, debuggability, and clean separation for future feature additions (webhooks, mobile app, etc.).
-
-### 6.12 Glass-Dark UI System (No Light Mode)
-**Decision:** Dark-only theme with glassmorphism (`backdrop-filter: blur`). Teal `#0E7C7B` accent. No light mode support, no theme toggle.
-
-**Rationale:** Dev tool aesthetic. Single user (developer), focused UX. Montserrat font self-hosted + Shiki for code highlighting.
+export interface Teammate {
+  sessionId: string;
+  sessionName: string;
+  role: string;
+  teamName: string;
+  parentSessionId: string;
+  color?: string;
+  tmuxPaneId?: string;
+}
+```
 
 ---
 
-## 7. Bugs Fixed (15 Major)
+## 5. Features implemented this session
 
-| # | Bug | Root Cause | Commit |
-|---|-----|------------|--------|
-| 1 | Stats always showed 0 | watcher-bridge didn't call tokenTrackerService | `7acb1e9` |
-| 2 | Stats field name mismatch | Backend `totalTokens`, frontend `totalInputTokens` | `7acb1e9` |
-| 3 | Polling blocked new messages | `length <= prev.length` dedup logic | `c56e40d` / `1459423` |
-| 4 | Numbered choice `❯ 1.` detected as idle | Idle prompt pattern matched numbered choices | `5463ee6` |
-| 5 | sendKeys dropped Enter on rapid commands | Text + Enter sent as single tmux arg | `0b4a7b3` |
-| 6 | EMFILE crash on startup | chokidar watching 826K files in ~/Desktop/Projects | `5490453` |
-| 7 | Old conversation loaded in new session | `findLatestSessionFile` loaded stale JSONL | `15c7205` |
-| 8 | `tsx watch` unreliable — fixes didn't hot-reload | Watch mode not picking up file changes | N/A (workaround: manual restart) |
-| 9 | `⏵⏵ accept edits` flagged as prompt | It's a mode indicator, not actionable | `34527f6` |
-| 10 | `/effort` concatenated with next message | No await between commands | `b269d9f` / `99730bb` |
-| 11 | Raw `<command-name>` XML in chat | Parser emitted internal tags | `b269d9f` |
-| 12 | First message didn't appear | Local message created AFTER API await | `9c82b87` |
-| 13 | Newest messages missing from chat | Pagination returned FIRST 200, not LAST 200 | `fa6380d` |
-| 14 | `userJustSent` cleared prematurely | Cleared when session was already working | `e2b7f77` |
-| 15 | Idle flashing during edits | No cooldown on working→idle transition | `fb25ec4` |
-
-All 15 are fixed and verified PASS in the 50-item smoke test.
-
----
-
-## 8. Known Issues / Tech Debt
-
-### 8.1 Infrastructure
-- **`tsx watch` unreliable** (CRITICAL) — server-side changes don't hot-reload. Must manually restart the dev server after every server-side edit. Noted in CODER_BRAIN.md with uppercase warning. Migration path: switch to `nodemon --exec tsx` or compile-and-run with `ts-node-dev`.
-- **`node-pty` broken** on this system — fails with `posix_spawnp failed`. Terminal panel uses `tmux capture-pane -e` polling fallback at 500ms. Feature works but isn't a true PTY stream. Migration path: investigate `@lydell/node-pty` fork or revert to `child_process.spawn` with `pty` flag once macOS sandbox issue is resolved.
-- **Hooks configured globally** in `~/.claude/settings.json` — affects ALL Claude Code sessions, not just Commander-spawned ones. If user kills/restarts Claude outside Commander, hooks still fire to our endpoint (harmless but wasteful).
-
-### 8.2 v2 Placeholder Gaps
-- `agent_relationships` table exists but unused — needed for PM→coder→subagent visualization (Phase 2 feature)
-- `phase_logs` unpopulated — needed for per-phase cost analytics
-- `skill_usage` unpopulated — needed for skill invocation stats
-- `notifications` unpopulated — needed for FCM push (v2)
-
-### 8.3 UX / Product Debt
-- No persistence of local user commands across refresh (lost if browser reloads before JSONL catches up)
-- `AssistantMessage` takes `messages[]` array (non-obvious API surface — inherited from grouping refactor)
-- Claude Code's `/think` or extended thinking toggle not exposed — only `/effort` and `/fast` currently
-- No built-in session tagging/labeling beyond rename
-- No "export conversation" feature
-- No search across conversations
-- Terminal page only supports one session at a time actively (tabs exist but only the active tab connects)
-
-### 8.4 Observability Gaps
-- No structured logging beyond Fastify's default pino output
-- No error tracking/aggregation (e.g. Sentry)
-- No performance metrics (request latency, DB query times)
-- No rate limiting (beyond PIN auth for remote)
-
-### 8.5 Testing Gaps
-- **Zero automated tests.** All validation has been manual smoke tests. 50-item sweep is the de facto regression suite but not automated.
-- No E2E tests (Playwright was specified but never implemented for Commander)
-- No unit tests on JSONL parser despite its complexity
-- Migration path: start with JSONL parser unit tests (highest complexity, highest risk), then API integration tests.
+| # | Feature | Commit |
+|---|---|---|
+| 168 | Plan card attribution: TodoWrite tool calls now render inside Claude's message (not the user's) | `cec1bc9` |
+| 171 | Plan live updates via real task IDs parsed from `"Task #N created"` tool_result | `bfe82bb` |
+| 169 | **Sticky Plan Widget** — floating glass pill above chat input with X close button; appears when inline card is off-screen; auto-fade 3s after allDone; IntersectionObserver threshold 0.5 | `5263bd7`→`6627d57`→`c1c886f`→`8d2d981` |
+| 170 | **Split-screen teammate pane** — team config (`~/.claude/teams/*/config.json`) watched via chokidar, emits `teammate:spawned`/`dismissed`; SplitChatLayout mounts ChatPage twice; drag-resize clamped 30–70%; localStorage restore; WS-driven open/close | `e9f651b`→`cf9b94f`→`5598bb8` |
+| 172 | **Compaction support** — parses `compact_boundary` JSONL event, banner in chat (`Compacted (manual) — freed 886.5k tokens`), `contextTokens` stat resets post-boundary | `fdb2485` |
+| 173 | **Waiting yellow highlight** — SessionCard glows yellow when session or any teammate is waiting on prompt; StatusBadge halo; SplitChatLayout right-pane glow | `9929f8a` |
+| 174 | **Bulletproof interrupt** — global ESC listener (works regardless of textarea content/focus), Cmd+./Ctrl+. shortcut, `data-escape-owner` for menus/prompts, double-tap Escape 80ms apart, Stop button always visible during activity, "Stopping…" optimistic state, error toast on failed interrupt | `4f3b9c7` |
+| 175 | Teammate `status=stopped` blocker — default idle on insert; `agent_relationships` upsert respects respawn; poller skips `agent:*` sentinel targets | `5f90cf8` |
+| 176 | **Nested teammate tree** on Sessions page — teammates indent under parent PM with tree line; click row opens split directly to that teammate via localStorage seed; parent glows yellow when any teammate is waiting | `2150129` |
+| 177 | **Per-session stats isolation** — model `[1m]` suffix + short-form (`opus`, `sonnet`) normalization; `/chat` and `/stats` reject cwd-fallback for rows with `parent_session_id`; 4-strategy hook-event matcher (claudeSessionId → transcript_path UUID → unclaimed-cwd → skip); boot-heal backfills UUID IDs and clears stomped transcript_paths | `35ef990` |
+| 179 | **Activity chips** — `ActivityChip` (Skill/Brain/blue, SendMessage/Send/cyan, TeamCreate/Users/purple, ToolSearch/Search/muted, TaskList/ListTree/muted) + `AgentSpawnCard` with live Spawning→Working→done/error state; Read path-classified to skill/memory/doc chips | `a42a1b4` |
+| 180 | Session card shows `teamName` as muted suffix to disambiguate same-named team-leads | `853e477` |
+| 181 | Boot-heal liveness gate (tmux pane live OR JSONL mtime <10min OR recent hook) prevents zombie resurrection; `DELETE /api/sessions/:id` archives team config to `.trash/` | `53c32c5` |
+| 178 | PM tmux pane resolution — `tmux list-panes -a` + cwd match adopts real pane ID for sentinel-targeted rows; status-poller un-sticks pane-backed rows | `95aacef` |
+| 182 | Text tokens brightened (`text-tertiary` bumped most); live in-flight `thinking` text preview under shimmer with 4-line clamp + crossfade | `38023cb` |
+| 183 | **State-aware shimmer** — thinking (slow teal) / tooling (fast teal-light + glow) / waiting (paused idle-yellow); `.bar-working` + `.bar-waiting`; live skill/agent/memory indicators between header and shimmer; ContextBar action labels get per-tool-family icons | `043dc5f` |
+| 184 | **PM vs Raw session toggle** in CreateSessionModal (defaults PM); server polls for Claude ready prompt up to 12s then `tmux send-keys` bootstrap text for PM sessions; `session_type` field, PM badge pill on cards | `587e508` |
 
 ---
 
-## 9. Deployment & Ops
+## 6. PM Initialization System (Parts 1–3)
 
-**Current:** `pnpm dev` on port 3002 locally. Production `pnpm start` uses compiled `dist/` with Fastify serving `client/dist/` via `@fastify/static`.
+The OvaGas failure motivated a full architectural fix. Every PM session now self-bootstraps:
 
-**Remote access:** Cloudflare Quick Tunnels (ephemeral URLs at `*.trycloudflare.com`), PIN auth via `x-commander-pin` header + WS query param. PIN stored in `~/.jstudio-commander/config.json`.
+### Part 1 — Cold-Start protocol in `/pm` skill
 
-**Data locations:**
-- DB: `~/.jstudio-commander/commander.db` (SQLite with WAL mode)
-- Claude logs: `~/.claude/projects/{encoded-path}/{session-uuid}.jsonl` (read-only)
-- Hooks: `~/.claude/hooks/commander-hook.sh`
-- Config: `~/.jstudio-commander/config.json`
+`~/.claude/skills/jstudio-pm/SKILL.md` has a mandatory Cold Start section at the top of its body. On invocation, the PM runs silently:
 
----
+1. Read `~/.claude/CLAUDE.md` (stack rules, blast walls, DGII, available skills)
+2. Inventory `ls ~/.claude/skills/` (db, ui, scaffold, qa, e2e, landing, security, supabase, ui-ux-pro-max)
+3. Read project state (`./CLAUDE.md`, `./STATE.md`, `./PM_HANDOFF.md` — skeletons flagged if absent)
+4. Scan `~/.claude/projects/<slug>/memory/MEMORY.md` for user prefs/feedback
+5. Report readiness in one compact paragraph
 
-## 10. Strategic Recommendations
+Plus an "Invoking Specialists" matrix clarifying Skill tool (load into context) vs Agent tool (sandboxed subagent) vs TeamCreate (long-lived coder) — with an explicit warning: *"Never call `Agent({ subagent_type: "ui-ux-pro-max" })` — that's a skill, not a subagent type."*
 
-### Immediate (next sprint)
-1. **Replace `tsx watch`** with a reliable dev-mode hot-reloader. This has cost 4+ hours of debugging phantom bugs.
-2. **Add JSONL parser unit tests.** It's the most complex code in the project and it has zero regression coverage.
-3. **Document the hook protocol.** Any future coder will need to know how Commander depends on Claude Code hooks.
+### Part 2 — Canonical bootstrap prompt
 
-### Medium-term (next month)
-4. **Build the Agent Teams visualization** — `agent_relationships` table is waiting. This is the next big UX unlock.
-5. **Add historical analytics** — phase timelines, cost per phase, skill usage charts using the v2 placeholder tables.
-6. **Implement web push notifications** for mobile — schema ready, just needs service worker + FCM integration.
+`~/.claude/prompts/pm-session-bootstrap.md`:
+> *"You are the Lead PM for JStudio. Invoke /pm and run its cold-start protocol. Wait for my pitch. Do not begin work until I provide it."*
 
-### Long-term
-7. **v2 gamified view** (pixel-art station map) was designed but deferred. Reconsider priority based on how much multi-session use happens day-to-day.
-8. **Consider migrating to SSE from WebSockets** if multi-user support is ever required — simpler auth story, better proxy support.
-9. **Build a proper plugin system** if more external tools need to integrate (CLI extensions, VS Code bridge, etc.).
+### Part 3 — Commander auto-injection
+
+New `session_type: 'pm' | 'raw'` column on sessions. `CreateSessionModal` defaults to PM. After tmux session creation, server polls `capture-pane` every 400ms for up to 12s looking for `❯` or `? for shortcuts`, then `sendKeys` the bootstrap text. Missing prompt file → warn + skip (never fails session create). Raw sessions bypass injection entirely.
+
+### Verified live
+
+Fresh PM session → bootstrap injected → `/pm` loaded → cold-start ran → readiness reported. User asked *"review the OvaGas ERP UI"* → PM proposed invoking `ui-ux-pro-max` + `/ui-expert` as the first action (vs. the pre-fix behavior of ToolSearch + generic Agent). The architectural fix works.
 
 ---
 
-## 11. Key Metrics
+## 7. Bugs fixed vs still open
 
-- **75 commits** in total (v1 + polish)
-- **42 polish commits** in the final 4-hour burst fixing UX
-- **15 major bugs** fixed during polish phase
-- **50/50 PASS** on final verification sweep
-- **~95 TypeScript/TSX files** across the monorepo
-- **11 SQLite tables** (6 active v1, 5 placeholder v2)
-- **18 WebSocket event types** + 5 client commands
-- **9 REST route modules**, 12 backend services
+### Fixed this session
+
+- Plan card attached to wrong message (user vs assistant)
+- Plan tasks keyed by auto-incrementing counter instead of real Claude Code task ID → updates silently dropped
+- Plan events in different assistant groups (split by user "Proceed" messages) → multi-group plans didn't update
+- `deleted` TaskUpdate status crashed STATUS_CONFIG lookup → AgentPlan + StickyPlanWidget defensive fallback
+- Sticky widget persisted through all-done state
+- Sticky widget always visible → contextual with IntersectionObserver
+- Split-pane teammate rows had `status=stopped` default → never rendered
+- `agent_relationships.ended_at` not reset on teammate respawn
+- Status poller stomping sentinel targets back to stopped every 5s
+- Multiple Vite dev servers serving stale client code (Vite cache + duplicate processes)
+- Hook-event route matched by cwd alone → PM + teammate sharing cwd clobbered each other's `transcript_path`
+- Model `[1m]` suffix + short-form (`opus`) not in context-limit map → 319K / 200K = 100% clamped display
+- Teammate stats fell back to parent's JSONL via cwd-match → identical token counts
+- Boot-heal unconditionally flipped stopped→idle → zombie resurrection of dead PMs (vetcare)
+- ESC interrupt gated on empty textarea → unusable while typing
+- Stop button hidden during 1.5s status-poll lag
+- Silent `.catch(() => {})` on interrupt failures → user spam-clicks thinking nothing happened
+- Single Escape key occasionally missed during tmux-render cycles → double-tap 80ms apart
+- Live "Thinking…" showed nothing about what Claude was doing → live thinking preview + state-aware shimmer + tool-family icons
+- Skill loads rendered as generic tool blocks → Brain/blue ActivityChip
+- Agent spawn cards were static → live Spawning→Working→done lifecycle
+- OvaGas-class auto-skill-invocation miss → PM init system (Parts 1–3)
+- Duplicate team-leads from multiple teams indistinguishable → `teamName` suffix on card
+
+### Known open / deferred
+
+- **Multi-tab teammate pane** (Feature 170.1) — currently single-slot. If more than one teammate is active, split only shows the most recent by default; user can click a specific one from the Sessions tree. Tabs inside the right pane + minimize-to-strip deferred.
+- **Direct Mode badge** (deferred 170.1): when user is typing in the coder pane, PM pane should show a muted "Direct Mode" overlay.
+- **Project CLAUDE.md scaffolding template / `jstudio-init-project` helper** (deferred Part 4 of PM init): approved to defer. Cold-start in `/pm` handles skeleton-creation hints when it encounters a missing project doc.
+- **`file-watcher.service.ts:90`** pre-existing TS error (Error/unknown mismatch) — cosmetic, doesn't affect runtime.
+- **Status poller edge case** on real pane-ID teammates between turns: may briefly classify as `stopped` vs `idle`. Cleanup pass merited before major multi-teammate work.
+- **Agent subagent calls for Claude Code built-in types** (Explore, Plan) don't currently render with distinct visual affordance vs our Agent chip — both use the Zap icon. Consider differentiating later.
 
 ---
 
-**End of Brief**
+## 8. Tech debt introduced or surfaced
+
+1. **Two write paths for session rows.** Team-config reconciliation and the legacy `sessionService.createSession` both write to the `sessions` table. Diverged defaults were the root cause of #175. Consolidate to a single `upsertSession` facade.
+2. **Boot-heal liveness check** (#181) does filesystem mtime checks synchronously on startup. Fine for small session counts; if the sessions table grows to >100 inactive rows, worth adding an index on `updated_at` and batching the heal.
+3. **Hook-event matcher** (#177) has 4 strategies including a cwd-tiebreaker. Deterministic today but adds branching complexity. If we ever get Claude Code hooks that include pane ID directly, collapse the matcher to a single lookup.
+4. **Activity chip dispatch** (#179) is a growing switch in `AssistantMessage.tsx`. As we add more tool-specific affordances (Commit, PR, Deploy, etc.), worth factoring to a registry pattern.
+5. **Token normalization** (#177) handles `[1m]` and short forms. Claude Code's model naming conventions are external — if they change, `MODEL_CONTEXT_LIMITS` needs updates. Should move to a versioned constants file in `packages/shared` and add unit tests.
+6. **Sticky widget IntersectionObserver** re-queries by attribute on every planKey change. Cheap but not zero. If we ever have multiple simultaneous plans, migrate to a React ref passed through context.
+7. **`tsx watch` dev unreliability** is a known hazard. Production build uses compiled Node so the issue is dev-only.
+8. **Vite HMR stale code via duplicate dev servers** caused a debugging blackhole earlier this week. The client-side equivalent of the `tsx watch` issue. Worth adding a dev-mode health check banner showing the loaded bundle hash.
+9. **No E2E test coverage** for Commander itself yet. All verification is manual or curl-based. Bootstrapping Playwright against the dev server is a natural next step once feature churn slows.
+10. **Split-screen state** is stored in localStorage (`jsc-split-state-v1`). Doesn't survive clearing site data or incognito. Move to DB-persisted preferences once we add user accounts.
+11. **Team config watcher uses chokidar with polling** because chokidar 4 dropped glob support. Works but adds a 10s poll loop for new team directories. Minor.
+
+---
+
+## 9. Recommended next moves
+
+1. **Multi-tab teammate pane** (Feature 170.1) — unlocks real multi-specialist workflows (QA + Security audit in parallel).
+2. **E2E coverage** via Playwright on the feature set we just shipped, before adding more.
+3. **Memory/skill inventory view** — small panel in Commander showing what skills are currently loaded per session, which memory files are being referenced. Makes "did it use /pm?" self-answering without curl.
+4. **Move session preferences (split state, effort, theme) to DB** — kills localStorage edge cases and prepares for multi-device access via tunnel.
+5. **Audit + prune stopped teammate rows** accumulated in the DB during testing. A weekly cleanup cron would keep the Sessions page tight.
+6. **Unit tests on `utils/plans.ts`** — the plan extraction + compaction logic is the trickiest bit we've shipped. Would benefit from fixtures based on real JSONL samples we already have.
+7. **Feature flag for auto-skill-invocation hints** — if a PM has cold-started but is about to do domain work without invoking the specialist, inline a gentle nudge: *"This looks like UI work — invoke `/ui-expert`?"* Optional, low-priority.
+
+End of brief.

@@ -94,7 +94,101 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
 });
 
+// Column mapping kept in one place so every write surface applies the same
+// defaults. Missing input fields fall through to schema defaults via `null`
+// — the schema owns status='idle', session_type='raw', effort_level='medium'.
+// The one exception is effort_level, which takes the value returned by
+// getClaudeEffortLevel() when unspecified so new sessions inherit the user's
+// Claude Code default.
+interface UpsertSessionInput {
+  id: string;
+  name?: string;
+  tmuxSession?: string;
+  projectPath?: string | null;
+  claudeSessionId?: string | null;
+  status?: SessionStatus;
+  model?: string;
+  effortLevel?: string;
+  stoppedAt?: string | null;
+  agentRole?: string | null;
+  teamName?: string | null;
+  parentSessionId?: string | null;
+  sessionType?: 'pm' | 'raw';
+  transcriptPath?: string | null;
+  stationId?: string | null;
+}
+
+// Keys in the DB schema order — the SQL generator uses this array to build
+// both the INSERT column list and the ON CONFLICT update list.
+const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
+  { col: 'name',              key: 'name' },
+  { col: 'tmux_session',      key: 'tmuxSession' },
+  { col: 'project_path',      key: 'projectPath' },
+  { col: 'claude_session_id', key: 'claudeSessionId' },
+  { col: 'status',            key: 'status' },
+  { col: 'model',             key: 'model' },
+  { col: 'stopped_at',        key: 'stoppedAt' },
+  { col: 'station_id',        key: 'stationId' },
+  { col: 'agent_role',        key: 'agentRole' },
+  { col: 'transcript_path',   key: 'transcriptPath' },
+  { col: 'effort_level',      key: 'effortLevel' },
+  { col: 'parent_session_id', key: 'parentSessionId' },
+  { col: 'team_name',         key: 'teamName' },
+  { col: 'session_type',      key: 'sessionType' },
+];
+
 export const sessionService = {
+  // Single write surface for every caller that wants to create or modify a
+  // session row. Takes a sparse input — only the keys the caller sets end up
+  // in the SQL. Defaults live here (status='idle', sessionType='raw', …) so
+  // every path through the service applies the same rules and there's no
+  // repeat of the #175 class of bug where two INSERT sites diverged.
+  upsertSession(input: UpsertSessionInput): Session {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const provided = SESSION_COL_MAP.filter(({ key }) => input[key] !== undefined);
+
+    // INSERT-side defaults — only applied when the caller didn't set them.
+    const defaults: Partial<Record<string, unknown>> = {
+      status: 'idle',
+      model: 'claude-opus-4-6',
+      effort_level: getClaudeEffortLevel(),
+      session_type: 'raw',
+    };
+
+    const insertCols = ['id', 'created_at', 'updated_at'];
+    const insertVals: unknown[] = [input.id, now, now];
+    const placeholders = ['?', '?', '?'];
+
+    for (const { col, key } of SESSION_COL_MAP) {
+      const value = input[key];
+      if (value !== undefined) {
+        insertCols.push(col);
+        insertVals.push(value);
+        placeholders.push('?');
+      } else if (col in defaults) {
+        insertCols.push(col);
+        insertVals.push(defaults[col]);
+        placeholders.push('?');
+      }
+    }
+
+    const updateSet = provided
+      .map(({ col }) => `${col} = excluded.${col}`)
+      .concat(["updated_at = excluded.updated_at"])
+      .join(', ');
+
+    const sql = `
+      INSERT INTO sessions (${insertCols.join(', ')})
+      VALUES (${placeholders.join(', ')})
+      ON CONFLICT(id) DO UPDATE SET ${updateSet}
+    `;
+
+    db.prepare(sql).run(...insertVals);
+
+    return this.getSession(input.id)!;
+  },
+
   createSession(opts: CreateSessionOpts): Session {
     const db = getDb();
     const id = uuidv4();
@@ -122,14 +216,21 @@ export const sessionService = {
       }
     }, 500);
 
-    // Insert into database
-    const now = new Date().toISOString();
-    const effortLevel = getClaudeEffortLevel();
+    // Persist via the single write surface so defaults + column order stay
+    // centralized in upsertSession. Standalone sessions boot 'working' —
+    // tmux + claude launched above — so the poller's first cycle reflects
+    // truth instead of bouncing idle→working.
     const sessionType: 'pm' | 'raw' = opts.sessionType ?? 'raw';
-    db.prepare(`
-      INSERT INTO sessions (id, name, tmux_session, project_path, status, model, effort_level, session_type, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'working', ?, ?, ?, ?, ?)
-    `).run(id, slug, tmuxName, opts.projectPath ?? null, model, effortLevel, sessionType, now, now);
+    this.upsertSession({
+      id,
+      name: slug,
+      tmuxSession: tmuxName,
+      projectPath: opts.projectPath ?? null,
+      status: 'working',
+      model,
+      effortLevel: getClaudeEffortLevel(),
+      sessionType,
+    });
 
     // PM sessions get the bootstrap prompt auto-injected once Claude's UI is
     // ready. Fire-and-forget — the main flow doesn't wait for it.
@@ -186,62 +287,39 @@ export const sessionService = {
     live: boolean;
   }): Session {
     const db = getDb();
-    const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(opts.sessionId) as { id: string } | undefined;
-    const now = new Date().toISOString();
+    // Compute live-aware status BEFORE calling the generic upserter so the
+    // mechanical write surface doesn't need to know about teammate lifecycle.
+    const existing = db.prepare('SELECT status, stopped_at FROM sessions WHERE id = ?').get(opts.sessionId) as
+      | { status: string; stopped_at: string | null }
+      | undefined;
 
+    let statusOverride: SessionStatus | undefined;
+    let stoppedAtOverride: string | null | undefined;
     if (existing) {
-      // When live=true we resurrect a stopped row to idle (the config +
-      // evidence agree the member is alive again). When live=false we
-      // preserve status so killed-but-still-in-config sessions stay dead.
-      const statusExpr = opts.live
-        ? "CASE WHEN status = 'stopped' THEN 'idle' ELSE status END"
-        : 'status';
-      const stoppedAtExpr = opts.live
-        ? "CASE WHEN status = 'stopped' THEN NULL ELSE stopped_at END"
-        : 'stopped_at';
-      db.prepare(`
-        UPDATE sessions
-        SET name = ?, tmux_session = ?, project_path = ?, agent_role = ?,
-            team_name = ?, parent_session_id = ?, updated_at = ?,
-            status = ${statusExpr},
-            stopped_at = ${stoppedAtExpr}
-        WHERE id = ?
-      `).run(
-        opts.name,
-        opts.tmuxTarget,
-        opts.projectPath,
-        opts.role,
-        opts.teamName,
-        opts.parentSessionId,
-        now,
-        opts.sessionId,
-      );
+      // Only flip status from 'stopped' to 'idle' when we have evidence of
+      // life. Otherwise preserve whatever the poller / hooks have set.
+      if (opts.live && existing.status === 'stopped') {
+        statusOverride = 'idle';
+        stoppedAtOverride = null;
+      }
     } else {
-      // Fresh row — default to idle iff the caller has evidence the member
-      // is alive. Otherwise start stopped and let a later hook/tmux probe
-      // promote the session.
-      const initialStatus = opts.live ? 'idle' : 'stopped';
-      const initialStoppedAt = opts.live ? null : now;
-      db.prepare(`
-        INSERT INTO sessions (
-          id, name, tmux_session, project_path, status, model, effort_level,
-          agent_role, team_name, parent_session_id, stopped_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, ?, ?, ?, ?)
-      `).run(
-        opts.sessionId,
-        opts.name,
-        opts.tmuxTarget,
-        opts.projectPath,
-        initialStatus,
-        opts.model ?? 'claude-opus-4-6',
-        opts.role,
-        opts.teamName,
-        opts.parentSessionId,
-        initialStoppedAt,
-        now,
-        now,
-      );
+      // Fresh row — idle when alive, stopped otherwise.
+      statusOverride = opts.live ? 'idle' : 'stopped';
+      stoppedAtOverride = opts.live ? null : new Date().toISOString();
     }
+
+    this.upsertSession({
+      id: opts.sessionId,
+      name: opts.name,
+      tmuxSession: opts.tmuxTarget,
+      projectPath: opts.projectPath,
+      model: opts.model,
+      agentRole: opts.role,
+      teamName: opts.teamName,
+      parentSessionId: opts.parentSessionId,
+      ...(statusOverride !== undefined ? { status: statusOverride } : {}),
+      ...(stoppedAtOverride !== undefined ? { stoppedAt: stoppedAtOverride } : {}),
+    });
 
     // Record the parent/child edge. If the row already exists with an
     // ended_at (previous dismissal), clear it — this teammate is being
