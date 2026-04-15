@@ -14,6 +14,7 @@ const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ defa
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));
 const TerminalPage = lazy(() => import('./pages/TerminalPage').then(m => ({ default: m.TerminalPage })));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const CityPage = lazy(() => import('./pages/CityPage').then(m => ({ default: m.CityPage })));
 
 const PageFallback = () => (
   <div className="p-4 lg:p-6">
@@ -44,6 +45,7 @@ const AnimatedRoutes = () => {
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
               <Route path="/terminal" element={<TerminalPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/city" element={<CityPage />} />
               <Route path="*" element={<Navigate to="/sessions" replace />} />
             </Route>
           </Routes>

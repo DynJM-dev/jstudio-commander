@@ -6,6 +6,7 @@ import {
   FolderKanban,
   TerminalSquare,
   BarChart3,
+  Building2,
   ChevronsRight,
   ChevronsLeft,
   Globe,
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { path: '/projects', icon: FolderKanban, label: 'Projects' },
   { path: '/terminal', icon: TerminalSquare, label: 'Terminal' },
   { path: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { path: '/city', icon: Building2, label: 'City' },
 ];
 
 // One-time migration: lift the existing localStorage value onto the new

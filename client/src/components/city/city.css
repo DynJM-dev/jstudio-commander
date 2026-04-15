@@ -1,0 +1,364 @@
+/* ========================================================================
+   Cyberpunk city — pure CSS pixel art.
+
+   Design notes:
+   - Sprites are assembled from <div> boxes with crisp edges (no smoothing,
+     no image assets, no canvas).
+   - 1 "pixel" = 3px so an 8x16 character renders at 24x48 — readable without
+     feeling dinky, cheap to animate via CSS transforms.
+   - Role colors surface through CSS vars injected on the building/character
+     root, so palettes stay composable.
+   - Idle, typing, and walking animations are keyframed CSS — zero JS per
+     frame. When the page tab is hidden we disable .city-running on the
+     wrapper and every animation pauses.
+   ======================================================================== */
+
+.city-scene {
+  --sky-far:  #0a0e1f;
+  --sky-near: #141a2e;
+  --street:   #0e1020;
+  --neon-teal:    #2AB7B6;
+  --neon-magenta: #e83e8c;
+  --neon-purple:  #a855f7;
+  --neon-cyan:    #22d3ee;
+  --neon-yellow:  #facc15;
+  --neon-red:     #ef4444;
+  --window-on:    #f5f7ff;
+  --window-off:   #1a1f38;
+
+  position: relative;
+  width: 100%;
+  min-height: 560px;
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 10%, rgba(168, 85, 247, 0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 20% 100%, rgba(34, 211, 238, 0.12) 0%, transparent 60%),
+    linear-gradient(180deg, var(--sky-far) 0%, var(--sky-near) 60%, var(--street) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  image-rendering: pixelated;
+}
+
+/* Distant-star flicker layer — CSS gradient pretending to be a sprite sheet. */
+.city-stars {
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 10% 14%, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 24% 8%,  rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 42% 22%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 58% 6%,  rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 71% 18%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1px 1px at 86% 10%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 92% 24%, rgba(255, 255, 255, 0.3), transparent);
+  animation: city-twinkle 4s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes city-twinkle {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
+}
+
+/* Horizon silhouette — suggests a far skyline without needing sprites. */
+.city-horizon {
+  position: absolute;
+  left: 0; right: 0; bottom: 22%;
+  height: 28%;
+  pointer-events: none;
+  opacity: 0.6;
+  background:
+    linear-gradient(90deg,
+      transparent 0%, transparent 6%,
+      #1b2144 6%, #1b2144 9%, transparent 9%, transparent 12%,
+      #151a35 12%, #151a35 18%, transparent 18%, transparent 21%,
+      #1b2144 21%, #1b2144 27%, transparent 27%, transparent 30%,
+      #121632 30%, #121632 35%, transparent 35%, transparent 40%,
+      #1b2144 40%, #1b2144 49%, transparent 49%, transparent 54%,
+      #151a35 54%, #151a35 61%, transparent 61%, transparent 66%,
+      #1b2144 66%, #1b2144 72%, transparent 72%, transparent 77%,
+      #121632 77%, #121632 85%, transparent 85%, transparent 90%,
+      #1b2144 90%, #1b2144 96%, transparent 96%
+    );
+  mask-image: linear-gradient(180deg, transparent 0%, #000 30%, #000 100%);
+}
+
+/* Street (ground plane) — slightly brighter band to anchor buildings. */
+.city-street {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 20%;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.3) 0%, transparent 40%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.02) 0 6px,
+      transparent 6px 12px
+    ),
+    var(--street);
+  border-top: 1px solid rgba(34, 211, 238, 0.18);
+  box-shadow: 0 -6px 28px -10px var(--neon-cyan);
+}
+
+/* Grid container for buildings. flex-wrap handles overflow automatically. */
+.city-buildings {
+  position: absolute;
+  left: 0; right: 0; bottom: 20%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 24px;
+  z-index: 2;
+}
+
+/* ============ Building ============ */
+.city-building {
+  --building-accent: var(--neon-teal);
+  position: relative;
+  width: 128px;
+  height: 180px;
+  background: linear-gradient(180deg, #1a1f36 0%, #0e1228 100%);
+  border: 1px solid color-mix(in srgb, var(--building-accent) 35%, transparent);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  overflow: visible;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 0 18px -4px color-mix(in srgb, var(--building-accent) 55%, transparent);
+  cursor: pointer;
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+.city-building:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 0 36px -6px color-mix(in srgb, var(--building-accent) 80%, transparent);
+}
+.city-building--stopped {
+  filter: saturate(0.3) brightness(0.55);
+}
+.city-building--working::before {
+  /* Pulsing accent rim on the roof to read "this session is live" */
+  content: '';
+  position: absolute;
+  inset: -1px -1px auto -1px;
+  height: 4px;
+  background: var(--building-accent);
+  border-radius: 4px 4px 0 0;
+  box-shadow: 0 0 18px 2px var(--building-accent);
+  animation: city-building-pulse 1.6s ease-in-out infinite;
+}
+@keyframes city-building-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+/* Windows — grid of boxes, some lit, some dark, randomized via nth-child. */
+.city-windows {
+  position: absolute;
+  inset: 16px 10px 42px 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 14px;
+  gap: 4px;
+}
+.city-window {
+  background: var(--window-off);
+  border-radius: 1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.city-window--on {
+  background: color-mix(in srgb, var(--building-accent) 55%, var(--window-on));
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.3),
+    0 0 6px 0 color-mix(in srgb, var(--building-accent) 70%, transparent);
+}
+.city-building--working .city-window--on {
+  animation: city-window-flicker 2.8s ease-in-out infinite;
+}
+@keyframes city-window-flicker {
+  0%, 92%, 100% { opacity: 1; }
+  94%           { opacity: 0.6; }
+  96%           { opacity: 1; }
+  98%           { opacity: 0.7; }
+}
+
+/* Street-level signage: role label + dot. Replaces the need for a tooltip
+   and is a nice cyberpunk-vibey touch. */
+.city-sign {
+  position: absolute;
+  left: 0; right: 0; bottom: -22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-family: 'Montserrat', sans-serif;
+  pointer-events: none;
+}
+.city-sign-name {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--building-accent) 80%, white);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--building-accent) 60%, transparent);
+  max-width: 132px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.city-sign-role {
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ============ Character ============ */
+/* Characters float inside their building's "office" — one per role at a
+   desk-row. We stack them via absolute positioning so multiple teammates
+   in the same building bob at slightly different phases. */
+.city-offices {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 6px;
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+  pointer-events: none;
+  height: 34px;
+}
+.city-character {
+  --char-color: var(--neon-teal);
+  position: relative;
+  width: 14px;
+  height: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  animation: city-char-idle 2.4s ease-in-out infinite;
+}
+.city-character--working { animation-duration: 0.9s; }
+.city-character--waiting { animation: city-char-wait 1s ease-in-out infinite; }
+.city-character--stopped { display: none; }
+@keyframes city-char-idle {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1px); }
+}
+@keyframes city-char-wait {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-1px); }
+  75%      { transform: translateX(1px); }
+}
+
+/* Head — 6×6 square with role color. */
+.city-char-head {
+  width: 6px; height: 6px;
+  background: var(--char-color);
+  box-shadow:
+    inset -1px -1px 0 0 rgba(0, 0, 0, 0.35),
+    0 0 4px 0 color-mix(in srgb, var(--char-color) 70%, transparent);
+  border-radius: 1px;
+}
+/* Body — 8×12, slightly darker than head. */
+.city-char-body {
+  width: 8px; height: 12px;
+  margin-top: 1px;
+  background: color-mix(in srgb, var(--char-color) 75%, black);
+  box-shadow: inset -1px 0 0 0 rgba(0, 0, 0, 0.4);
+  border-radius: 1px;
+}
+/* Desk — tiny plinth under the character. */
+.city-char-desk {
+  width: 12px; height: 3px;
+  margin-top: 1px;
+  background: color-mix(in srgb, var(--char-color) 40%, #0e1228);
+  border: 1px solid color-mix(in srgb, var(--char-color) 55%, transparent);
+  border-radius: 1px;
+  box-shadow: 0 0 4px -1px var(--char-color);
+}
+
+/* Permission "!" bubble above the head when waiting. */
+.city-char-bang {
+  position: absolute;
+  top: -10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--neon-yellow);
+  color: #1a1000;
+  font-size: 8px;
+  font-weight: 800;
+  font-family: monospace;
+  line-height: 10px;
+  text-align: center;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 0 10px 0 var(--neon-yellow);
+  animation: city-bang-bounce 0.7s ease-in-out infinite;
+}
+@keyframes city-bang-bounce {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+
+/* Speech bubble (transient — fades after ~3s via React state). */
+.city-char-speech {
+  position: absolute;
+  top: -18px;
+  padding: 2px 5px;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 9px;
+  font-weight: 500;
+  color: #0a0e1f;
+  background: color-mix(in srgb, var(--char-color) 60%, white);
+  border-radius: 3px;
+  white-space: nowrap;
+  box-shadow: 0 0 8px 0 color-mix(in srgb, var(--char-color) 70%, transparent);
+  animation: city-speech-in 260ms ease-out;
+  pointer-events: none;
+}
+@keyframes city-speech-in {
+  from { transform: translateY(4px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* Role palette — applied on city-character root via className. */
+.city-char--coder    { --char-color: var(--neon-magenta); }
+.city-char--pm       { --char-color: var(--neon-purple);  }
+.city-char--qa       { --char-color: var(--neon-cyan);    }
+.city-char--security { --char-color: var(--neon-yellow);  }
+.city-char--generic  { --char-color: var(--neon-teal);    }
+
+/* Role palette for buildings — mirrors character colors so the composition
+   feels coherent. Used when a building has a single dominant role or is a
+   solo session. */
+.city-building--coder    { --building-accent: var(--neon-magenta); }
+.city-building--pm       { --building-accent: var(--neon-purple);  }
+.city-building--qa       { --building-accent: var(--neon-cyan);    }
+.city-building--security { --building-accent: var(--neon-yellow);  }
+.city-building--generic  { --building-accent: var(--neon-teal);    }
+
+/* Global pause — toggled by the page when document.hidden. */
+.city-scene:not(.city-running) *,
+.city-scene:not(.city-running) *::before,
+.city-scene:not(.city-running) *::after {
+  animation-play-state: paused !important;
+}
+
+/* Empty-state overlay. */
+.city-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: 'Montserrat', sans-serif;
+  font-size: 13px;
+  z-index: 3;
+  pointer-events: none;
+}
