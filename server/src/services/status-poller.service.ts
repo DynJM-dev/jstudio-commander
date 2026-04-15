@@ -2,6 +2,7 @@ import type { SessionStatus } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { agentStatusService } from './agent-status.service.js';
 import { rotationDetectorService } from './rotation-detector.service.js';
+import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
@@ -11,10 +12,12 @@ let rotationTimer: ReturnType<typeof setInterval> | null = null;
 
 // In-memory cache of last known statuses to avoid unnecessary DB writes
 const lastKnownStatus = new Map<string, SessionStatus>();
-// Cooldown: when transitioning working → idle, wait before committing
-// Prevents flickering when Claude pauses briefly between tool calls
+// Grace period: working → idle must be observed across 2 consecutive polls
+// (≈10s) before committing. Prevents flicker to idle between tool calls
+// when Claude pauses briefly. working → waiting bypasses the grace period
+// because a permission prompt is urgent — don't delay surfacing it.
 const idleSince = new Map<string, number>();
-const IDLE_COOLDOWN_MS = 8000; // 8 seconds (2 poll cycles) before confirming idle
+const IDLE_GRACE_MS = 8_000;
 
 const poll = (): void => {
   const db = getDb();
@@ -40,27 +43,35 @@ const poll = (): void => {
   const statuses = agentStatusService.detectStatusBatch(tmuxNames);
 
   for (const session of activeSessions) {
-    const newStatus = statuses[session.tmux_session];
+    let newStatus = statuses[session.tmux_session];
     if (!newStatus) continue;
+
+    // Pane-target safety net: if a row whose tmux_session starts with '%'
+    // was classified as 'stopped' (heuristic transient miss), double-check
+    // the pane via hasSession. A live pane MUST NOT be reported as stopped
+    // for a teammate — transitioning them to stopped removes them from the
+    // split-screen and the user loses the session.
+    if (newStatus === 'stopped' && session.tmux_session.startsWith('%')) {
+      if (tmuxService.hasSession(session.tmux_session)) {
+        newStatus = 'idle';
+      }
+    }
 
     const cachedStatus = lastKnownStatus.get(session.id) ?? session.status;
 
-    // Cooldown: working → idle/waiting requires sustained idle state
-    if (cachedStatus === 'working' && (newStatus === 'idle' || newStatus === 'waiting')) {
+    // Grace period applies ONLY to working → idle (prevents flicker
+    // between tool calls). working → waiting skips the grace: a permission
+    // prompt is urgent and must surface immediately.
+    if (cachedStatus === 'working' && newStatus === 'idle') {
       const now = Date.now();
       if (!idleSince.has(session.id)) {
-        // First detection of idle — start the cooldown
         idleSince.set(session.id, now);
-        continue; // Don't update yet
+        continue;
       }
       const elapsed = now - idleSince.get(session.id)!;
-      if (elapsed < IDLE_COOLDOWN_MS) {
-        continue; // Still in cooldown — keep showing working
-      }
-      // Cooldown passed — commit the idle transition
+      if (elapsed < IDLE_GRACE_MS) continue;
       idleSince.delete(session.id);
     } else {
-      // Not a working→idle transition — clear any pending cooldown
       idleSince.delete(session.id);
     }
 
