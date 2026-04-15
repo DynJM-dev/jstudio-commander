@@ -19,6 +19,7 @@ import { hookEventRoutes } from './routes/hook-event.routes.js';
 import { teammatesRoutes } from './routes/teammates.routes.js';
 import { maintenanceRoutes } from './routes/maintenance.routes.js';
 import { preferencesRoutes } from './routes/preferences.routes.js';
+import { cityRoutes } from './routes/city.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
@@ -79,6 +80,7 @@ await app.register(hookEventRoutes);
 await app.register(teammatesRoutes);
 await app.register(maintenanceRoutes);
 await app.register(preferencesRoutes);
+await app.register(cityRoutes);
 
 // Initial project scan
 projectScannerService.runInitialScan();
