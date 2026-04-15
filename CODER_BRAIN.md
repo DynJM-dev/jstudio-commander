@@ -119,6 +119,10 @@ If a future refactor touches `createSession`, the bootstrap block and `waitForCl
 10. **TeamCreate / TeamDelete chips rely on the caller using those tool names.** Real TeamCreate isn't a tool name I've observed in JSONL from PM sessions (the PM invokes it but Claude Code logs it differently). Verify once a real TeamCreate fires post-#184.
 11. **`hook-event.routes` backfills `claude_session_id` opportunistically.** The "claim unclaimed cwd match" strategy is best-effort. If the PM and a teammate both spin up in the exact same cwd within a race window, we might mis-claim. Acceptable for current use; revisit if it misfires.
 
+### SUGGESTIONS (deferred minor items — inventory for the next CTO brief)
+
+- liveComposing preview vanishes abruptly (no fade) when tool_use appends immediately after text ends | impact: MINOR | recommend: defer — only visible on sub-1s turns where fade perception doesn't matter much
+
 ### Known-open (PM confirmed)
 
 - **Multi-tab teammate pane** (Task 170.1) — SplitChatLayout currently shows ONE teammate at a time. Multi-teammate flows want ≤3 tabs in the right pane.
