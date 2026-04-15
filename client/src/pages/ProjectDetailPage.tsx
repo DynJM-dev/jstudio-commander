@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, ChevronDown, ChevronRight, FolderKanban } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FolderKanban } from 'lucide-react';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { PhaseTimeline } from '../components/projects/PhaseTimeline';
@@ -63,11 +63,11 @@ export const ProjectDetailPage = () => {
       <div className="p-4 lg:p-6 pb-24 lg:pb-6" style={{ fontFamily: M }}>
         <Link
           to="/projects"
-          className="inline-flex items-center gap-2 mb-4 text-sm transition-colors"
-          style={{ color: 'var(--color-text-tertiary)' }}
+          className="nav-btn nav-btn--muted mb-4"
+          style={{ fontFamily: M, height: 28, padding: '0 10px', display: 'inline-flex' }}
         >
-          <ArrowLeft size={16} />
-          Back to Projects
+          <ArrowLeft size={14} />
+          <span className="text-xs font-medium">Back to Projects</span>
         </Link>
         <div className="glass-card">
           <EmptyState
@@ -88,42 +88,64 @@ export const ProjectDetailPage = () => {
 
   const currentPhaseNumber = project.completedPhases + 1;
 
+  const progress = project.totalPhases > 0
+    ? (project.completedPhases / project.totalPhases) * 100
+    : 0;
+
   return (
     <div className="p-4 lg:p-6 pb-24 lg:pb-6" style={{ fontFamily: M }}>
       {/* Header */}
       <div className="mb-6">
         <Link
           to="/projects"
-          className="inline-flex items-center gap-2 mb-3 text-sm transition-colors"
-          style={{ color: 'var(--color-text-tertiary)' }}
+          className="nav-btn nav-btn--muted mb-4"
+          style={{ fontFamily: M, height: 28, padding: '0 10px', display: 'inline-flex' }}
         >
-          <ArrowLeft size={16} />
-          Back to Projects
+          <ArrowLeft size={14} />
+          <span className="text-xs font-medium">Back to Projects</span>
         </Link>
 
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
             <h1
-              className="text-xl font-semibold"
+              className="text-2xl font-semibold leading-tight"
               style={{ color: 'var(--color-text-primary)' }}
             >
               {project.name}
             </h1>
             <p
-              className="font-mono-stats text-xs mt-1"
+              className="font-mono-stats text-xs mt-1 truncate"
               style={{ color: 'var(--color-text-tertiary)' }}
+              title={project.path}
             >
               {shortenPath(project.path)}
             </p>
           </div>
 
           {project.totalPhases > 0 && (
-            <span
-              className="text-sm font-medium shrink-0"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              Phase {project.completedPhases} of {project.totalPhases}
-            </span>
+            <div className="shrink-0 min-w-[180px]">
+              <div className="flex items-baseline justify-between mb-1.5">
+                <span className="text-xs uppercase tracking-wider font-semibold" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Progress
+                </span>
+                <span className="text-xs font-mono-stats" style={{ color: 'var(--color-accent-light)', fontWeight: 600 }}>
+                  {project.completedPhases}/{project.totalPhases} · {Math.round(progress)}%
+                </span>
+              </div>
+              <div
+                className="h-2 rounded-full overflow-hidden"
+                style={{ background: 'rgba(255, 255, 255, 0.06)' }}
+              >
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{
+                    width: `${progress}%`,
+                    background: 'linear-gradient(90deg, var(--color-accent-dark), var(--color-accent-light))',
+                    boxShadow: '0 0 8px var(--color-accent-glow)',
+                  }}
+                />
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -170,15 +192,28 @@ export const ProjectDetailPage = () => {
         <GlassCard padding="p-0" className="overflow-hidden">
           <button
             onClick={() => setHandoffExpanded(!handoffExpanded)}
-            className="flex items-center justify-between w-full px-5 py-4 sm:px-6 transition-colors"
+            className="flex items-center justify-between w-full px-5 py-4 sm:px-6 transition-colors group"
             style={{ color: 'var(--color-text-secondary)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            aria-expanded={handoffExpanded}
           >
-            <h2 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            <h2 className="text-base font-semibold flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+              <span
+                className="inline-flex items-center justify-center rounded-md transition-transform"
+                style={{
+                  width: 22, height: 22,
+                  background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--color-accent) 22%, transparent)',
+                  color: 'var(--color-accent-light)',
+                  transform: handoffExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                }}
+              >
+                <ChevronDown size={14} strokeWidth={2.2} />
+              </span>
               PM_HANDOFF.md
             </h2>
-            {handoffExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+            <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+              {handoffExpanded ? 'Hide' : 'Show'}
+            </span>
           </button>
 
           {handoffExpanded && (
