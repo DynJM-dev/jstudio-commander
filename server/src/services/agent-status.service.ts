@@ -103,6 +103,22 @@ const hasNumberedChoiceInTail = (text: string, n = 6): boolean => {
   return lines.some((l) => /^\s*❯\s*\d+\./.test(l));
 };
 
+// True iff the last N lines show evidence of active work (spinner glyph
+// OR an ACTIVE_INDICATORS match). Used to short-circuit the generic
+// `waiting for input` regex fallback when Claude is clearly still in a
+// turn — chat-content phrases ("waiting for input from coder-14") in
+// the scrollback must not flip the live status to 'waiting'.
+const hasActiveInTail = (text: string, n = 8): boolean => {
+  const lines = text.split('\n').slice(-n);
+  for (const line of lines) {
+    if ([...line].some((ch) => SPINNER_CHARS.includes(ch))) return true;
+    for (const pattern of ACTIVE_INDICATORS) {
+      if (pattern.test(line)) return true;
+    }
+  }
+  return false;
+};
+
 export const agentStatusService = {
   detectStatus(tmuxSessionName: string): SessionStatus {
     if (!tmuxService.hasSession(tmuxSessionName)) {
@@ -130,6 +146,17 @@ export const agentStatusService = {
     // sitting next to the idle-ish chrome still classifies as waiting.
     if (hasNumberedChoiceInTail(paneContent) || hasNumberedChoiceBlock(paneContent)) {
       return 'waiting';
+    }
+
+    // Active-in-tail outranks the generic 'waiting for input' regex.
+    // When ✢ Tomfoolering / ✻ / a spinner glyph / a token counter is
+    // alive in the last few lines, the session is mid-turn. Chat
+    // content elsewhere in the pane (a PM-to-teammate message that
+    // contains the phrase "waiting for input") used to flip the status
+    // to 'waiting' here — Phase G.1 hoists this check above the
+    // generic loop so an active turn always wins.
+    if (hasActiveInTail(paneContent)) {
+      return 'working';
     }
 
     // Idle-footer short-circuit (#236). When Claude renders its idle
