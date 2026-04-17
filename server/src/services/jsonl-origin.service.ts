@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { openSync, readSync, closeSync, statSync } from 'node:fs';
 
 // Phase L B2 — per-JSONL origin discriminator.
 //
@@ -60,14 +60,37 @@ export const parseOriginFromLines = (lines: string[]): JsonlOrigin | null => {
 // read cost on very large files.
 const READ_HEAD_BYTES = 16 * 1024;
 
+// Phase P.3 H1 — bounded read. readFileSync('utf-8') slurped the entire
+// file (up to 50+ MB for long-running sessions) before slicing the first
+// 16 KB, which blocked the event loop on every resolveOwner pass during
+// a burst of hooks. Switched to openSync + readSync so we allocate
+// exactly READ_HEAD_BYTES and never touch the tail.
 export const readJsonlOrigin = (filePath: string): JsonlOrigin | null => {
+  let fd: number;
   try {
-    const raw = readFileSync(filePath, 'utf-8');
-    const head = raw.length > READ_HEAD_BYTES ? raw.slice(0, READ_HEAD_BYTES) : raw;
+    fd = openSync(filePath, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    // Size the read to min(file size, READ_HEAD_BYTES). statSync is a
+    // trivial syscall and lets us avoid allocating a 16 KB buffer for a
+    // 200-byte brand-new JSONL.
+    let toRead = READ_HEAD_BYTES;
+    try {
+      const size = statSync(filePath).size;
+      if (size < READ_HEAD_BYTES) toRead = Math.max(0, size);
+    } catch { /* best-effort — fall through to full buffer */ }
+    if (toRead === 0) return null;
+    const buf = Buffer.alloc(toRead);
+    const bytesRead = readSync(fd, buf, 0, toRead, 0);
+    const head = buf.toString('utf-8', 0, bytesRead);
     const lines = head.split('\n').filter((l) => l.trim().length > 0);
     return parseOriginFromLines(lines);
   } catch {
     return null;
+  } finally {
+    try { closeSync(fd); } catch { /* already closed */ }
   }
 };
 
