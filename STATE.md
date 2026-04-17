@@ -1,7 +1,7 @@
 # JStudio Command Center — State
 
 ## Current State
-- Phase: **Phase E complete (Coder-12). 4.7 migration finished in UI/schema, NODE_ENV=production gate on fastify-static, Commander → Command Center display-only rebrand.**
+- Phase: **Phase F complete (Coder-14). Structured chat message rendering (task-notification + teammate-message), auto-split-on-spawn preference, teammate-spawn pane-adoption hardening.**
 - Last updated: 2026-04-17
 
 > **🪪 Rebrand 2026-04-17 — display-only (scope A).** User-facing product
@@ -19,7 +19,7 @@
 > outside the repo) to match, otherwise Claude Code hook events will
 > be POSTed at the wrong port.
 
-- HEAD: `9cf67af` (port migration) — Phase D commits: `6fda3c3` (signed health + server preflight), `23ea243` (client vite preflight), `02ae1ef` (macOS .app launcher), `9cf67af` (port 3002→11002). Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
+- HEAD: `467adce` (Phase F.3: sentinel pane adoption hardening). Phase F commits: `457d9e5` `d357f03` `b9e7bc4` `654cb05` (Bundle 1), `2c0e063` (Bundle 2), `467adce` (Bundle 3). Phase E.2: `58434d9` (Vite → 11573 strictPort). Phase E.1: `f5da3ba` (dev-mode redirect). Phase E: `9cf67af` `02ae1ef` `23ea243` `6fda3c3` + `f956fcc` `15fe784` `ab72eec` `05ebbcd` `24f21f9` `26cfe2b` `603b398` `3d0de45` `eb9f85f` `4a040b8` `8089542`. Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **11002** (new default as of Phase D, migrated from 3002). Override via `~/.jstudio-commander/config.json` still honored. · Vite: **5173**
 - Blockers: none
@@ -36,6 +36,7 @@
 - [x] **Phase C — Project tech-stack pills + recent commits (#230) — Coder-12 (2 commits, 2026-04-17)**
 - [x] **Phase D — Launch UX hardening (signed health + preflight + macOS .app + port 11002) — Coder-12 (4 commits, 2026-04-17)**
 - [x] **Phase E — Finish 4.7 migration + NODE_ENV gate + Command Center rebrand — Coder-12 (11 commits, 2026-04-17)**
+- [x] **Phase F — Structured chat messages (task-notification + teammate-message) + auto-split-on-spawn + teammate-spawn pane adoption hardening — Coder-14 (6 commits, 2026-04-17)**
 
 ## Feature Wave 2 Highlights
 

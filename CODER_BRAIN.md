@@ -475,6 +475,92 @@ f956fcc fix(sessions): CreateSessionModal default to Opus 4.7
 
 All three typechecks PASS post-Phase-E.
 
+Phase E.1 + E.2 hotfixes shipped on top: `f5da3ba` (dev-mode server redirects `GET /` → Vite), `58434d9` (Vite port → 11573 strictPort, JLFamily collision fix), `8089542` (README + docs rebrand).
+
+---
+
+## Coder-14 Session — Phase F (Structured chat messages + split auto-activation + pane adoption hardening, 2026-04-17)
+
+### Commits (6)
+
+```
+Bundle 1 — Structured chat messages:
+  457d9e5 feat(chat): parse task-notification + teammate-message structured tags
+  d357f03 feat(chat): TaskNotificationCard component
+  b9e7bc4 feat(chat): TeammateMessageCard component
+  654cb05 fix(chat): ChatThread routes structured tags to cards, suppresses JB header
+
+Bundle 2 — Split-view auto-activation:
+  2c0e063 feat(split): auto-split-on-spawn preference + toolbar toggle
+
+Bundle 3 — Teammate-spawn pane adoption:
+  467adce fix(sessions): harden teammate-spawn pane adoption (coder-13 autopsy)
+```
+
+### Triggering context
+
+User reported two Wave-2-regression-class failures on the live OvaGas-ERP test session:
+1. Claude Code was injecting `<task-notification>` and `<teammate-message>` XML payloads through the user role, which the chat renderer displayed as raw XML in a "JB" user bubble — visually broken.
+2. `coder-13` had spawned with `tmux_session = 'agent:coder-13@jstudio-commander'` (sentinel) and stayed stuck as `stopped` even though the pane `%52` it was assigned was still alive. Previous coders (coder-11 `%47`, coder-12 `%48`) got real pane ids; coder-13 did not.
+
+### What shipped
+
+**Bundle 1 — structured chat messages**
+- `client/src/utils/chatMessageParser.ts` — new. Regex-based (no DOM parser; no XSS surface). Exports `parseTaskNotification`, `parseTeammateMessage`, and a unified `parseStructuredUserContent` entry point. Strict mode: the entire message must be the tag (no surrounding prose) — mixed content falls back to normal UserMessage rendering. Decodes the 5 standard XML entities so body text doesn't leak escapes.
+- `client/src/components/chat/TaskNotificationCard.tsx` — status icon map (CheckCircle2/XCircle/Clock by completed/failed/else), collapsible `result` rendered via existing `renderTextContent` so code fences + inline markdown work, footer with tokens/tools/duration + output-file basename.
+- `client/src/components/chat/TeammateMessageCard.tsx` — 3px color-coded left border (named palette map: `blue purple teal green yellow red orange pink cyan`, hex passthrough, falls back to `var(--color-accent)`). Header `<Users>` icon + teammate id + italic summary. Body through `renderTextContent`. Optional `onOpen` callback for click-to-focus (unused for now; safe to add from a caller that can resolve the teammate to a session id).
+- `client/src/components/chat/ChatThread.tsx` — `detectStructured(msg)` helper at module scope. Group render branch for `role === 'user'` runs the parser; renders the matching card instead of UserMessage on hit.
+- `client/src/components/chat/UserMessage.tsx` — belt-and-suspenders guard at the top of the render body. Same detection, same card rendering. Ensures a caller that bypasses ChatThread can't leak raw XML to the JB bubble.
+- 13 unit tests in `client/src/utils/__tests__/chatMessageParser.test.ts`: full payload + minimal + mixed-content strict + empty + entities + hyphenated attr + missing color + hyphen vs underscore attr variants. 19/19 pass (13 new + 6 existing plans).
+
+**Bundle 2 — split-view auto-activation**
+- `client/src/pages/SplitChatLayout.tsx`
+  - New server-backed preference `auto-split-on-spawn` (default `true`) via `usePreference`.
+  - `refreshTeammates({ promote })` — separated stale-tab-drop (always runs) from first-teammate-promote (gated on `promote`). Mount + mount-refresh pass `true`. WS `teammate:spawned` passes `autoSplitOnSpawn`. WS `teammate:dismissed` passes `false` (never re-promote on dismiss).
+  - Toolbar toggle (`Columns2` icon) in the expanded split view's top-right control group. Color-indicates state.
+
+**Bundle 3 — pane adoption**
+- `server/src/services/team-config.service.ts` — `reconcile()` no longer gates the upsert on the seen-set. Now: upsert whenever the member is `isFresh` OR the config carries a real `%NN` pane id. Spawn event still fires only on fresh sightings. Added a distinct log line `[team-config] updated pane for <name> → %NN` for mid-lifecycle heals.
+- `server/src/services/session.service.ts` — `upsertTeammateSession` gained sentinel-protection. If caller passes `agent:<id>` but the DB row already has a `%NN` pane, keep the real pane. Prevents a stale config write (empty tmuxPaneId) from demoting a working teammate back to a non-sendable sentinel.
+
+### Patterns established
+
+- **Strict-tag detection for structured user content.** The parser only matches when the entire `msg.content[0].text` is the tag (whitespace-trimmed). Mixed content preserves normal user-message rendering. The decision point was XSS + render safety: anyone who wants to inject XML into a "JB" bubble via prompt injection would need to produce a one-and-only-one-tag message with no surrounding copy — a narrow attack surface the renderer can address by not HTML-rendering the decoded body anyway (we pipe through `renderTextContent` which doesn't `dangerouslySetInnerHTML`).
+- **Belt-and-suspenders guard in UserMessage.** One guard at the group-render level (ChatThread) + a second guard at the message-render level (UserMessage). Either can swap the bubble for the card; the other is a safety net if a future caller bypasses one.
+- **promote flag on refresh.** Separating "drop stale tab" (always) from "promote first teammate" (conditional) kept the refactor tiny. Future `refreshTeammates` consumers can be explicit about intent without forking the implementation.
+- **Idempotent reconcile with gated emit.** The fix pattern for mid-lifecycle config updates: always run the DB write, gate only the broadcast. Future reconcilers (agent_relationships, task_assignments) should follow this.
+- **Sentinel-protection in upsert.** The semantic rule: a sentinel target can never demote a real pane. Encoded in `upsertTeammateSession` so callers don't need to remember it.
+
+### Critical lessons (read before touching nearby code)
+
+1. **Claude Code sometimes emits `<task-notification>` and `<teammate-message>` under the user role.** They're not user-typed. Treat them as first-class structured payloads. The parser lives in `client/src/utils/chatMessageParser.ts`; extend there if Claude Code starts emitting new tags.
+2. **The coder-13 failure mode was the seen-gate on reconcile.** If the orchestrator writes the member config row twice — empty paneId first, real `%NN` after — the second write used to be silently dropped. Idempotent reconcile + sentinel-protection close this loop. Verify: watch `/tmp/jsc-dev.log` for `[team-config] updated pane for <name>` on any subsequent teammate spawn where the initial config write had no paneId.
+3. **resolveSentinelTargets ambiguity is real but no longer critical.** When multiple unclaimed panes share a cwd, `candidates.length !== 1` short-circuits adoption. The reconcile idempotency fix sidesteps this by using the config's authoritative paneId. resolveSentinelTargets remains a safety net for the case where a member record has NO paneId and no config update ever comes (rare; usually the PM gives up and the member stays stopped, which is correct).
+4. **Server restart heals coder-13 even without the fix.** Because boot-time reconcile starts with empty `knownMembers` → every member is `isFresh` → the upsert runs with the config's current paneId. This is why the user occasionally saw "it works after restart" but not mid-session. The Phase F fix makes it work mid-session without restart.
+5. **Preferences are server-backed + cross-tab.** `auto-split-on-spawn` is not a per-PM key — it's account-wide. Don't scope account-wide prefs by session id; use a bare key that the server's `/preferences/:key` endpoint serves globally.
+6. **Columns2 icon tracks preference state.** Accent color when ON, text-tertiary when OFF. If you add more preference toggles in the split toolbar, use the same color convention so state is scannable without hovering for the tooltip.
+
+### Tech debt opened by Phase F
+
+- **`TeammateMessageCard.onOpen` is unused.** No caller today resolves `teammate_id` → `sessionId`. Easy follow-up: add a prop drill from ChatPage that passes the current session's teammate list to ChatThread, then to the card. Safe to ship now because without `onOpen` the card still displays correctly.
+- **`auto-split-on-spawn` toggle only lives in the expanded split view.** If a user wants to pre-emptively disable auto-split before any teammate has spawned, they can't — the toolbar is absent from the minimized strip and single-pane fall-through. Either add a second toggle in the minimized strip or hoist to TopCommandBar in a follow-up.
+- **`detectStructured` runs on every group render.** For messages with many text blocks, the `filter + exec` chain is cheap but not zero-cost. Memoize if chat length ever balloons.
+- **Tag parser is regex-based.** Predictable payload structure today; if Claude Code ever nests tags within tags, the greedy/non-greedy boundaries would need re-thinking. Add a fixture-based test at that point (follow the `plans.test.ts` / `fixtures/` pattern).
+- **No drift detection between server-authored preference and local cache.** `usePreference` caches in-memory; if the server re-writes the value out-of-band, the cross-tab WS event patches the cache. But a direct DB edit wouldn't. Acceptable for now.
+
+### HEAD (post-Phase-F)
+
+```
+467adce fix(sessions): harden teammate-spawn pane adoption (coder-13 autopsy)
+2c0e063 feat(split): auto-split-on-spawn preference + toolbar toggle
+654cb05 fix(chat): ChatThread routes structured tags to cards, suppresses JB header
+b9e7bc4 feat(chat): TeammateMessageCard component
+d357f03 feat(chat): TaskNotificationCard component
+457d9e5 feat(chat): parse task-notification + teammate-message structured tags
+```
+
+All three typechecks PASS (shared, client, server). 19/19 unit tests pass (13 new parser + 6 existing plans). Parser verified against real-shape payloads in both happy-path and strict-mode-rejection cases.
+
 ---
 
 All three typechecks PASS (shared, client, server). Verification:
