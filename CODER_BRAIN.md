@@ -1080,6 +1080,47 @@ Three targeted fixes after a live-testing bug report (OvaGas / JLFamily):
 | `5d22eb2` | B1 | `server/src/services/agent-status.service.ts` — `COMPLETION_VERBS` allowlist + `/ed$/` fallback + `STALE_ELAPSED_SECONDS = 600` gate + multi-line footer elapsed extraction. `parseElapsedSeconds` exported. Tests +15 on existing `activity-detector.test.ts`. |
 | `da96818` | B2 | `server/src/routes/hook-event.routes.ts` — new `pm-cwd-rotation` match strategy (step 4) + `resolveOwner` / `UUID_RE` exported. `server/src/services/watcher-bridge.ts` — matcher cascade aligned with resolveOwner + auto-appends the discovered transcript via `sessionService.appendTranscriptPath`. New `server/src/services/__tests__/hook-event-resolver.test.ts` — 6 tests covering UUID_RE shape + the SQL cascade (PM-only match, two-PM ambiguity, stopped exclusion, coder-only no-match). |
 | `0b52078` | B3 | `client/src/utils/plans.ts` — `buildPlanFromMessages` now returns `lastPlanActivityMs`; `getActivePlan` gains an optional `nowMs` + returns null when either the chat-gap OR the wall-clock-gap vs the plan's last touch exceeds `MAX_PLAN_AGE_MS` (2 hours). Tests +6 in `plans.test.ts`. |
+## Coder-16 Session — Phase M (Statusline forwarder + context-low + LiveActivityRow, 2026-04-17)
+
+| Commit | Bundle | Scope |
+|---|---|---|
+| `174257e` | B1 | `packages/statusline/statusline.mjs` (zero-dep Node 22 CLI, 80ms stdin cap + 100ms POST cap + silent-catch) · `scripts/install-statusline.mjs` + `uninstall-statusline.mjs` (atomic temp+rename, timestamped backup, preserves prior statusLine under `passThroughCommand`) · `POST /api/session-tick` (loopback-only — `127.0.0.1`/`::1`/`::ffff:127.0.0.1`; permissive body) + `GET /api/sessions/:id/tick` hydration · `session_ticks` table (PK on commander session id, index on updated_at, raw_json retained) · `resolveOwner` reused for claude→commander id binding · 250ms in-memory dedup · WS broadcast on both `sessions` AND `chat:<id>` rooms · shared `SessionTick` + `StatuslineRawPayload` types + `session:tick` WSEvent. `normalizeTick` pure-exported. |
+| `c3284cb` | B2 | `utils/contextBands.ts` (CTX_GREEN_MAX=50 / CTX_YELLOW_MAX=79 / CTX_ORANGE_MAX=89 / red 90+; `bandForPercentage`, `isWarningCrossing`, `bandRank`, `bandColor`) · `hooks/useSessionTick.ts` (GET hydrate + WS stream) · `components/shared/ContextLowToast.tsx` (self-contained motion.div, 6s auto-dismiss, fires only on upward crossings into orange/red) · `pages/ChatPage.tsx` wires the toast + a 3px full-width band strip above ContextBar. |
+| `c3fd10b` | B3 | `components/chat/LiveActivityRow.tsx` — pane-verb + tick-tokens + mini ctx-% progress bar with band color. `buildLiveActivityParts` extracted + unit-tested. Mounts inside ChatThread's existing working AnimatePresence so fade transitions inherit the turn lifecycle. |
+
+### Invariants added in Phase M
+
+11. **Statusline forwarder is zero-dep.** Lives in `packages/statusline/statusline.mjs`, runs on `node <abs-path>`. No pnpm / node_modules resolution at tick time. Uses native `fetch` (Node 22+) + stdin.
+12. **100ms budget per tick.** Claude Code blocks its UI on slow statusline scripts. AbortController + 80ms stdin read cap are both load-bearing — don't loosen without measuring.
+13. **`/api/session-tick` is loopback-only.** Enforced per-request via `request.ip` check. Do NOT expose over LAN. Hooks execute without auth state so PIN auth would fail.
+14. **Tick binding reuses `resolveOwner`.** Same cascade as hooks + chokidar (Phase L2). JSONL origin discriminator prevents coder ticks from false-attributing to PMs in shared cwds.
+15. **Upward-only band warnings.** `isWarningCrossing` returns true only for `*→orange` or `*→red`. Downward transitions (post-/compact) are relief, not alarm. `unknown→green/yellow` is suppressed (first tick arrival, not a crossing).
+16. **Tick > pane for numeric telemetry.** `LiveActivityRow` prefers `tick.contextWindow.totalInputTokens` over `activity.tokens`; `tick.contextWindow.usedPercentage` drives the color band. Pane is still the source for the human-readable verb/spinner (tick JSON doesn't carry those).
+
+### Phase M footguns
+
+- **Install script is NOT auto-run.** Jose must run `node scripts/install-statusline.mjs` once. Existing Claude Code sessions keep their old footer until restart.
+- **`passThroughCommand` is stored but NOT exec'd yet.** If Jose had a prior statusline, we preserve its command string but don't stitch stdout. Flag for Phase N+.
+- **`current_usage` can be null** on a fresh session before the first API call. `normalizeTick` handles this; don't reintroduce eager `.input_tokens` derefs.
+- **`rate_limits` absent pre-Claude-Code-1.2.80.** All fields optional; client renders "—" when null.
+
+### SUGGESTIONS (deferred)
+
+- **SessionCard grid context bar** — needs batched `/sessions?withTicks=1` or a shared tick cache to avoid N subscriptions.
+- **ContextBar re-sourcing** — existing token/cost lines still read JSONL stats. Migrate to tick where available.
+- **Rate-limit countdown UI** — `five_hour.resets_at` / `seven_day.resets_at` are stored but unrendered.
+- **passThroughCommand exec** — wire stdout stitching if Jose ever coexists with another statusline tool.
+
+### Post-compact reconstruction path
+
+1. `git log --oneline -10` — confirm HEAD `411d5e5`.
+2. `pnpm -C client test && pnpm -C server test` — 93 client + 64 server = 157.
+3. Read "Coder-16 Session — Phase L" + "Phase L B2 refinement" + "Coder-16 Session — Phase M" in THIS file (sections above/at this line).
+4. COMMANDER_IDE_RESEARCH.md §1 + §8 + §9 for the protocol schema reference.
+5. Phase N dispatch → F3 (JSONL transcript tailing) + F4 (hook-based state classifier replacing pane-regex).
+
+---
+
 | `932c152` | B2 refinement | `server/src/services/jsonl-origin.service.ts` — peeks the first JSONL record for `agentName` / `teamName` / `sessionId` / `cwd`. Exports `readJsonlOrigin`, pure `parseOriginFromLines` (for tests), `isCoderJsonl` predicate. `hook-event.routes.ts resolveOwner` gates `pm-cwd-rotation` off when origin is a coder JSONL + adds `coder-team-rotation` (step 5) that binds coder JSONLs to the unique non-lead-pm row whose `team_name` matches the origin. `watcher-bridge.ts` scopes its cwd fallback by the same predicate (role filter: coder origin → non-lead-pm only; PM origin → lead-pm or NULL). Blocks cross-session tool-call leaks where a coder's events false-attributed to the PM in a shared cwd. Tests +13 in `jsonl-origin.test.ts`. |
 
 ### Root-cause diagnosis (for next-you reading this retroactively)
