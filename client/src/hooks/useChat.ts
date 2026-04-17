@@ -40,6 +40,31 @@ interface ChatResponse {
 
 const PAGE_SIZE = 500;
 
+// Tail-delta merge: replace messages with matching id when content has
+// changed (captures #193 in-place block growth) and append truly new
+// ids. Returns prev unchanged when nothing differs so React keeps a
+// stable reference and downstream useMemo([messages]) chains don't fire.
+const mergeDelta = (prev: ChatMessage[], delta: ChatMessage[]): ChatMessage[] => {
+  if (delta.length === 0) return prev;
+  const indexById = new Map<string, number>();
+  prev.forEach((m, i) => indexById.set(m.id, i));
+  let next: ChatMessage[] | null = null;
+  for (const incoming of delta) {
+    const i = indexById.get(incoming.id);
+    if (i === undefined) {
+      if (!next) next = [...prev];
+      next.push(incoming);
+    } else {
+      const existing = (next ?? prev)[i]!;
+      if (JSON.stringify(existing) !== JSON.stringify(incoming)) {
+        if (!next) next = [...prev];
+        next[i] = incoming;
+      }
+    }
+  }
+  return next ?? prev;
+};
+
 export const useChat = (sessionId: string | undefined, sessionStatus?: string): UseChatReturn => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +75,14 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   const { subscribe, unsubscribe, lastEvent } = useWebSocket();
   const mountedRef = useRef(true);
   const prevSessionRef = useRef<string | undefined>(undefined);
+  // #216 — tail-delta cursor. We send `?since=<id>` on steady-state polls
+  // so the server returns only messages strictly after that id. To keep
+  // #193's in-place message growth detection intact (Claude Code streams
+  // new content blocks INTO an existing assistant message), the cursor
+  // points at the SECOND-to-last message — the actual last is always
+  // re-fetched and merged so growth is captured.
+  const messagesRef = useRef<ChatMessage[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   // Fetch initial messages when sessionId changes
   useEffect(() => {
@@ -137,7 +170,11 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     }
   }, [lastEvent, sessionId]);
 
-  // Adaptive polling — fast when working (1.5s), slow when idle (5s)
+  // Adaptive polling — fast when working (1.5s), slow when idle (5s).
+  // #216 — steady-state polls use ?since=<cursorId> where cursor is the
+  // SECOND-to-last message id so the actual last message (which may
+  // still be growing in-place) is always re-fetched and merged. When
+  // the list has < 2 messages we fall back to a full fetch.
   useEffect(() => {
     if (!sessionId || loading) return;
 
@@ -146,36 +183,36 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
 
     const poll = async () => {
       try {
+        const current = messagesRef.current;
+        const cursorId = current.length >= 2 ? current[current.length - 2]!.id : undefined;
+        const url = cursorId
+          ? `/chat/${sessionId}?since=${encodeURIComponent(cursorId)}&limit=${PAGE_SIZE}`
+          : `/chat/${sessionId}?limit=${PAGE_SIZE}`;
+
         const [chatRes, statsRes] = await Promise.all([
-          api.get<ChatResponse>(`/chat/${sessionId}?limit=${PAGE_SIZE}`),
+          api.get<ChatResponse>(url),
           api.get<ChatStats>(`/chat/${sessionId}/stats`).catch(() => null),
         ]);
-        setMessages((prev) => {
-          // Server is source of truth. Keep ref stability when nothing
-          // changed, but don't stop at matching IDs — Claude Code streams
-          // new content blocks INTO an existing assistant message during
-          // a composing phase, so the length + last id can be identical
-          // while the content is growing. The old id-only comparison
-          // froze the UI and broke every downstream useMemo([messages]).
-          if (chatRes.messages.length === 0) return prev;
-          if (chatRes.messages.length !== prev.length) return chatRes.messages;
-          const lastNew = chatRes.messages[chatRes.messages.length - 1];
-          const lastOld = prev[prev.length - 1];
-          if (lastNew?.id !== lastOld?.id) return chatRes.messages;
-          // Same last id — check block count + last-block deep-equality
-          // so in-place growth is detected. JSON.stringify is cheap at
-          // our block sizes and avoids missing tool_use/tool_result
-          // updates that mutate existing block input/content.
-          if ((lastNew?.content?.length ?? 0) !== (lastOld?.content?.length ?? 0)) {
-            return chatRes.messages;
-          }
-          const tailNew = lastNew?.content[lastNew.content.length - 1];
-          const tailOld = lastOld?.content[lastOld.content.length - 1];
-          if (JSON.stringify(tailNew) !== JSON.stringify(tailOld)) {
-            return chatRes.messages;
-          }
-          return prev;
-        });
+
+        if (cursorId) {
+          // Delta path — merge into existing list to capture in-place
+          // growth on the cursor message (#193 invariant) and append
+          // any newer messages.
+          setMessages((prev) => mergeDelta(prev, chatRes.messages));
+        } else {
+          // Full-fetch fallback — replace, but stay ref-stable when the
+          // server's tail matches what we already have so downstream
+          // useMemo chains don't fire on every poll.
+          setMessages((prev) => {
+            if (chatRes.messages.length === 0) return prev;
+            if (chatRes.messages.length !== prev.length) return chatRes.messages;
+            const lastNew = chatRes.messages[chatRes.messages.length - 1];
+            const lastOld = prev[prev.length - 1];
+            if (lastNew?.id !== lastOld?.id) return chatRes.messages;
+            if (JSON.stringify(lastNew) !== JSON.stringify(lastOld)) return chatRes.messages;
+            return prev;
+          });
+        }
         setTotal(chatRes.total);
         setAwaitingFirstTurn(!!chatRes.awaitingFirstTurn);
         if (statsRes) setStats(statsRes);

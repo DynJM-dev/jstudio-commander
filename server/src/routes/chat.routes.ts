@@ -39,13 +39,19 @@ const concatTranscripts = (paths: string[]): ChatMessage[] => {
 
 export const chatRoutes = async (app: FastifyInstance) => {
   // Chat messages — concatenates every JSONL this session owns in order.
+  // ?since=<msgId> (#216) returns only messages strictly AFTER the message
+  // with that id; the client uses this for tail-delta polling so a
+  // 200-message session no longer ships the full transcript every 1.5s.
+  // Unknown id falls back to the tail-window default — assumes the client
+  // is stale and a full re-sync is the safe response.
   app.get<{
     Params: { sessionId: string };
-    Querystring: { limit?: string; offset?: string };
+    Querystring: { limit?: string; offset?: string; since?: string };
   }>('/api/chat/:sessionId', { logLevel: 'warn' as const }, async (request, reply) => {
     const { sessionId } = request.params;
     const limit = parseInt(request.query.limit ?? '200', 10);
     const offset = parseInt(request.query.offset ?? '0', 10);
+    const since = request.query.since;
 
     const db = getDb();
     const session = db.prepare(
@@ -61,6 +67,18 @@ export const chatRoutes = async (app: FastifyInstance) => {
 
     const all = concatTranscripts(paths);
     const total = all.length;
+
+    if (since) {
+      const idx = all.findIndex((m) => m.id === since);
+      if (idx >= 0) {
+        // Strictly after the cursor message. Empty array is the steady
+        // state when nothing has happened since the last poll.
+        return { messages: all.slice(idx + 1), total, awaitingFirstTurn };
+      }
+      // Unknown cursor → fall through to default tail behavior so the
+      // client recovers from a stale id with a clean full re-sync.
+    }
+
     // offset=0 default returns the LAST `limit` messages (tail) so realtime
     // chat shows the freshest tool calls/responses. load-older uses offset.
     const paginated = offset === 0 && total > limit
