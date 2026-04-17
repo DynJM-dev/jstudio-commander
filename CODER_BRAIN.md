@@ -364,6 +364,99 @@ All three typechecks PASS (shared, client, server). Server restart clean; `/api/
 dae794f feat(projects): ProjectCard stack pills + recent commits UI (#230)
 ```
 
+---
+
+## Coder-12 Session — Phase E (4.7 migration finish + NODE_ENV gate + Command Center rebrand, 2026-04-17)
+
+### Commits (10, pre-docs)
+
+```
+Bundle 1 — Finish 4.7 migration:
+  f956fcc fix(sessions): CreateSessionModal default to Opus 4.7
+  15fe784 fix(chat): ContextBar effort dropdown to high|xhigh|max per skill
+  ab72eec fix(analytics): ModelBreakdown color for Opus 4.7
+  05ebbcd chore(schema): column defaults → Opus 4.7 + xhigh
+  24f21f9 refactor(types): narrow EffortLevel to union literal
+  26cfe2b chore(db): heal legacy effort_level rows to xhigh
+
+Bundle 2 — Structural fixes:
+  603b398 fix(server): gate fastify-static on NODE_ENV=production
+  3d0de45 fix(server): swap tsx watch for tsx — clean preflight exit
+
+Bundle 3 — Command Center rebrand (display-only):
+  eb9f85f rebrand: UI strings — Commander → Command Center (display-only)
+  4a040b8 rebrand: .app bundle CFBundleName — JStudio Command Center
+  (+ docs commit)
+```
+
+### Triggering context — the 2026-04-17 UI regression
+
+User reported three Wave 2 features (button-style top-bar tabs, modern sidebar / design-system-spine, city view `/city`) "regressed" at once. Single root cause: `client/dist` frozen at Apr 14 01:38, served by Fastify's static handler in dev mode, shadowing Vite's HMR. Phase D shipped the .app launcher + signed health but didn't gate static on NODE_ENV, so any stale dist would silently win over current source. Phase E Bundle 2.1 closes that class of bug permanently.
+
+A second failure mode surfaced during the same diagnosis: 7 zombie `pnpm server dev` + `tsx watch` procs accumulated from Phase D's preflight smoke tests. `tsx watch` stays alive after a `process.exit(0)` in the child — parent keeps watching for file changes with nothing to spawn. Phase E Bundle 2.2 drops `watch` entirely (matches existing `feedback_tsx_watch_unreliable` memory).
+
+### What shipped
+
+**Bundle 1 — 4.7 migration finish** (from the audit findings)
+- `CreateSessionModal.tsx`: Opus 4.7 at top, default state, pricing pulled from shared `MODEL_PRICING` so it stays in sync. 4.6 demoted to "(legacy)" at bottom.
+- `ContextBar.tsx`: `EFFORT_LEVELS = ['high','xhigh','max']` (was `['low','medium','high','max']`). New `normalizeEffort()` coerces any legacy row to `xhigh` so the dropdown's initial state always matches the option list.
+- `ModelBreakdown.tsx`: `'claude-opus-4-7': '#0E7C7B'` primary teal, 4.6 shifted to `'#0A5E5D'` secondary.
+- `schema.sql` + `connection.ts`: column defaults `claude-opus-4-7` / `xhigh`. Boot heal sweeps ALL rows with legacy `low|medium|NULL` effort to `xhigh` (superseded the 24h-bounded heal).
+- `packages/shared/src/types/session.ts`: `EFFORT_LEVELS` const tuple + `EffortLevel = 'high'|'xhigh'|'max'` union exported. `Session.effortLevel` narrows from `string` to `EffortLevel`. Typecheck caught one drift site (`session.service.ts:101`) which now routes through a `normalizeEffortLevel()` helper.
+
+**Bundle 2 — Structural fixes**
+- `server/src/index.ts`: fastify-static registration gated on `NODE_ENV === 'production'`. Dev mode with an existing `client/dist` warns + skips so Vite is the unambiguous UI source.
+- `server/package.json`: `"dev": "tsx src/index.ts"` (dropped `watch`). Fixes preflight zombie accumulation.
+
+**Bundle 3 — Command Center rebrand (scope A display-only)**
+- User-visible "JStudio Commander" → "JStudio Command Center": `client/index.html` (`<title>`, apple-mobile-web-app-title), `Logo.tsx`, `PinGate.tsx`, `HealthBanner.tsx`.
+- `.app` bundle: `Info.plist` CFBundleName + CFBundleDisplayName both → "JStudio Command Center". Dock/Cmd-Tab/menu render the new name after `bash scripts/macos-launcher/build.sh`.
+- Docs: `TUNNEL.md` blanket replace (every mention is user-facing); `STATE.md` heading + rebrand callout + Phase E marker; `CTO_BRIEF.md` heading + callout (archival prose intentionally unchanged).
+- **Preserved (internal slugs)**: repo dir `~/Desktop/Projects/jstudio-commander`, `@commander/*` package names, `SERVICE_ID = 'jstudio-commander'` (signed health from Phase D), `~/.jstudio-commander/config.json`, `~/.claude/hooks/commander-hook.sh`, `CommanderEventBus` class name, `byCommanderId` internal variables, team config slugs, historical commit messages, archival CODER_BRAIN sections.
+
+### Patterns established
+
+- **Sync manifest & ALTER migrations, async data backfill**: Bundle 1.6 heal runs at boot before any read path, so every in-memory `Session` carries a valid `EffortLevel`. Pattern for any future type-narrowing migration.
+- **NODE_ENV gate on serve-static**: cheap insurance against dev-shadow regressions. Two lines.
+- **Display-only rebrand scope (A)**: rename user-visible strings (titles, headings, body copy) + .app bundle CFBundle* fields + user-facing docs. Preserve every slug (repo, package, config, hook, SERVICE_ID, types) so running instances / team configs / memory don't break.
+
+### Critical lessons (read before touching nearby code)
+
+1. **`NODE_ENV=production` is load-bearing for dev-safety.** Without it, any built `client/dist` silently shadows Vite's HMR. Production behavior unchanged. If you rip this gate out, you reopen the exact regression reported on 2026-04-17.
+2. **`tsx watch` child exits don't kill the parent.** `process.exit(0)` from Phase D preflight left the watcher alive. If you re-add `--watch`, document the preflight interaction + add a `pkill -9 -f 'jstudio-commander/server'` sweep in the preflight path.
+3. **`EffortLevel` is a narrow union — old rows MUST be healed.** The boot heal in `connection.ts` is not optional; without it, pre-Phase-E rows would fail the type assertion on read (server) and corrupt the UI state (client). The `normalizeEffortLevel()` helper is the belt-and-suspenders fallback.
+4. **Schema column default vs ALTER column default vs upsert default — all three must match.** Phase E moved `schema.sql` (fresh install), `connection.ts` ALTER (migration path), and `session.service.ts` upsert (write path) to the same pair. Drift between them was a latent bug the audit surfaced.
+5. **CFBundleName ≠ .app filename.** Finder shows the filename; Dock/Cmd-Tab/menu use CFBundleDisplayName. Display-only rebrand updates the plist, leaves `Commander.app` filename alone. If users want to rename the file, they do it themselves; the dock label already reflects the new name.
+6. **Rebrand scope A is "grep 'Commander' in user-facing contexts, leave slugs alone."** Don't touch imports (`@commander/shared`), class names (`CommanderEventBus`), internal var names (`byCommanderId`), archival commit messages, or CODER_BRAIN per-coder sections. The heading in STATE.md is the live source of truth for "what the product is called now."
+
+### Tech debt opened by Phase E
+
+- **Server edits require manual restart** (no more `tsx watch`). Matches documented workflow (STATE.md, `feedback_tsx_watch_unreliable`) but mild regression for rapid server iteration. If it bites, flip to nodemon or add a hand-rolled watcher that terminates cleanly on child exit(0).
+- **`normalizeEffortLevel()` is duplicated server-side + client-side.** Small enough not to share via the `@commander/shared` package for now, but if more normalizers appear, consider a `shared/src/utils/normalize.ts`.
+- **CTO_BRIEF.md prose still uses "Commander"** in most paragraphs (archival — heading + callout note the rebrand). A full prose rewrite is a future-you task if the doc gets cited heavily post-rebrand.
+- **`Commander.app` filename unchanged.** If the user manually renames the file to `Command Center.app`, the launcher.sh + build.sh `DEST` path would need a template variable. Deferred until someone asks.
+- **Rebrand callout in STATE.md is a free-form markdown blockquote.** If we add more rebrands (scope B full rename, etc.) the pattern will need a section instead of a callout.
+
+### HEAD (post-Phase-E-content)
+
+```
+4a040b8 rebrand: .app bundle CFBundleName — JStudio Command Center
+eb9f85f rebrand: UI strings — Commander → Command Center (display-only)
+3d0de45 fix(server): swap tsx watch for tsx — clean preflight exit
+603b398 fix(server): gate fastify-static on NODE_ENV=production
+26cfe2b chore(db): heal legacy effort_level rows to xhigh
+24f21f9 refactor(types): narrow EffortLevel to union literal
+05ebbcd chore(schema): column defaults → Opus 4.7 + xhigh
+ab72eec fix(analytics): ModelBreakdown color for Opus 4.7
+15fe784 fix(chat): ContextBar effort dropdown to high|xhigh|max per skill
+f956fcc fix(sessions): CreateSessionModal default to Opus 4.7
+6ade894 docs: Phase D completion + coder-12 brain refresh
+```
+
+All three typechecks PASS post-Phase-E.
+
+---
+
 All three typechecks PASS (shared, client, server). Verification:
 - `pnpm -C server dev` (no config.json override) binds 11002 · `curl /api/system/health` → `{status:"ok",service:"jstudio-commander",version:"0.1.0",...}`
 - Second `pnpm dev` while first is running → yellow banner, clean exit 0, only 1 process on port 11002

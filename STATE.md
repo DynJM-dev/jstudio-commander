@@ -1,8 +1,15 @@
-# JStudio Commander — State
+# JStudio Command Center — State
 
 ## Current State
-- Phase: **Phase D complete (Coder-12). Launch hardening shipped — signed health + macOS .app launcher + port migrated to 11002.**
+- Phase: **Phase E complete (Coder-12). 4.7 migration finished in UI/schema, NODE_ENV=production gate on fastify-static, Commander → Command Center display-only rebrand.**
 - Last updated: 2026-04-17
+
+> **🪪 Rebrand 2026-04-17 — display-only (scope A).** User-facing product
+> name is now **JStudio Command Center**. Internal slugs intentionally
+> preserved: repo dir `jstudio-commander`, package names `@commander/*`,
+> signed health `service: "jstudio-commander"` (Phase D), team config
+> names, user's `~/.jstudio-commander/config.json`, `commander-hook.sh`.
+> Rebuild the .app bundle after pulling: `bash scripts/macos-launcher/build.sh`.
 
 > **⚠️  Port migration — user action optional.** The default server port
 > moved from 3002 → 11002. If your `~/.jstudio-commander/config.json`
@@ -28,6 +35,7 @@
 - [x] **Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause) — Coder-11 (2 commits, 2026-04-16)**
 - [x] **Phase C — Project tech-stack pills + recent commits (#230) — Coder-12 (2 commits, 2026-04-17)**
 - [x] **Phase D — Launch UX hardening (signed health + preflight + macOS .app + port 11002) — Coder-12 (4 commits, 2026-04-17)**
+- [x] **Phase E — Finish 4.7 migration + NODE_ENV gate + Command Center rebrand — Coder-12 (11 commits, 2026-04-17)**
 
 ## Feature Wave 2 Highlights
 

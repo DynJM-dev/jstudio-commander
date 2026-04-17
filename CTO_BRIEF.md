@@ -1,4 +1,8 @@
-# JStudio Commander — CTO Brief
+# JStudio Command Center — CTO Brief
+
+> Renamed to "JStudio Command Center" on 2026-04-17 (Phase E, scope A
+> display-only). Internal slug `jstudio-commander` preserved. Earlier
+> sections below retain the original name as historical context.
 
 **Prepared:** 2026-04-15
 **Status:** v1 shipped + 40+ polish commits + 17 feature commits this week (plan widget, sticky plan, split-screen, PM init system, etc.)
