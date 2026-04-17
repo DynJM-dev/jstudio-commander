@@ -1080,6 +1080,7 @@ Three targeted fixes after a live-testing bug report (OvaGas / JLFamily):
 | `5d22eb2` | B1 | `server/src/services/agent-status.service.ts` — `COMPLETION_VERBS` allowlist + `/ed$/` fallback + `STALE_ELAPSED_SECONDS = 600` gate + multi-line footer elapsed extraction. `parseElapsedSeconds` exported. Tests +15 on existing `activity-detector.test.ts`. |
 | `da96818` | B2 | `server/src/routes/hook-event.routes.ts` — new `pm-cwd-rotation` match strategy (step 4) + `resolveOwner` / `UUID_RE` exported. `server/src/services/watcher-bridge.ts` — matcher cascade aligned with resolveOwner + auto-appends the discovered transcript via `sessionService.appendTranscriptPath`. New `server/src/services/__tests__/hook-event-resolver.test.ts` — 6 tests covering UUID_RE shape + the SQL cascade (PM-only match, two-PM ambiguity, stopped exclusion, coder-only no-match). |
 | `0b52078` | B3 | `client/src/utils/plans.ts` — `buildPlanFromMessages` now returns `lastPlanActivityMs`; `getActivePlan` gains an optional `nowMs` + returns null when either the chat-gap OR the wall-clock-gap vs the plan's last touch exceeds `MAX_PLAN_AGE_MS` (2 hours). Tests +6 in `plans.test.ts`. |
+| `932c152` | B2 refinement | `server/src/services/jsonl-origin.service.ts` — peeks the first JSONL record for `agentName` / `teamName` / `sessionId` / `cwd`. Exports `readJsonlOrigin`, pure `parseOriginFromLines` (for tests), `isCoderJsonl` predicate. `hook-event.routes.ts resolveOwner` gates `pm-cwd-rotation` off when origin is a coder JSONL + adds `coder-team-rotation` (step 5) that binds coder JSONLs to the unique non-lead-pm row whose `team_name` matches the origin. `watcher-bridge.ts` scopes its cwd fallback by the same predicate (role filter: coder origin → non-lead-pm only; PM origin → lead-pm or NULL). Blocks cross-session tool-call leaks where a coder's events false-attributed to the PM in a shared cwd. Tests +13 in `jsonl-origin.test.ts`. |
 
 ### Root-cause diagnosis (for next-you reading this retroactively)
 
@@ -1096,6 +1097,9 @@ Three targeted fixes after a live-testing bug report (OvaGas / JLFamily):
 5. **`watcher-bridge` calls `sessionService.appendTranscriptPath` on discovery.** Chokidar-discovered files must be persisted to `transcript_paths` so the REST chat endpoint serves the latest content on every fetch. Don't drop this step — WS-only delivery leaves any page-reload in the stale state.
 6. **Plan staleness has two signals**, and either triggers retirement: (a) chat-latest-message more than `MAX_PLAN_AGE_MS` ahead of the plan's last activity, (b) wall-clock more than `MAX_PLAN_AGE_MS` past the plan's last activity. Missing timestamps skip the gate — we never hide a plan because of parse failures.
 7. **`getActivePlan` accepts an optional `nowMs` parameter** — tests inject a deterministic clock. Don't remove that parameter or downstream tests break.
+8. **JSONL origin discriminates coder vs PM.** Claude Code writes `agentName` on every coder JSONL record but omits it on PM/lead JSONLs. `readJsonlOrigin(filePath)` is the single source of truth — both `resolveOwner` AND `watcher-bridge` consult it before any cwd-based fallback. Never skip the check in a new match strategy that walks rows by `project_path` alone; you'll re-open the cross-session leak.
+9. **`resolveOwner` priority is now `claudeSessionId → transcriptUUID → sessionId-as-row → cwd-exclusive → pm-cwd-rotation (non-coder only) → coder-team-rotation (coder only)`.** The two rotation strategies are MUTUALLY EXCLUSIVE per invocation — the origin predicate picks which one runs. Preserve that when adding further strategies.
+10. **`watcher-bridge` role filter** — coder origin scopes cwd iteration to `(agent_role IS NULL OR agent_role != 'lead-pm')`; PM origin scopes to `(agent_role IS NULL OR agent_role = 'lead-pm')`. Legacy rows with NULL agent_role are eligible either way (back-compat). When you add new rows in migrations, set agent_role explicitly so the filter stays crisp.
 
 ### Known footguns for next-you
 
@@ -1196,7 +1200,7 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 
 1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-L should be `0b52078` (or later if a docs commit followed).
 2. `pnpm -C client run typecheck && pnpm -C server run typecheck` — both exit 0.
-3. `pnpm -C client test && pnpm -C server test` — 72 client + 44 server pass.
+3. `pnpm -C client test && pnpm -C server test` — 72 client + 57 server pass.
 4. `curl -s localhost:<port>/api/system/health` — returns `{service:'jstudio-commander', version: ..., status:'ok', dbConnected:true}`.
 5. `ls -la ~/.claude/prompts/pm-session-bootstrap.md` — file exists, ~134 bytes.
 6. `grep -c "Cold Start" ~/.claude/skills/jstudio-pm/SKILL.md` — non-zero.
