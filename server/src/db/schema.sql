@@ -16,7 +16,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   stopped_at TEXT,
   station_id TEXT,
   agent_role TEXT,
-  transcript_path TEXT,
   effort_level TEXT DEFAULT 'xhigh'
 );
 

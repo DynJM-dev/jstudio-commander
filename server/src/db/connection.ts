@@ -26,10 +26,9 @@ export const getDb = (): Database.Database => {
 
   // Migrations for existing databases
   const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === 'transcript_path')) {
-    db.exec('ALTER TABLE sessions ADD COLUMN transcript_path TEXT');
-    console.log('[db] Migration: added transcript_path column to sessions');
-  }
+  // Phase R L4 removed the `transcript_path` (singular) add-column
+  // migration. The column is superseded by `transcript_paths` and
+  // gets DROPPED by the block further down when present.
   if (!cols.some((c) => c.name === 'effort_level')) {
     db.exec("ALTER TABLE sessions ADD COLUMN effort_level TEXT DEFAULT 'xhigh'");
     console.log('[db] Migration: added effort_level column to sessions');
@@ -59,6 +58,35 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0');
     console.log('[db] Migration: added last_activity_at column to sessions');
   }
+  // Phase R L4 — drop the legacy single-transcript_path column.
+  // Replaced by transcript_paths (JSON array) in #204. Before
+  // dropping, copy any rows where transcript_path is populated but
+  // transcript_paths is still empty — this is the one-shot data
+  // migration that used to live in the boot-heal path in index.ts.
+  // Idempotent: once the column is gone, the migration block skips.
+  if (cols.some((c) => c.name === 'transcript_path')) {
+    const legacyRows = db.prepare(
+      "SELECT id, transcript_path, transcript_paths FROM sessions WHERE transcript_path IS NOT NULL",
+    ).all() as Array<{ id: string; transcript_path: string; transcript_paths: string | null }>;
+    let migrated = 0;
+    for (const row of legacyRows) {
+      let existing: string[] = [];
+      try { existing = JSON.parse(row.transcript_paths ?? '[]') as string[]; } catch { /* noop */ }
+      if (existing.length > 0) continue;
+      // Never filesystem-check here — this is pure column consolidation.
+      // A path that no longer exists on disk is still a valid history entry.
+      const next = [row.transcript_path];
+      db.prepare('UPDATE sessions SET transcript_paths = ? WHERE id = ?')
+        .run(JSON.stringify(next), row.id);
+      migrated += 1;
+    }
+    if (migrated > 0) {
+      console.log(`[db] Migration: consolidated ${migrated} transcript_path row(s) into transcript_paths`);
+    }
+    db.exec('ALTER TABLE sessions DROP COLUMN transcript_path');
+    console.log('[db] Migration: dropped legacy transcript_path column from sessions');
+  }
+
   // Phase Q — per-session auto-compact opt-out. Default on. Existing
   // PM / lead-PM rows get flipped off in a one-shot heal below so
   // Commander never auto-compacts a session responsible for durable

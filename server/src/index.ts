@@ -225,36 +225,10 @@ teamConfigService.start();
     }
   }
 
-  // 1b. Migrate pre-#204 single-transcript_path + claude_session_id state
-  // into the new transcript_paths list. For each session row with an
-  // existing transcript_path whose file still exists, ensure that path is
-  // present in transcript_paths. Handles Wild-puma-style duplicates by
-  // granting the file ONLY to the most-recently-created row — olders'
-  // transcript_paths stay empty and will get populated when their own
-  // first hook event fires.
-  const legacyRows = db.prepare(
-    "SELECT id, created_at, transcript_path, transcript_paths FROM sessions WHERE transcript_path IS NOT NULL",
-  ).all() as Array<{ id: string; created_at: string; transcript_path: string; transcript_paths: string }>;
-
-  const claimedBy = new Map<string, { id: string; createdAt: string }>();
-  for (const row of legacyRows) {
-    if (!existsSync(row.transcript_path)) continue;
-    const prior = claimedBy.get(row.transcript_path);
-    if (!prior || new Date(row.created_at).getTime() > new Date(prior.createdAt).getTime()) {
-      claimedBy.set(row.transcript_path, { id: row.id, createdAt: row.created_at });
-    }
-  }
-  for (const row of legacyRows) {
-    const winner = claimedBy.get(row.transcript_path);
-    const existing = (() => {
-      try { return JSON.parse(row.transcript_paths || '[]') as string[]; } catch { return []; }
-    })();
-    if (winner?.id === row.id && existsSync(row.transcript_path) && !existing.includes(row.transcript_path)) {
-      const next = [...existing, row.transcript_path];
-      db.prepare('UPDATE sessions SET transcript_paths = ? WHERE id = ?').run(JSON.stringify(next), row.id);
-      console.log(`[migrate] session=${row.id.slice(0, 30)} transcript_paths += ${row.transcript_path.split('/').pop()}`);
-    }
-  }
+  // Phase R L4 — transcript_path consolidation used to live here.
+  // Moved into connection.ts as a one-shot schema migration that
+  // runs BEFORE the column is dropped on the same boot. This block
+  // is intentionally gone; no replacement needed.
 
   // 2. Discover orphaned jsc- tmux sessions not in the DB
   const liveTmuxSessions = tmux.listSessions().filter((s) => s.name.startsWith('jsc-'));

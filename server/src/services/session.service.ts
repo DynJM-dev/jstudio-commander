@@ -157,7 +157,6 @@ interface UpsertSessionInput {
   teamName?: string | null;
   parentSessionId?: string | null;
   sessionType?: 'pm' | 'raw';
-  transcriptPath?: string | null;
   transcriptPaths?: string[];
   stationId?: string | null;
   // SQLite stores this as INTEGER 0/1. Callers pass boolean; the
@@ -187,7 +186,6 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
   { col: 'stopped_at',        key: 'stoppedAt' },
   { col: 'station_id',        key: 'stationId' },
   { col: 'agent_role',        key: 'agentRole' },
-  { col: 'transcript_path',   key: 'transcriptPath' },
   { col: 'transcript_paths',  key: 'transcriptPaths' },
   { col: 'effort_level',      key: 'effortLevel' },
   { col: 'parent_session_id', key: 'parentSessionId' },
