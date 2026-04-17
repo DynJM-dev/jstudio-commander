@@ -154,30 +154,44 @@ const reconcile = (path: string): void => {
     if (member.isActive === false) continue;
     next.add(member.agentId);
 
-    if (!seen.has(member.agentId)) {
-      // Teammate agentIds look like "name@team" — not Claude UUIDs. Without
-      // a pane or prior claude_session_id link, we can't verify liveness,
-      // so live defaults to false (honest: "we don't know yet"). The hook
-      // event route will flip it to idle/working once Claude emits.
-      const memberLive = hasLiveEvidence({
-        tmuxPaneId: member.tmuxPaneId,
-        claudeSessionId: UUID_RE.test(member.agentId) ? member.agentId : undefined,
-        cwd: member.cwd,
-      });
-      sessionService.upsertTeammateSession({
-        sessionId: member.agentId,
-        name: member.name,
-        tmuxTarget: member.tmuxPaneId || `agent:${member.agentId}`,
-        projectPath: member.cwd ?? null,
-        role: member.agentType ?? 'agent',
-        teamName,
-        parentSessionId,
-        model: normalizeModel(member.model),
-        live: memberLive,
-      });
+    const isFresh = !seen.has(member.agentId);
+    // Orchestrators sometimes write the member row before the tmux pane
+    // exists (empty tmuxPaneId), then update the config once the pane is
+    // alive. Without idempotent reconciles, the second write gets
+    // short-circuited by the seen-gate and the row stays stuck on the
+    // `agent:<id>` sentinel. We therefore re-upsert whenever the config
+    // carries a real pane id, even for already-seen members.
+    const hasRealPane = !!member.tmuxPaneId && member.tmuxPaneId.startsWith('%');
+
+    if (!isFresh && !hasRealPane) continue;
+
+    // Teammate agentIds look like "name@team" — not Claude UUIDs. Without
+    // a pane or prior claude_session_id link, we can't verify liveness,
+    // so live defaults to false (honest: "we don't know yet"). The hook
+    // event route will flip it to idle/working once Claude emits.
+    const memberLive = hasLiveEvidence({
+      tmuxPaneId: member.tmuxPaneId,
+      claudeSessionId: UUID_RE.test(member.agentId) ? member.agentId : undefined,
+      cwd: member.cwd,
+    });
+    sessionService.upsertTeammateSession({
+      sessionId: member.agentId,
+      name: member.name,
+      tmuxTarget: member.tmuxPaneId || `agent:${member.agentId}`,
+      projectPath: member.cwd ?? null,
+      role: member.agentType ?? 'agent',
+      teamName,
+      parentSessionId,
+      model: normalizeModel(member.model),
+      live: memberLive,
+    });
+
+    if (isFresh) {
       const teammate = buildTeammate(member, parentSessionId, teamName);
       console.log(`[team-config] reconciled ${teammate.sessionName} (${teammate.role}) in ${teamName}${memberLive ? ' [live]' : ' [no live evidence — not resurrecting]'}`);
       eventBus.emitTeammateSpawned(teammate);
+    } else {
+      console.log(`[team-config] updated pane for ${member.name} → ${member.tmuxPaneId} in ${teamName}`);
     }
   }
 

@@ -388,8 +388,8 @@ export const sessionService = {
     const db = getDb();
     // Compute live-aware status BEFORE calling the generic upserter so the
     // mechanical write surface doesn't need to know about teammate lifecycle.
-    const existing = db.prepare('SELECT status, stopped_at FROM sessions WHERE id = ?').get(opts.sessionId) as
-      | { status: string; stopped_at: string | null }
+    const existing = db.prepare('SELECT status, stopped_at, tmux_session FROM sessions WHERE id = ?').get(opts.sessionId) as
+      | { status: string; stopped_at: string | null; tmux_session: string }
       | undefined;
 
     let statusOverride: SessionStatus | undefined;
@@ -407,10 +407,21 @@ export const sessionService = {
       stoppedAtOverride = opts.live ? null : new Date().toISOString();
     }
 
+    // Sentinel-protection: if the caller is passing in a `agent:<id>`
+    // sentinel but the existing row already carries a real pane id
+    // (`%NN`), keep the real pane. This prevents a stale team-config
+    // write (empty tmuxPaneId) from silently demoting a working
+    // teammate back to a non-sendable sentinel target.
+    const incomingIsSentinel = opts.tmuxTarget.startsWith('agent:');
+    const existingIsRealPane = !!existing && existing.tmux_session.startsWith('%');
+    const tmuxTarget = incomingIsSentinel && existingIsRealPane
+      ? existing.tmux_session
+      : opts.tmuxTarget;
+
     this.upsertSession({
       id: opts.sessionId,
       name: opts.name,
-      tmuxSession: opts.tmuxTarget,
+      tmuxSession: tmuxTarget,
       projectPath: opts.projectPath,
       model: opts.model,
       agentRole: opts.role,
