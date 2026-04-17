@@ -6,6 +6,12 @@ import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { TaskNotificationCard } from './TaskNotificationCard';
 import { TeammateMessageCard } from './TeammateMessageCard';
+import {
+  ShutdownRequestCard,
+  ShutdownResponseCard,
+  PlanApprovalRequestCard,
+  PlanApprovalResponseCard,
+} from './ProtocolMessageCards';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseStructuredUserContent } from '../../utils/chatMessageParser';
 import {
@@ -344,6 +350,18 @@ export const ChatThread = ({
                   }
                   if (structured?.kind === 'teammate-message') {
                     return <TeammateMessageCard message={structured.teammate} />;
+                  }
+                  if (structured?.kind === 'shutdown-request') {
+                    return <ShutdownRequestCard request={structured.request} />;
+                  }
+                  if (structured?.kind === 'shutdown-response') {
+                    return <ShutdownResponseCard response={structured.response} />;
+                  }
+                  if (structured?.kind === 'plan-approval-request') {
+                    return <PlanApprovalRequestCard request={structured.request} />;
+                  }
+                  if (structured?.kind === 'plan-approval-response') {
+                    return <PlanApprovalResponseCard response={structured.response} />;
                   }
                   return <UserMessage message={msg} />;
                 })()}
