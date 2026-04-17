@@ -1939,6 +1939,69 @@ clean across shared + server + client.
 
 ---
 
+## Coder-16 Session — Phase S.1 (message routing + ctx single-source-of-truth, 2026-04-17)
+
+HEAD `b54fab6` (pre-S.1 was `1ad2aa1`). Four commits this rotation:
+
+- `4efa704` fix(tmux): createSession stores pane ids + sendKeys guard
+- `6684a90` fix(startup): heal legacy session-name tmux_session rows to pane ids
+- `1bceafc` fix(ctx): ContextBar reads ctx% from the tick feed
+- `b54fab6` test(s1): sendKeys guard + resolveFirstPaneId + session-name heal + ctx sync
+
+Shipped Patches 1–5 of the team-lead's 6-patch plan. **Patch 6 (wider display audit doc at `audits/PHASE_S1_DISPLAY_AUDIT.md`) is DEFERRED** — compact pressure hit 86% before it was started.
+
+### What this rotation fixed
+
+**Bug 1 — OvaGas PM→coder message leak (fixed, root-caused)**
+- Root cause: `sessionService.createSession` stored the tmux *session name* (`jsc-<uuid>`) in `sessions.tmux_session`. `tmux send-keys -t <session-name>` routes to whichever pane is currently ACTIVE in that session. When Jose focused the coder pane, PM's next message leaked there.
+- Fix: new `tmuxService.resolveFirstPaneId(name)` helper + `createSession` now stores the first pane id (`%NN`) in `tmux_session`; boot-time heal sweeps legacy `jsc-*` rows into pane ids OR stops them if tmux is gone; `sendKeys` guard throws in DEV on non-pane/non-retired targets and warns+proceeds in PROD; retired: targets are silent no-ops.
+- Regression test in `server/services/__tests__/tmux-guard.test.ts` — creates a jsc-* session, splits it into two panes, selects second as active, sends unique token to FIRST pane by id, captures both buffers, asserts token landed in first not second. Directly proves the OvaGas scenario is closed.
+
+**Bug 2 — ContextBar ctx% drift (fixed)**
+- Root cause: `ContextBar` computed its own percentage from `displayTokens / contextLimit` (message-aggregated tokens). LiveActivityRow, the band rail, and ContextLowToast all read `tick.contextWindow.usedPercentage`. Four surfaces, two sources → drift.
+- Fix: ContextBar now reads `sessionTick.contextWindow.usedPercentage` as the authoritative source when non-null, falling back to the token-ratio path only when no tick has arrived. Extracted `resolveContextPercent(tick, tokens, contextLimit)` as an exported pure helper so `ContextBar.test.ts` can lock the invariant without rendering React.
+
+### Invariants 61+ (continuing from Phase R's 60)
+
+**61.** `sessions.tmux_session` is ALWAYS one of: `%NN` (pane id), `retired:<id>` (stopped row, pane freed), `agent:<teammateId>` (sentinel until team-config reconcile resolves a pane). Raw tmux session names (`jsc-*`) are a LEGACY shape only; boot-time heal sweeps them. If you see one post-boot, it's a regression.
+
+**62.** `tmuxService.sendKeys(target, keys)` only accepts `%NN` + `retired:*`. DEV throws on anything else (raw session names, `agent:*`, empty strings); PROD warns+still-attempts. `retired:*` is a silent no-op. The guard short-circuits BEFORE exec, so tests of the throw path need no tmux server.
+
+**63.** `tmuxService.resolveFirstPaneId(name)` is idempotent on `%NN` inputs (returns unchanged). Returns null on gone sessions. Always returns the FIRST pane id of a live session — active-pane state does NOT shift the answer. This is what kept the OvaGas fix correct: even when a user focuses a split pane, resolveFirstPaneId still points to the top pane of the session.
+
+**64.** `sessionService.healLegacySessionNameTmuxTargets()` runs at boot AFTER `healOrphanedTeamSessions` (so orphan-team rows don't consume heal slots) and BEFORE `healCrossSessionTeammates` (so ownership checks operate on corrected targets). Resolved rows emit `session:updated`. Gone-session rows get `status='stopped'`. Idempotent — second run finds no candidates.
+
+**65.** ContextBar's ctx% source of truth is `sessionTick.contextWindow.usedPercentage`. Every ctx% display surface (ContextBar progress + readout, LiveActivityRow, ChatPage band rail, ContextLowToast) now reads from this one value. `resolveContextPercent` is the exported pure helper; when extending ctx%-related UI, USE THAT, don't recompute from tokens.
+
+**66.** Server `session:status` WS event extras (`StatusEmitExtras` in `ws/event-bus.ts`) has NO context field. Only `from`/`to`/`evidence`/`activity`/`at`. Context % is carried exclusively by `session:tick`. Don't add a context field to status without auditing every subscriber first.
+
+### Deferred work for the next rotation
+
+**Patch 6 — Wider display audit doc (not started)**
+Produce `audits/PHASE_S1_DISPLAY_AUDIT.md` with:
+- Per-component: which WS events each subscribes to, which REST endpoints each hydrates from, stale-risk matrix (component × failure mode)
+- Components to audit: SessionCard, ContextBar, LiveActivityRow, HeartbeatDot, HeaderStatsWidget, TopCommandBar, ChatPage header
+- Flag (don't fix) any new bugs surfaced
+- Keep < 200 lines, executive summary + findings + matrix
+
+Jose's broader complaint was "windows getting stuck, current or correct info not being displayed" — the fixes above close the two concrete bugs, but the audit is what would surface siblings.
+
+### Post-compact reconstruction checklist
+
+1. `git log --oneline -5` — verify HEAD is `b54fab6` (or later if follow-ups landed).
+2. Read this "Coder-16 Session — Phase S.1" section for the invariants 61-66.
+3. Re-read the Phase S+Q+R section above for the 49-60 invariants.
+4. For Patch 6: start by spawning an Explore agent to produce the ws-events + REST-endpoint matrix across `client/src/components/sessions/*`, `client/src/components/chat/*`, `client/src/components/layout/*`, `client/src/layouts/*`. Feed results into the audit doc structure above.
+5. Test totals post-S.1: server 173 unit + 19 integration + client 174 unit = 366 (up from pre-S.1 345).
+6. `pnpm audit --prod` remained clean — no new deps added this rotation.
+
+### Gotchas
+- The dev `sendKeys` guard throws on `jsc-*` — if you ever add a test that seeds `tmuxSession: 'jsc-<uuid>'` and then exercises a code path that calls sendKeys (directly or via route), the test WILL throw in dev unless NODE_ENV is set to `'production'` (unusual for tests). Seed with a pane id (e.g. `%42`) instead.
+- `kill-session -t %NN` works — tmux resolves the pane id to its owning session. The post-sessions integration test now stores `%NN` in SPAWNED_TMUX and the cleanup kill works fine. No regression on the teardown path.
+- `healLegacySessionNameTmuxTargets` preserves the row's `tmux_session` value when the session is gone (no write to the column on that branch). If a future audit wants to distinguish "healed to pane" from "was already gone at boot" rows, grep the startup log: `[startup-heal] tmux_session ... → stopped (tmux session gone)`.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
