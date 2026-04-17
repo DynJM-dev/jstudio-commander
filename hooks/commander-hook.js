@@ -14,8 +14,30 @@
 // Fire-and-forget by design: if the Commander server is down or the
 // POST fails, we exit 0 so Claude Code never blocks on our endpoint.
 
-const SERVER_URL = process.env.COMMANDER_HOOK_URL
-  || 'http://127.0.0.1:11002/api/hook-event';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+// Resolve the Commander server URL. Precedence:
+//   1. COMMANDER_HOOK_URL env var (full URL override).
+//   2. ~/.jstudio-commander/config.json `port` field.
+//   3. Default port 11002 (matches server/src/config.ts fallback).
+// Required because Jose's dev setup uses a non-default port (3002);
+// a hardcoded 11002 silently dropped every hook event.
+const resolveServerUrl = () => {
+  if (process.env.COMMANDER_HOOK_URL) return process.env.COMMANDER_HOOK_URL;
+  let port = 11002;
+  try {
+    const cfg = join(homedir(), '.jstudio-commander', 'config.json');
+    if (existsSync(cfg)) {
+      const parsed = JSON.parse(readFileSync(cfg, 'utf-8'));
+      if (typeof parsed.port === 'number' && parsed.port > 0) port = parsed.port;
+    }
+  } catch { /* fall through to default */ }
+  return `http://127.0.0.1:${port}/api/hook-event`;
+};
+
+const SERVER_URL = resolveServerUrl();
 const POST_TIMEOUT_MS = 2000;
 
 // Pure — reshape Claude Code's hook JSON into Commander's POST body.

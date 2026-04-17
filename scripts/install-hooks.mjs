@@ -74,7 +74,10 @@ const writeSettingsAtomic = (obj) => {
 // Deploy the hook script file itself. Idempotent: copy the repo's
 // current version over whatever's installed, preserve execute permission.
 // Also removes any stale .sh sibling so Claude Code can never pick up
-// the legacy python-fallback hook.
+// the legacy python-fallback hook. Deploys a minimal
+// `~/.claude/hooks/package.json` alongside so Node treats the .js
+// file as ESM natively (no `MODULE_TYPELESS_PACKAGE_JSON` reparse
+// warning, no ~20ms per-invocation overhead).
 export const deployHookScript = (opts = {}) => {
   const repo = opts.from ?? repoHookScript;
   const target = opts.to ?? installedHookScript;
@@ -82,6 +85,11 @@ export const deployHookScript = (opts = {}) => {
   mkdirSync(dirname(target), { recursive: true });
   copyFileSync(repo, target);
   chmodSync(target, 0o755);
+  // Write the sibling package.json; tiny + idempotent.
+  writeFileSync(
+    join(dirname(target), 'package.json'),
+    JSON.stringify({ private: true, type: 'module' }, null, 2) + '\n',
+  );
   if (existsSync(legacy)) {
     try { unlinkSync(legacy); } catch { /* already gone */ }
   }
