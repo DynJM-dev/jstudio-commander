@@ -190,10 +190,13 @@ export const sessionService = {
     }
 
     // Fresh INSERT — defaults only applied here, never on update.
+    // Commander-spawned sessions use the 4.7 matrix defaults (xhigh effort,
+    // opus 4.7) instead of reading settings.json. The user's CLI default
+    // (getClaudeEffortLevel()) may differ from what Commander sessions want.
     const defaults: Partial<Record<string, unknown>> = {
       status: 'idle',
-      model: 'claude-opus-4-6[1m]',
-      effort_level: getClaudeEffortLevel(),
+      model: 'claude-opus-4-7',
+      effort_level: 'xhigh',
       session_type: 'raw',
     };
 
@@ -226,7 +229,7 @@ export const sessionService = {
     const id = uuidv4();
     const slug = opts.name || generateSlug();
     const tmuxName = generateTmuxName(id);
-    const model = opts.model || 'claude-opus-4-6[1m]';
+    const model = opts.model || 'claude-opus-4-7';
 
     // Create tmux session (in project directory if specified)
     tmuxService.createSession(tmuxName, opts.projectPath);
@@ -267,7 +270,7 @@ export const sessionService = {
           projectPath: opts.projectPath ?? null,
           status: 'working',
           model,
-          effortLevel: getClaudeEffortLevel(),
+          effortLevel: 'xhigh',
           sessionType,
         });
         db.prepare(`
@@ -290,7 +293,7 @@ export const sessionService = {
       throw err;
     }
 
-    // Post-boot injection — every new session gets `/effort max` as the first
+    // Post-boot injection — every new session gets `/effort xhigh` as the first
     // slash command so both PM and raw sessions run at max effort by default.
     // PM sessions additionally get their bootstrap prompt sent after the
     // effort ack renders so `/pm` loads at max.
@@ -307,10 +310,10 @@ export const sessionService = {
         return;
       }
       try {
-        tmuxService.sendKeys(tmuxName, '/effort max');
+        tmuxService.sendKeys(tmuxName, '/effort xhigh');
         console.log(`[sessions] ${shortId} effort set to max`);
       } catch (err) {
-        console.warn(`[sessions] ${shortId} /effort max send failed:`, (err as Error).message);
+        console.warn(`[sessions] ${shortId} /effort xhigh send failed:`, (err as Error).message);
       }
       if (bootstrap) {
         // Wait for Claude to acknowledge the /effort command before firing

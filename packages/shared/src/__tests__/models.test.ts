@@ -8,7 +8,11 @@ import {
 } from '../constants/models.js';
 
 describe('MODEL_CONTEXT_LIMITS', () => {
-  test('claude-opus-4-6 carries current policy default', () => {
+  test('claude-opus-4-7 → 1M context window', () => {
+    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-7'], 1_000_000);
+  });
+
+  test('claude-opus-4-6 → 1M (backward compat)', () => {
     assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-6'], 1_000_000);
   });
 
@@ -34,8 +38,8 @@ describe('normalizeModelId', () => {
     assert.equal(normalizeModelId('claude-sonnet-4-6 [beta]'), 'claude-sonnet-4-6');
   });
 
-  test('resolves short alias "opus" to canonical id', () => {
-    assert.equal(normalizeModelId('opus'), 'claude-opus-4-6');
+  test('resolves short alias "opus" to 4.7', () => {
+    assert.equal(normalizeModelId('opus'), 'claude-opus-4-7');
   });
 
   test('resolves short alias "sonnet" to canonical id', () => {
@@ -46,21 +50,29 @@ describe('normalizeModelId', () => {
     assert.equal(normalizeModelId('haiku'), 'claude-haiku-4-5');
   });
 
+  test('passes through claude-opus-4-7 unchanged', () => {
+    assert.equal(normalizeModelId('claude-opus-4-7'), 'claude-opus-4-7');
+  });
+
   test('passes unknown ids through unchanged', () => {
     assert.equal(normalizeModelId('some-future-model'), 'some-future-model');
   });
 });
 
 describe('getContextLimit', () => {
+  test('claude-opus-4-7 → 1M', () => {
+    assert.equal(getContextLimit('claude-opus-4-7'), 1_000_000);
+  });
+
   test('claude-opus-4-6[1m] → 1M (suffix opts in)', () => {
     assert.equal(getContextLimit('claude-opus-4-6[1m]'), 1_000_000);
   });
 
-  test('claude-opus-4-6 → current policy (1M per existing map)', () => {
+  test('claude-opus-4-6 → 1M (backward compat)', () => {
     assert.equal(getContextLimit('claude-opus-4-6'), 1_000_000);
   });
 
-  test('opus short form → resolves and returns model default', () => {
+  test('opus short form → resolves to 4.7 → 1M', () => {
     assert.equal(getContextLimit('opus'), 1_000_000);
   });
 

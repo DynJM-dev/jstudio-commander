@@ -14,8 +14,11 @@ const LIVE_JSONL_MS = 10 * 60_000;
 // omit the [1m] suffix. Normalize in-memory before persisting so teammate
 // rows inherit the 1M context default. Does NOT mutate the on-disk config.
 const SHORT_MODEL: Record<string, string> = {
-  opus: 'claude-opus-4-6[1m]',
-  'claude-opus-4-6': 'claude-opus-4-6[1m]',
+  opus: 'claude-opus-4-7',
+  'claude-opus-4-7': 'claude-opus-4-7',
+  // Legacy backward-compat: existing team configs may still reference 4.6.
+  'claude-opus-4-6': 'claude-opus-4-7',
+  'claude-opus-4-6[1m]': 'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5',
 };
