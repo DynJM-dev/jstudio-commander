@@ -178,6 +178,20 @@ systemStatsService.start();
   if (retired > 0) console.log(`[startup-heal] retired ${retired} orphan team session row(s)`);
 }
 
+// Phase S.1 Patch 2 — heal legacy `tmux_session = <session-name>` rows
+// into pane-id rows. Runs AFTER orphaned-team retirement (so we don't
+// waste work on rows about to be stopped) and BEFORE cross-session
+// teammate heal (so its ownership comparisons operate on already-
+// corrected targets). See sessionService.healLegacySessionNameTmuxTargets.
+{
+  const { healed, stopped } = sessionService.healLegacySessionNameTmuxTargets();
+  if (healed > 0 || stopped > 0) {
+    console.log(
+      `[startup-heal] tmux_session: ${healed} row(s) → pane id, ${stopped} row(s) → stopped`,
+    );
+  }
+}
+
 // Watch team config files and emit teammate:spawned / teammate:dismissed
 teamConfigService.start();
 

@@ -819,6 +819,69 @@ export const sessionService = {
     return healed;
   },
 
+  // Phase S.1 Patch 2 — boot-time heal for legacy tmux_session values
+  // that are raw session names (e.g. `jsc-04bb12d7`) instead of pane
+  // ids (`%NN`). Those rows were written by the pre-S.1 createSession
+  // path and cause `tmux send-keys -t <session-name>` to route to
+  // whichever pane is currently active — the OvaGas PM→coder message
+  // leak. Run once at startup AFTER healOrphanedTeamSessions + BEFORE
+  // healCrossSessionTeammates so cross-session checks can compare
+  // real pane-to-PM ownership on already-corrected rows.
+  //
+  // For each candidate row:
+  //   - `tmuxService.resolveFirstPaneId(tmux_session)` → pane id OR null.
+  //   - Resolved → UPDATE tmux_session to the pane id, bump updated_at.
+  //   - Unresolved (tmux session gone) → status='stopped' + stopped_at.
+  //
+  // Sentinel values (`agent:*`, `retired:*`, `%NN`) and already-stopped
+  // rows are skipped. Idempotent: after healing, subsequent runs find
+  // nothing to do.
+  //
+  // Returns a summary so the caller can log + telemeter.
+  healLegacySessionNameTmuxTargets(): { healed: number; stopped: number } {
+    const db = getDb();
+    // Select non-stopped rows whose tmux_session is NOT a pane id,
+    // NOT a retired sentinel, NOT an agent sentinel. `jsc-*` session
+    // names are the primary target; arbitrary user tmux session names
+    // would also match (e.g. a user attached a custom session via the
+    // orphan-discovery path). Both classes get the same treatment.
+    const rows = db.prepare(
+      `SELECT id, name, tmux_session FROM sessions
+       WHERE status != 'stopped'
+         AND tmux_session NOT LIKE '\\%%' ESCAPE '\\'
+         AND tmux_session NOT LIKE 'retired:%'
+         AND tmux_session NOT LIKE 'agent:%'`,
+    ).all() as Array<{ id: string; name: string; tmux_session: string }>;
+    if (rows.length === 0) return { healed: 0, stopped: 0 };
+
+    let healed = 0;
+    let stopped = 0;
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      const paneId = tmuxService.resolveFirstPaneId(r.tmux_session);
+      if (paneId) {
+        db.prepare(
+          "UPDATE sessions SET tmux_session = ?, updated_at = ? WHERE id = ?",
+        ).run(paneId, now, r.id);
+        console.log(
+          `[startup-heal] tmux_session healed ${r.name || r.id.slice(0, 20)} — ${r.tmux_session} → ${paneId}`,
+        );
+        healed += 1;
+        const fresh = this.getSession(r.id);
+        if (fresh) eventBus.emitSessionUpdated(fresh);
+      } else {
+        db.prepare(
+          "UPDATE sessions SET status = 'stopped', stopped_at = COALESCE(stopped_at, ?), updated_at = ? WHERE id = ?",
+        ).run(now, now, r.id);
+        console.log(
+          `[startup-heal] tmux_session stale — ${r.name || r.id.slice(0, 20)} (${r.tmux_session}) → stopped (tmux session gone)`,
+        );
+        stopped += 1;
+      }
+    }
+    return { healed, stopped };
+  },
+
   markTeammateDismissed(sessionId: string): void {
     const db = getDb();
     const now = new Date().toISOString();
