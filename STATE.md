@@ -1,21 +1,23 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: **Post-v1 Feature Wave 2 + UI Sprint + Opus 4.7 migration complete**
+- Phase: **Phase A — Token-audit cleanup sweep complete (Coder-11)**
 - Last updated: 2026-04-16
-- HEAD: `6d69fb0` (Opus 4.7 migration)
+- HEAD: `72d2fae` (close #191) — Phase A commits: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae`
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **3002** (config.json override) · Vite: **5173**
 - Blockers: none
-- Backlog: token-audit follow-ups (#216-#223) + #230 project tech-stack pills (needs server endpoint). All low priority.
+- Backlog: #216 (useChat tail-delta), #219 (SessionTerminalPreview pane-poll batch), #230 (project tech-stack pills). All low priority.
 
 ## Phases
 - [x] Phase 0-10: v1 Complete (see PM_HANDOFF.md)
 - [x] Post-v1 Polish Wave 1 — Coder-7 (42 commits)
 - [x] Post-v1 Polish Wave 2 — Coder-8 (plan-attach + verification)
 - [x] Feature Wave 1 — Coder-9 (17 commits, 2026-04-14 → 2026-04-15)
-- [x] **Feature Wave 2 + Stabilization — Coder-9 (25 commits, 2026-04-15 → 2026-04-16)**
-- [ ] Feature Wave 3 — TBD (see "Next up" below)
+- [x] Feature Wave 2 + Stabilization — Coder-9 (25 commits, 2026-04-15 → 2026-04-16)
+- [x] **Phase A — Token-audit cleanup sweep — Coder-11 (5 commits, 2026-04-16)**
+- [ ] Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause)
+- [ ] Phase C — #230 project tech-stack pills
 
 ## Feature Wave 2 Highlights
 
@@ -70,8 +72,8 @@
 
 ## Next up (pending backlog)
 
-1. **Token-audit follow-ups** — #216 (useChat tail-delta), #217 (TopCommandBar double-poll), #218-#223. Low priority.
-2. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint)
+1. **Token-audit follow-ups (remaining)** — #216 (useChat tail-delta), #219 (SessionTerminalPreview pane-poll batch). Phase B candidates.
+2. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint). Phase C.
 3. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
 4. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
 5. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
