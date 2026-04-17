@@ -3,6 +3,7 @@ import { getDb } from '../db/connection.js';
 import { agentStatusService } from './agent-status.service.js';
 import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
+import { sessionService } from './session.service.js';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -177,6 +178,12 @@ const poll = (): void => {
       // Update DB
       db.prepare("UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?")
         .run(newStatus, session.id);
+
+      // Phase N.0 Patch 3 — a real poller-driven flip (not a yield
+      // no-op) counts as proof of life. Skipped yields above continue
+      // before reaching here, so this branch fires ONLY on genuine
+      // pane-derived transitions.
+      sessionService.bumpLastActivity(session.id);
 
       // Update cache
       lastKnownStatus.set(session.id, newStatus);

@@ -83,6 +83,13 @@ export const setupWatcherBridge = (): void => {
     }
 
     if (session) {
+      // Phase N.0 Patch 3 — JSONL append is the chokidar-level proof of
+      // life. A busy session produces many appends per turn; each bumps
+      // heartbeat + broadcasts via WS. No throttle in v1 — the client
+      // just sees `lastActivityAt` advance, which React collapses into
+      // a single render via state-identity.
+      sessionService.bumpLastActivity(session.id);
+
       // Phase L — persist the new transcript file to the session's
       // transcript_paths list so `/api/chat/:sessionId` reads fresh
       // content on the next REST call. Without this, WS events delivered

@@ -50,6 +50,15 @@ export const getDb = (): Database.Database => {
     db.exec("ALTER TABLE sessions ADD COLUMN transcript_paths TEXT NOT NULL DEFAULT '[]'");
     console.log('[db] Migration: added transcript_paths column to sessions');
   }
+  // Phase N.0 Patch 3 — heartbeat timestamp (epoch ms). Every inbound
+  // signal (hook event, statusline tick, chokidar JSONL append, status-
+  // poller write) bumps this via sessionService.bumpLastActivity so the
+  // UI can render a "Xs ago" proof-of-life + force-display idle after
+  // the 30s stale threshold.
+  if (!cols.some((c) => c.name === 'last_activity_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] Migration: added last_activity_at column to sessions');
+  }
 
   // #230 — project tech-stack pills + recent commits persistence.
   const projCols = db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;

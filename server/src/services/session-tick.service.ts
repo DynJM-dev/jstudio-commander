@@ -2,6 +2,7 @@ import type { SessionTick, StatuslineRawPayload } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
 import { eventBus } from '../ws/event-bus.js';
+import { sessionService } from './session.service.js';
 
 // Phase M — in-memory dedup of rapid-fire ticks. Claude Code throttles
 // at 300ms so we're primarily guarding against a misbehaving forwarder
@@ -168,6 +169,10 @@ export const sessionTickService = {
     });
 
     eventBus.emitSessionTick(tick.commanderSessionId, tick);
+    // Phase N.0 Patch 3 — every tick counts as proof of life. Happens
+    // AFTER the tick upsert + emit so a client receiving both events
+    // in-order never sees a heartbeat-then-stale-tick gap.
+    sessionService.bumpLastActivity(tick.commanderSessionId);
     return tick;
   },
 

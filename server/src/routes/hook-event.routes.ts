@@ -220,6 +220,10 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
         evidence: 'stop-hook',
         at: new Date().toISOString(),
       });
+      // Phase N.0 Patch 3 — Stop is the single most important heartbeat
+      // because it's the signal the 5s poller can miss entirely. Bumping
+      // here guarantees the "Xs ago" counter resets at turn boundary.
+      sessionService.bumpLastActivity(match.id);
       console.log(`[hook:Stop] session=${match.id.slice(0, 30)} → idle (via ${match.strategy})`);
     }
   }
@@ -250,6 +254,10 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   }
 
   hookMatchStats[match.strategy] += 1;
+  // Phase N.0 Patch 3 — every successful hook match counts as proof of
+  // life. Bump BEFORE appendTranscriptPath so the heartbeat timestamp is
+  // visible even on dedup'd hooks where no new path is stored.
+  sessionService.bumpLastActivity(match.id);
   const appended = sessionService.appendTranscriptPath(match.id, transcriptPath);
   const shortId = match.id.slice(0, 30);
   console.log(

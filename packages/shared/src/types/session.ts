@@ -57,6 +57,13 @@ export interface Session {
   // switches, or any other rotation produces additional entries here
   // rather than replacing the previous transcript.
   transcriptPaths: string[];
+  // Phase N.0 Patch 3 — epoch-ms of the last inbound signal (hook
+  // event, statusline tick, chokidar JSONL append, or an actual
+  // status-poller write that changed the row). 0 when never
+  // heartbeated — brand-new sessions or pre-Patch-3 rows. Clients
+  // render "Xs ago" from `Date.now() - lastActivityAt` and force-
+  // display idle after a 30s stale threshold regardless of `status`.
+  lastActivityAt: number;
   // Live pane activity — populated on route boundaries (GET /sessions/:id
   // and the teammates list) by re-capturing the tmux pane tail. Null when
   // nothing parses, when the session is stopped, or when the list endpoint

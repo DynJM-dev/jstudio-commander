@@ -114,6 +114,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   teamName: (row.team_name as string | null) ?? null,
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
   transcriptPaths: parseTranscriptPaths(row.transcript_paths),
+  lastActivityAt: Number(row.last_activity_at ?? 0),
 });
 
 // Column mapping kept in one place so every write surface applies the same
@@ -344,6 +345,20 @@ export const sessionService = {
     const session = this.getSession(id)!;
     eventBus.emitSessionCreated(session);
     return session;
+  },
+
+  // Phase N.0 Patch 3 — single write surface for heartbeat. Every
+  // inbound signal (hook, tick, JSONL append, poller flip) funnels
+  // through here so the column stays consistent + the WS broadcast
+  // fires in lock-step with the DB write. Fire-and-forget — callers
+  // should treat it as a proof-of-life pulse, not load-bearing.
+  // Returns the epoch-ms timestamp written.
+  bumpLastActivity(sessionId: string): number {
+    const db = getDb();
+    const ts = Date.now();
+    db.prepare('UPDATE sessions SET last_activity_at = ? WHERE id = ?').run(ts, sessionId);
+    eventBus.emitSessionHeartbeat(sessionId, ts);
+    return ts;
   },
 
   // Add a JSONL transcript to a session's ordered path list. Idempotent —

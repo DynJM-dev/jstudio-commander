@@ -41,7 +41,8 @@ export type WSEvent =
   | { type: 'preference:changed'; key: string; value: unknown }
   | { type: 'teammate:spawned'; teammate: Teammate }
   | { type: 'teammate:dismissed'; sessionId: string }
-  | { type: 'session:tick'; sessionId: string; tick: SessionTick };
+  | { type: 'session:tick'; sessionId: string; tick: SessionTick }
+  | { type: 'session:heartbeat'; sessionId: string; ts: number };
 
 export type WSCommand =
   | { type: 'terminal:input'; sessionId: string; data: string }

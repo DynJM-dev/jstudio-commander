@@ -85,6 +85,14 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast(`chat:${sessionId}`, { type: 'session:tick', sessionId, tick });
   });
 
+  // Phase N.0 Patch 3 — heartbeat pulse on every inbound signal. Broad-
+  // cast on the global `sessions` topic so the SessionCard grid can
+  // render a "Xs ago" proof-of-life across all visible cards without
+  // per-session subscribes.
+  eventBus.on('session:heartbeat', (sessionId, ts) => {
+    rooms.broadcast('sessions', { type: 'session:heartbeat', sessionId, ts });
+  });
+
   // Health beacon: a separate cadence from the per-socket protocol
   // heartbeat in handler.ts. Clients use the absence of these for ~10s
   // as a signal that the server is restarting (typical during dev hot

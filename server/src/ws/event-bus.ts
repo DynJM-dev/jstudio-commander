@@ -73,6 +73,14 @@ class CommanderEventBus extends EventEmitter {
     this.emit('session:tick', sessionId, tick);
   }
 
+  // Phase N.0 Patch 3 — lightweight proof-of-life pulse. Fired on every
+  // inbound signal (hook, tick, JSONL append, poller flip). Payload is
+  // just the session id + epoch-ms so the UI can recompute "Xs ago"
+  // without refetching the full session row.
+  emitSessionHeartbeat(sessionId: string, ts: number): void {
+    this.emit('session:heartbeat', sessionId, ts);
+  }
+
   // System events
   emitSystemError(error: string): void {
     this.emit('system:error', error);
