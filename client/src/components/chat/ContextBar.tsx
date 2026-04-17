@@ -19,6 +19,7 @@ import { formatTokens, formatCost } from '../../utils/format';
 import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
 import { getContextLimit } from '@commander/shared';
+import { useSessions } from '../../hooks/useSessions';
 
 const M = 'Montserrat, sans-serif';
 
@@ -101,6 +102,7 @@ const getStatusInfo = (
   sessionStatus: string | undefined,
   actionLabel: string | null,
   hasPrompt: boolean,
+  activeTeammateCount: number,
 ): StatusInfo => {
   if (sessionStatus === 'working') {
     return {
@@ -110,11 +112,22 @@ const getStatusInfo = (
     };
   }
   if (sessionStatus === 'waiting') {
-    return {
-      label: hasPrompt ? 'Waiting for approval' : 'Waiting for input',
-      dotColor: 'var(--color-idle)',
-      pulse: true,
-    };
+    // Only call it "Waiting for input" when there's a real actionable
+    // prompt OR no teammates are running. A PM that's just paused for
+    // its coders to finish is "monitoring", not awaiting a click —
+    // labeling that as "Waiting for input" with a yellow glow is the
+    // false-positive Phase G.1 closes.
+    if (hasPrompt) {
+      return { label: 'Waiting for approval', dotColor: 'var(--color-idle)', pulse: true };
+    }
+    if (activeTeammateCount > 0) {
+      return {
+        label: `Monitoring ${activeTeammateCount} teammate${activeTeammateCount === 1 ? '' : 's'}`,
+        dotColor: 'var(--color-accent)',
+        pulse: true,
+      };
+    }
+    return { label: 'Waiting for input', dotColor: 'var(--color-idle)', pulse: true };
   }
   // idle, stopped, or undefined
   return {
@@ -240,10 +253,30 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   const actionLabel = jsonlAction?.label ?? (isWorking ? terminalHint : null) ?? null;
   const ActionIcon = jsonlAction?.icon ?? null;
 
+  // Active-teammate count for the current session — drives the
+  // "Monitoring N teammates" label so a paused PM with running coders
+  // doesn't get the misleading "Waiting for input" yellow-glow card.
+  // Mirrors the keying from TopCommandBar's bot badge: parent_session_id
+  // on a teammate row may match either the Commander UUID or the
+  // claudeSessionId, so we count both.
+  const { sessions } = useSessions();
+  const activeTeammateCount = useMemo(() => {
+    if (!sessionId) return 0;
+    const me = sessions.find((s) => s.id === sessionId);
+    const claudeId = me?.claudeSessionId;
+    let count = 0;
+    for (const s of sessions) {
+      if (!s.parentSessionId || s.status === 'stopped') continue;
+      if (s.parentSessionId === sessionId) count += 1;
+      else if (claudeId && s.parentSessionId === claudeId) count += 1;
+    }
+    return count;
+  }, [sessions, sessionId]);
+
   // Status info (always shown)
   const effectiveStatus = userJustSent && sessionStatus !== 'working' ? 'working' : sessionStatus;
   const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
-  const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt);
+  const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount);
   const status = messagesQueued && isWorking
     ? { ...statusInfo, label: `${statusInfo.label} (queued)` }
     : statusInfo;
