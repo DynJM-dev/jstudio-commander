@@ -209,22 +209,30 @@ interface ContextBarProps {
   sessionTick?: SessionTick | null;
 }
 
+// Phase S.1 Patch 4 — tick-first ctx% resolver. Exported so unit tests
+// can exercise the tick-vs-fallback branch without rendering React.
+// When the tick has arrived we render its `usedPercentage` verbatim so
+// this bar, LiveActivityRow, the band rail, and ContextLowToast all
+// display the same number. Fallback path (no tick or null percentage)
+// keeps the legacy `tokens / contextLimit` ratio so pre-Phase-M
+// sessions still render a sensible value.
+export const resolveContextPercent = (
+  tick: SessionTick | null | undefined,
+  displayTokens: number,
+  contextLimit: number,
+): number => {
+  const tickPct = tick?.contextWindow.usedPercentage ?? null;
+  if (tickPct !== null) return Math.min(Math.round(tickPct), 100);
+  if (displayTokens <= 0 || contextLimit <= 0) return 0;
+  return Math.min(Math.round((displayTokens / contextLimit) * 100), 100);
+};
+
 export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
   const compacted = contextTokens !== undefined && contextTokens !== totalTokens;
-  // Phase S.1 Patch 4 — tick-first ctx%. When a SessionTick has arrived
-  // we render its `usedPercentage` verbatim so this bar, LiveActivityRow,
-  // the band rail, and ContextLowToast all display the same number.
-  // Fallback path (no tick yet, or `usedPercentage` is null) keeps the
-  // legacy token/contextLimit ratio so pre-Phase-M sessions don't blank.
-  const tickPct = sessionTick?.contextWindow.usedPercentage ?? null;
-  const contextPercent = tickPct !== null
-    ? Math.min(Math.round(tickPct), 100)
-    : (displayTokens > 0
-        ? Math.min(Math.round((displayTokens / contextLimit) * 100), 100)
-        : 0);
+  const contextPercent = resolveContextPercent(sessionTick, displayTokens, contextLimit);
 
   const barColor = contextPercent > 85
     ? 'var(--color-error)'
