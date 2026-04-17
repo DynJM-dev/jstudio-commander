@@ -79,6 +79,17 @@ if (isProduction && existsSync(clientDist)) {
   );
 }
 
+// Dev-mode convenience: the .app launcher + any bookmark hits the
+// server port directly. In production, fastify-static serves /. In
+// dev, / has no handler unless we add one — bookmarks + Commander.app
+// would 404. Redirect / → Vite so the user lands on the live UI
+// regardless of which URL they opened. Respects VITE_URL env override
+// in case Vite moves off :5173.
+if (!isProduction) {
+  const VITE_URL = process.env.VITE_URL ?? 'http://localhost:5173';
+  app.get('/', async (_req, reply) => reply.redirect(VITE_URL, 302));
+}
+
 // Security headers — runs on every response, including static assets.
 app.addHook('onRequest', securityHeadersMiddleware);
 
