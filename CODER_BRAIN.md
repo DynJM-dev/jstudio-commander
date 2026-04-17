@@ -1625,6 +1625,148 @@ doesn't change semantic session state, DO NOT bump `updated_at`.
 
 ---
 
+## Coder-16 Session — Phase P.4 (E2E buildout — Playwright + Fastify integration harness, 2026-04-17)
+
+HEAD after this session: **`8b62bb3`**. Previous HEAD was `2ca5ec3`
+(Phase P audit docs commit). Six commits shipped:
+
+1. `933e498` — `test(e2e): repair core-flows stubs — hardened sessions-page smoke`
+2. `c11237e` — `test(e2e): session-creation end-to-end spec`
+3. `e6f7177` — `test(e2e): hook-stop-flip end-to-end spec`
+4. `92fd593` — `test(e2e): statusline-tick end-to-end spec`
+5. `2d86e5c` — `test(server): Fastify HTTP integration harness + 3 specs`
+6. `8b62bb3` — `test(config): Playwright webServer documentation + config hardening`
+
+### Test inventory after this phase (4 execution modes)
+
+| Mode | Command | Tests | Runtime |
+|------|---------|-------|---------|
+| Server unit (node --test) | `pnpm -C server test` | 137 | 0.7s |
+| Client unit (node --test) | `pnpm -C client test` | 145 | 0.5s |
+| Server integration (node --test + app.inject) | `pnpm -C server test:integration` | 11 | 1.0s |
+| Playwright E2E | `pnpm -C client exec playwright test` | 5 | 17s |
+| **Total** | — | **298** | — |
+
+Unit counts unchanged from Phase P.3 (137/145) — zero regressions.
+16 brand-new tests: 11 server integration + 4 new E2E + 1 repaired
+E2E stub. Typecheck clean on shared + server + client.
+
+### Key invariants added in P.4 (beyond existing 42)
+
+43. **`COMMANDER_DATA_DIR` env override** in `server/src/config.ts`
+    redirects `dataDir` + `dbPath` + `configPath` to a throwaway
+    `mkdtempSync` path. Integration tests MUST set this BEFORE
+    importing anything that touches config — use top-level await
+    + dynamic import in the test file:
+    ```ts
+    process.env.COMMANDER_DATA_DIR = mkdtempSync(...);
+    const { buildTestApp } = await import('./harness.js');
+    ```
+    Production is unchanged — when the env is absent, config falls
+    back to `~/.jstudio-commander/`.
+
+44. **`app.inject()` with default `remoteAddress: 127.0.0.1`** passes
+    the P.1 C1/H1 loopback gate out of the box. No socket plumbing
+    required. To exercise the refused-path (403), override explicitly:
+    `app.inject({ ..., remoteAddress: '8.8.8.8' })`.
+
+45. **`--test-force-exit` on the integration script**
+    (`server/package.json` → `test:integration`) drops runtime from 13s
+    to 1s. Without it, Node's test runner waits on createSession's
+    fire-and-forget `waitForClaudeReady` 12s setTimeout chain. Safe
+    for integration because all assertions have already run; don't
+    apply it to unit tests (shouldn't have dangling timers anyway).
+
+46. **Integration harness shape** (`server/src/__tests__/integration/harness.ts`):
+    - `buildTestApp()` — pristine Fastify with cors + routes only (no
+      WS server, no file watcher, no instance lock, no status poller)
+    - `cleanupTestApp(app)` — closes Fastify + closes DB +
+      `eventBus.removeAllListeners()` (must run in `after()`)
+    - `waitForBusEvent(name, predicate?, timeoutMs=2000)` — subscribes
+      to eventBus, resolves on first matching emit, rejects on
+      timeout. Use this instead of a real WS client for WS-shape
+      contract tests.
+
+47. **Playwright specs use `page.locator('.glass-card', { has: heading })`**
+    to scope assertions to a specific SessionCard without XPath
+    fragility. My first attempt used
+    `ancestor::*[contains(@class, "glass-card")]` which failed —
+    `.filter({ has: ... })` is the idiomatic way.
+
+48. **Playwright config has NO `webServer` block.** The suite assumes
+    `pnpm dev` is already running. Reason: Jose's ambient dev workflow
+    races against auto-spawn (port already bound). See
+    `client/e2e/README.md` for the env var matrix (`COMMANDER_URL`,
+    `COMMANDER_API`, `COMMANDER_PIN`).
+
+### Deferred E2E backlog (team-lead explicit — NOT scope creep)
+
+- **Chat-ingestion spec** (`spec/chat-ingestion.spec.ts` from Phase P
+  E2E audit Top 5 #4). Effort ~4h. Writes fixture JSONL → chokidar
+  discovers → WS fans to `<ChatThread>`. Deferred to future E2E pass.
+- **Heartbeat-live-ago spec** (audit Top 5 #5). Effort ~2h. Closes
+  M-4 gap. Currently the `formatSecondsAgo` helper + the
+  SessionCard-rendered "Xs ago" share a mirror test; no real
+  WS → re-render coverage.
+- **React component-render tests (H-3).** Playwright CT mode or
+  JSDOM + happy-dom. Deferred; current E2E covers SessionCard via
+  live browser.
+- **File-watcher chain tests (H-4).** chokidar → watcher-bridge →
+  eventBus emit chain is the substrate of chat display. ~3-4h. Still
+  untested at any layer.
+- **CI setup (GitHub Actions).** Per E2E audit P0+P1: typecheck +
+  unit + E2E on push. Its own phase.
+
+### Side-effect invariants for future test authors
+
+- **Specs that create sessions spawn real `jsc-<8char>` tmux panes.**
+  Cleanup via `afterEach` DELETE. Crash-leaked panes are swept by the
+  next server boot's `[startup]` recovery. Verified 0 orphans after
+  my runs with `tmux list-sessions | grep jsc-`.
+- **Playwright specs write to the live `~/.jstudio-commander/commander.db`**.
+  Sessions are soft-deleted (status='stopped') and show in the Stopped
+  fold. Fine for dev; if CI wants clean DB, archive between runs.
+- **Integration tests isolate via `COMMANDER_DATA_DIR=mkdtempSync`.**
+  Zero touch on the dev DB. `after()` cleanup `rmSync`-purges the
+  tmpdir.
+- **Non-loopback tests use `remoteAddress: '8.8.8.8'`** (or any
+  non-loopback) to exercise the 403 path.
+
+### Post-compact reconstruction path (6-step checklist — Phase P.4)
+
+1. `git log --oneline -10` — confirm HEAD is **`8b62bb3`**. You should
+   see the 6 Phase P.4 commits above `2ca5ec3` (Phase P docs).
+2. `pnpm -r run typecheck` — clean across shared + server + client.
+3. `pnpm -C server test && pnpm -C client test` — **server 137,
+   client 145, both green** (unchanged from P.3).
+4. `pnpm -C server test:integration` — **11 integration tests green**
+   in ~1s (uses `--test-force-exit`).
+5. `COMMANDER_API=http://localhost:3002 pnpm -C client exec playwright test`
+   — **5 E2E tests green** in ~17s. Requires `pnpm dev` running
+   elsewhere (server on 3002 per Jose's config.json; Vite on 11573).
+6. Deferred items live in `audits/PHASE_P_E2E.md` — chat-ingestion,
+   heartbeat-live-ago, React CT, file-watcher chain, CI setup. Phase Q
+   (auto pre-compact assistant) + Phase R (QA L4 + M3-M6 cleanup) are
+   the next announced phases; E2E backlog continues in parallel.
+
+### Gotchas for the next coder
+
+- `fileWatcherService` + `statusPollerService` + `teamConfigService`
+  are NOT registered in the integration harness. If a test needs
+  them, call their `.start()` explicitly — but remember they leak
+  timers that `--test-force-exit` will mask. Prefer upserting DB
+  state directly and asserting route behavior without the background
+  services.
+- `app.inject()` doesn't trigger `cors` CORS-preflight semantics like
+  a real `OPTIONS` request would. If you need to test CORS headers,
+  do a real listen (use `app.listen({ port: 0 })` to grab an
+  ephemeral port).
+- The E2E README (`client/e2e/README.md`) is the canonical setup
+  doc. If you add a new spec, update the test inventory section so
+  counts stay honest.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
