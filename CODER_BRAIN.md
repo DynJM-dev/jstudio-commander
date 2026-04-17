@@ -629,6 +629,84 @@ All three typechecks PASS (shared, client, server). 19/19 unit tests pass (13 ne
 
 ---
 
+## Coder-14 Session — Phase G (Dismiss hygiene + cross-session rejection + adoption widening + sidebar polish, 2026-04-17)
+
+### Commits (3)
+
+```
+2f04086 style(sidebar): larger teammate icons in minimized strip
+3ba49a9 fix(sessions): cross-session pane guard + widened adoption cwd
+0b0d632 fix(split): dismiss button ends relationship + closes pane reliably
+```
+
+### Triggering context
+
+Two linked user-facing bugs discovered on OvaGas-ERP:
+1. A "coder" tile in the ovagas-ui split view couldn't be dismissed — clicking X cleared local UI but the teammate came right back on reload.
+2. That same "coder" was actually pointing at the OvaGas PM's own tmux pane. Team config had `tmuxPaneId: '%51'`; %51 lives inside `jsc-e16a1cb2` which belongs to the OvaGas PM session. Any send-key would have corrupted the PM's input.
+
+Plus a polish ask: make the minimized teammate icons on the right strip more visible.
+
+### What shipped
+
+**Bundle 3 — dismiss button fix (0b0d632)**
+- `client/src/pages/SplitChatLayout.tsx` `closeCoderPane` rewritten. Used to just `setTeammates([])` + clear the split preference, which the next WS event or page refresh immediately undid. Now it:
+  - Dismisses ONLY the active tab (previous code dropped all teammates on a single X click).
+  - Optimistically promotes the next remaining teammate to `activeTabId`.
+  - Calls the new `POST /api/sessions/:id/dismiss` endpoint.
+  - Rollback-refreshes from the server on API failure so server truth wins.
+- Server: new route `POST /api/sessions/:id/dismiss` → `sessionService.markTeammateDismissed`. Non-destructive (team config on disk untouched, history row preserved, only the agent_relationships edge closes + session flips to `stopped`).
+- `markTeammateDismissed` now emits both `teammate:dismissed` and `session:updated` WS events so all connected clients drop the tab in real time.
+
+**Bundles 1 + 2 + 4 — reconcile hardening (3ba49a9)**
+- `sessionService.detectCrossSessionPaneOwner(paneId, excludeSessionId?)` — single helper used by both the reconcile guard and the boot heal. `listAllPanes()` finds the owning tmux session; if that session starts with `jsc-` and matches a Commander PM row, returns the owning PM.
+- `reconcile()` in `team-config.service.ts` — for any member with a real `%NN` paneId, run the cross-session check. If owned by another PM, log the rejection, call `markTeammateDismissed`, and skip the upsert. Closes the exact ovagas-ui failure.
+- `findAdoptablePmAtCwd(cwd)` — widened to match exact path, child-of-PM, or PM-is-child-of-config. Tightness preference: exact > one-level-descendant > reverse > deeper. `descendantOf(child, parent)` uses a trailing-slash boundary so `/Projects/A` can never adopt `/Projects/AB`. Fixes the OvaGas adoption miss (team config was at `/OvaGas-ERP/apps/jstudio-base`, PM at `/OvaGas-ERP`).
+- `sessionService.healCrossSessionTeammates()` + call in `server/src/index.ts` boot sequence. One-shot idempotent cleanup: every teammate row whose pane belongs to another PM's jsc-* tmux session is dismissed + logged. Counts are printed when > 0.
+
+**Bundle 5 — larger sidebar icons (2f04086)**
+- `STRIP_WIDTH` 48 → 64. Teammate button width 32 → 52 (~1.5×). `StatusBadge size='sm'` → `'md'`. Label font 9px → 10px with medium weight. Role/name truncation 4 → 6 chars. Hover + waiting-glow + pulse animations preserved.
+
+### Patterns established
+
+- **Soft dismiss vs hard delete.** `/dismiss` is non-destructive (ends relationship, flips status to stopped). `/sessions/:id` DELETE hard-deletes and archives the team config. Keep these distinct — "close this pane in my split view" is a UX action, not a team-management one. Users should be able to reopen the teammate by re-listing, not by rebuilding the team.
+- **Single helper, two callers.** Cross-session detection is used by the reconcile guard (prevention) and the boot heal (cleanup). Extracting `detectCrossSessionPaneOwner` keeps the logic in one place; `healCrossSessionTeammates` is a thin wrapper that iterates the DB and routes hits through `markTeammateDismissed`.
+- **Tightness-preferring adoption.** A one-size-fits-all exact match is too strict for multi-directory monorepos (`apps/*`). The tier-based scoring — exact > descendant > reverse — tolerates reasonable directory structures without adopting across sibling trees. The `/` boundary in `descendantOf` is load-bearing; without it, `/Projects/A` matches `/Projects/Apple`.
+- **Optimistic dismiss with server-truth rollback.** Immediate local state update for perceived latency, but on API failure refetch from server so truth wins. Pattern worth reusing for any UI-triggered dismissal.
+- **Idempotent boot heals.** Run on every boot; no tracking of "already healed". Expectation: fix Bundle 1's root cause, heals converge to zero. Log when > 0 so operators notice any regression.
+
+### Critical lessons (read before touching nearby code)
+
+1. **A teammate's config paneId is NOT trustworthy.** Orchestrators occasionally write pane ids that belong to other Commander-managed sessions. Always run `detectCrossSessionPaneOwner` before trusting a pane for send-key. If you add a new code path that uses teammate pane ids, call the guard.
+2. **Exact-match cwd adoption misses common layouts.** Any monorepo / subdirectory / apps-folder structure needs descendant-match adoption. The tier-scoring prevents ambiguity when multiple PMs live in related trees.
+3. **Dismiss doesn't remove the member from the team config file.** If the user edits the on-disk team config (rare but possible), chokidar fires reconcile, the dismissed teammate's `seen` state is preserved → no re-emit, but if the file removes+re-adds the member, re-emission is correct behavior. Acceptable; a "sticky dismissed" flag is tech debt (below).
+4. **`listAllPanes()` is a shell-out.** One per reconcile iteration is fine; a tight loop would hammer tmux. `detectCrossSessionPaneOwner` is already one shell-out per call — caller should batch if it starts getting hot.
+5. **The minimized strip button dimensions interact with `useIsNarrow()`.** Below 768px the strip always renders. Bumping STRIP_WIDTH too aggressively would squeeze mobile; 64px is still acceptable on 320px viewports (20% width). Don't take this above ~72px without re-checking mobile.
+6. **Dismiss endpoint does NOT kill tmux panes.** That's deliberate — if the teammate was a cross-session pane reference, killing would terminate the PM's pane. Dismiss only updates DB state.
+
+### Tech debt opened by Phase G
+
+- **Sticky-dismissed flag.** A teammate the user dismisses is only durable until the team config is rewritten. If the orchestrator re-writes the config with the same member record, chokidar fires reconcile and resurrects the teammate. Add a `user_dismissed_at` column + skip-on-reconcile if this becomes a real problem.
+- **detectCrossSessionPaneOwner runs on every reconcile cycle for every member.** Batchable: fetch listAllPanes() once per reconcile, pass the map into each call. Trivial refactor when reconcile gets called on high-churn teams.
+- **Startup heal logs per-row but doesn't batch.** Fine today (single-digit row counts). If a future team config bug produces hundreds of cross-session rows, consider suppressing per-row logs and emitting a summary.
+- **Adoption doesn't handle renames.** If a PM is at `/A/apps/jstudio-base` and later moves to `/B/apps/jstudio-base`, the adoption query keys on project_path and won't find the old row. Acceptable because rename is rare; heal manually.
+- **Descendant-match can adopt across projects only if user's workspace layout is unusual.** The trailing-slash boundary is the safeguard. Document the rule in STATE.md if users report cross-adoption.
+
+### HEAD (post-Phase-G)
+
+```
+2f04086 style(sidebar): larger teammate icons in minimized strip
+3ba49a9 fix(sessions): cross-session pane guard + widened adoption cwd
+0b0d632 fix(split): dismiss button ends relationship + closes pane reliably
+27cd0e8 docs: Phase F Bundle 5+6 addenda in CODER_BRAIN + STATE HEAD refresh
+ad163ba feat(sessions): team-lead adoption + coder naming inherits parent PM
+a1aa074 fix(status): bypass-permissions kill-switch + tighten prompt fallback
+```
+
+All three typechecks PASS. 19/19 unit tests pass. Server restart required for Bundles 1, 2, 3, 4 (all server-touching). Bundle 5 is client-only (Vite HMR picks up).
+
+---
+
 All three typechecks PASS (shared, client, server). Verification:
 - `pnpm -C server dev` (no config.json override) binds 11002 · `curl /api/system/health` → `{status:"ok",service:"jstudio-commander",version:"0.1.0",...}`
 - Second `pnpm dev` while first is running → yellow banner, clean exit 0, only 1 process on port 11002
