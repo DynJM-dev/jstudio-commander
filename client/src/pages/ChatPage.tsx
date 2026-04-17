@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MessageSquare, Loader2, SendHorizontal, Check, Paperclip } from 'lucide-react';
+import { MessageSquare, Loader2, SendHorizontal, Check, Paperclip, Upload } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import type { ChatMessage } from '@commander/shared';
@@ -10,10 +10,12 @@ import { ContextBar } from '../components/chat/ContextBar';
 import { PermissionPrompt } from '../components/chat/PermissionPrompt';
 import { SessionTerminalPreview } from '../components/chat/SessionTerminalPreview';
 import { StickyPlanWidget } from '../components/chat/StickyPlanWidget';
+import { AttachmentChipRow } from '../components/chat/AttachmentChipRow';
 import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { useSessionTick } from '../hooks/useSessionTick';
 import { useHeartbeat } from '../hooks/useHeartbeat';
+import { useAttachments, ACCEPTED_MIME } from '../hooks/useAttachments';
 import { ContextLowToast } from '../components/shared/ContextLowToast';
 import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
@@ -73,6 +75,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const [userJustSent, setUserJustSent] = useState(false);
   const msgCountAtSendRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Phase S — attachments: staged files, drag/paste handlers, upload.
+  // The hook owns its own state so ChatPage stays thin; send flow
+  // below uploads + injects @paths before firing the command.
+  const attachments = useAttachments();
 
   const sendCommand = useCallback(() => {
     if (!sessionId || !command.trim() || sending) return;
@@ -551,21 +559,103 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
             )}
           </AnimatePresence>
 
-          {/* Input row */}
+          {/* Phase S — staged attachments chip row (above input). */}
+          <AttachmentChipRow
+            files={attachments.stagedFiles}
+            onRemove={attachments.removeFile}
+            isUploading={attachments.isUploading}
+          />
+
+          {/* Phase S — stage error banner (oversize, unsupported mime, max files).
+              Auto-dismisses via the hook once the user changes the staged list. */}
+          <AnimatePresence>
+            {attachments.stageError && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={{ duration: 0.15 }}
+                onClick={attachments.clearError}
+                className="mb-2 px-2 py-1 text-xs rounded cursor-pointer"
+                style={{
+                  fontFamily: M,
+                  color: 'var(--color-error)',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                }}
+                role="alert"
+                data-testid="attachment-error"
+              >
+                {attachments.stageError}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Input row — drop zone wrapper lives here so drag/drop is
+              scoped to the input region (not the whole window, which
+              would steal drops from file-manager-style UI elsewhere). */}
           <div
-            className="flex items-end gap-2 rounded-lg px-3 py-2 transition-colors glass-surface"
+            className="relative flex items-end gap-2 rounded-lg px-3 py-2 transition-colors glass-surface"
             style={{
               borderRadius: 12,
+              border: attachments.isDragging
+                ? '1px dashed var(--color-accent)'
+                : '1px solid transparent',
             }}
+            onDragOver={attachments.dropHandlers.onDragOver}
+            onDragEnter={attachments.dropHandlers.onDragEnter}
+            onDragLeave={attachments.dropHandlers.onDragLeave}
+            onDrop={attachments.dropHandlers.onDrop}
+            data-testid="chat-input-dropzone"
           >
-            {/* Paperclip button */}
+            {/* Drop overlay — shown only while a file drag hovers the zone. */}
+            <AnimatePresence>
+              {attachments.isDragging && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute inset-0 flex items-center justify-center rounded-lg pointer-events-none"
+                  style={{
+                    background: 'rgba(14, 124, 123, 0.15)',
+                    border: '1px dashed var(--color-accent)',
+                  }}
+                  data-testid="drop-overlay"
+                >
+                  <div className="flex items-center gap-2" style={{ fontFamily: M, color: 'var(--color-accent-light)' }}>
+                    <Upload size={16} />
+                    <span className="text-sm font-medium">Drop to attach</span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Hidden native file picker — triggered by the paperclip button. */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={Array.from(ACCEPTED_MIME).join(',')}
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  attachments.stageFiles(e.target.files);
+                }
+                e.target.value = '';
+              }}
+              data-testid="chat-file-picker"
+            />
+
+            {/* Paperclip button — opens file picker. */}
             <button
               className="shrink-0 flex items-center justify-center rounded p-1 mb-0.5 transition-colors"
               style={{ color: 'var(--color-text-tertiary)' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
-              title="Image upload — coming in v2"
-              onClick={() => {}}
+              title="Attach files"
+              aria-label="Attach files"
+              onClick={() => fileInputRef.current?.click()}
             >
               <Paperclip size={16} />
             </button>
@@ -576,6 +666,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
               value={command}
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
+              onPaste={attachments.onPaste}
               placeholder="Type your message..."
               disabled={sending}
               rows={1}

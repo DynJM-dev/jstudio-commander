@@ -79,6 +79,35 @@ const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   return body as T;
 };
 
+// Phase S — file upload. FormData + fetch bypasses the JSON-only
+// `request` helper; browsers set the multipart boundary in
+// Content-Type automatically when the body is FormData. We still
+// send the PIN header when configured.
+const upload = async <T>(path: string, files: File[]): Promise<T> => {
+  const pin = getPin();
+  const headers: Record<string, string> = {};
+  if (pin) headers['x-commander-pin'] = pin;
+
+  const formData = new FormData();
+  for (const file of files) formData.append('file', file, file.name);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: formData });
+  } catch (err) {
+    throw new ApiError(0, err instanceof Error ? err.message : 'network_error');
+  }
+
+  const text = await res.text();
+  let body: Record<string, unknown> = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { /* swallow */ }
+
+  if (!res.ok) {
+    throw new ApiError(res.status, (body.error as string) ?? res.statusText, (body.requiresPin as boolean) ?? false);
+  }
+  return body as T;
+};
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
 
@@ -93,6 +122,8 @@ export const api = {
 
   del: <T>(path: string) =>
     request<T>(path, { method: 'DELETE' }),
+
+  upload,
 };
 
 export { ApiError };
