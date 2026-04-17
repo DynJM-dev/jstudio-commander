@@ -309,6 +309,70 @@ All three typechecks PASS (shared, client, server). Server restart clean; `/api/
 
 ---
 
+## Coder-12 Session — Phase D (Launch UX hardening, 2026-04-17)
+
+### Commits
+
+```
+9cf67af chore(port): migrate default server port 3002 → 11002
+02ae1ef feat(launcher): macOS .app bundle with auto-detect + auto-boot
+23ea243 feat(client): vite dev preflight detects running commander instance
+6fda3c3 feat(server): signed /api/system/health + duplicate-instance preflight
+```
+
+### What shipped
+
+- **Signed /api/system/health.** Adds `service: 'jstudio-commander'` + `version: '<server/package.json version>'` so any preflight (self-check, client, launcher) can unambiguously ID our instance. Version read via new `server/src/version.ts` (`SERVICE_ID`, `SERVICE_VERSION` constants — dual-layout aware so `tsx` dev and `tsc` build both resolve `server/package.json`).
+- **Server preflight.** `server/src/preflight.ts` (`detectExistingCommander(port)` + `printDuplicateBanner`). Runs in `server/src/index.ts` BEFORE `acquireInstanceLock()` and `app.listen()`. 500ms timeout, ANSI yellow banner, `process.exit(0)` on signed match (clean exit — NOT `exit(1)`). Non-signed response or timeout falls through to the normal bind + instance-lock path.
+- **Client Vite preflight.** `client/scripts/preflight.mjs` chained into `"dev": "node scripts/preflight.mjs && vite"`. Why chained in `dev` instead of `predev`: pnpm's pre/post script hooks are OFF by default (`enable-pre-post-scripts=false` in pnpm 7+), so `predev` wouldn't run without an `.npmrc` flip. Chaining is more portable.
+- **macOS .app launcher.** `scripts/macos-launcher/{Info.plist,launcher.sh,build.sh}` produces `~/Desktop/Commander.app`. Icon pipeline: sips-rasterize `client/public/favicon.svg` → 1024 PNG → iconset (16/32/128/256/512 + @2x each) → iconutil .icns. Fallback chain if sips can't handle SVG: qlmanage → rsvg-convert (with a clear brew install hint). Info.plist version templated via `__VERSION__` substitution from `server/package.json`.
+- **launcher.sh runtime.** Reads port from user config (fallback 11002), pings signed health. Hit → `open URL`. Miss → `osascript` into Terminal.app for visible `pnpm dev`, poll 30s, open URL. Timeout → open anyway (UI shows its own loading state).
+- **Port migration.** Default 3002 → 11002 across: `server/src/config.ts` (both loadFileConfig default + export default), `pin-auth.ts` DEFAULT_CONFIG, `client/vite.config.ts` (proxy /api + /ws), `client/e2e/helpers.ts` COMMANDER_API default, `hooks/commander-hook.sh` POST target, `TUNNEL.md` (3 refs), `CTO_BRIEF.md` (live doc). User's `~/.jstudio-commander/config.json` port override still wins — by design. Historical CODER_BRAIN per-coder sections + archived audits left at 3002 as point-in-time refs.
+
+### Patterns established
+
+- **Signed service identifier on /health.** `service: '<kebab-case>'` + `version: '<pkg version>'` — any preflight caller matches on service ID. Cheap, collision-proof, and future-proofs launcher rewrites.
+- **Chain over predev.** `"dev": "node preflight && vite"` is more portable than relying on pnpm pre/post hooks. Use this pattern anywhere you need a pre-step without config flips.
+- **macOS .app from scratch.** You don't need electron/tauri for a thin desktop launcher — three files (Info.plist, launcher shell, build script) + macOS built-ins (sips, iconutil, osascript) are enough. Gitignore the output `.app` + `.icns` + `iconset/`.
+- **Version substitution via sed template.** `__VERSION__` placeholder in Info.plist + `/usr/bin/sed "s/__VERSION__/$VER/g"` at build time keeps the plist in the repo as a stable source, no generated-plist-noise in git.
+
+### Critical lessons (read before touching nearby code)
+
+1. **Preflight must run BEFORE `acquireInstanceLock()`.** If the lock fires first on a duplicate Commander, the user sees the harsher lock-error exit(1) instead of the friendly banner. Order in `index.ts`: preflight → lock → getDb → listen.
+2. **Use `process.exit(0)` in the preflight duplicate path.** `exit(1)` would bubble up to `pnpm`/shell as an error, confusing the user. The duplicate is a SUCCESS from the user's perspective ("Commander is already running — use it").
+3. **`tsx watch` survives `process.exit(0)` in the child.** After the preflight exits cleanly, `tsx watch` stays alive watching for file changes, but never re-spawns because the source is fine. UX-wise: the banner is the last output the user sees until they Ctrl-C. Acceptable.
+4. **500ms fetch timeout + AbortController is enough.** Longer waits make a cold `pnpm dev` feel sluggish on every start (`fetch` blocks boot). 500ms is long enough to let a running server respond on loopback, short enough to not notice on miss.
+5. **macOS sips can rasterize SVG on recent macOS but not older versions.** The fallback chain (qlmanage → rsvg-convert) is load-bearing on Ventura/Monterey. qlmanage is built-in; rsvg-convert requires `brew install librsvg`. Build script exits with a clear install hint if ALL three fail.
+6. **User config override is a feature, not a bug.** `~/.jstudio-commander/config.json` `port` field takes precedence over the new default. Document it in STATE.md + TUNNEL.md so users don't delete their file thinking it's stale.
+7. **The user-managed hook script lives outside the repo.** `~/.claude/hooks/commander-hook.sh` is a COPY of `hooks/commander-hook.sh`. If you change the repo hook's port, the user must re-copy — Commander can't rewrite user ~/.claude files.
+
+### Tech debt opened by Phase D
+
+- **tsx watch keeps watching after preflight exit.** Not a bug — tsx watch sees clean exit + unchanged source, so it stays idle. But if the user edits `src/index.ts` while the preflight-exited tsx is still watching, it could try to re-run. Acceptable for now; if it hot-paths, switch `dev` to `tsx src/index.ts` (no watch) or trap the clean exit differently.
+- **macOS launcher repo path is hardcoded.** `REPO="$HOME/Desktop/Projects/jstudio-commander"` in launcher.sh assumes the conventional install location. Move to a build-time template (`__REPO_PATH__`) or a companion config file if users start relocating the repo.
+- **Version is read at boot.** `SERVICE_VERSION` is captured at module-load, so a `pnpm version bump` without a restart won't flow through. Fine for typical usage — restart is already mandatory after server edits.
+- **Hook script user-copy drift.** No automated sync between repo `hooks/commander-hook.sh` and `~/.claude/hooks/commander-hook.sh`. Future: add a `pnpm run install-hooks` that diffs and rsyncs, or have Commander print a one-time warning on boot if the user-copy's target port doesn't match config.port.
+- **Port 11002 choice.** Arbitrary — unreserved, no-conflict-today. If Codeman or another JStudio tool wants nearby ports, keep them spaced (Codeman on 3001 stays, Commander on 11002, tunnel pool TBD).
+
+### HEAD (post-Phase-D)
+
+```
+9cf67af chore(port): migrate default server port 3002 → 11002
+02ae1ef feat(launcher): macOS .app bundle with auto-detect + auto-boot
+23ea243 feat(client): vite dev preflight detects running commander instance
+6fda3c3 feat(server): signed /api/system/health + duplicate-instance preflight
+dae794f feat(projects): ProjectCard stack pills + recent commits UI (#230)
+```
+
+All three typechecks PASS (shared, client, server). Verification:
+- `pnpm -C server dev` (no config.json override) binds 11002 · `curl /api/system/health` → `{status:"ok",service:"jstudio-commander",version:"0.1.0",...}`
+- Second `pnpm dev` while first is running → yellow banner, clean exit 0, only 1 process on port 11002
+- `node client/scripts/preflight.mjs` while server running → banner, exit 0
+- `bash scripts/macos-launcher/build.sh` → Commander.app/Contents/{Info.plist @ v0.1.0, MacOS/launcher +x, Resources/icon.icns 115KB}
+- Restored user config.json with `port: 3002` → server binds 3002 (override still wins)
+
+---
+
 ### Verify-before-compact checklist (if you need to reproduce any of the above)
 
 - HEAD commits visible via `git log --oneline -20`

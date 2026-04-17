@@ -1,11 +1,20 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: **Phase C complete (Coder-12). Clean baseline — #230 closes the prior backlog.**
+- Phase: **Phase D complete (Coder-12). Launch hardening shipped — signed health + macOS .app launcher + port migrated to 11002.**
 - Last updated: 2026-04-17
-- HEAD: `dae794f` (client pills UI) — Phase C commits: `0970950` (server+types+DB), `dae794f` (client). Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
+
+> **⚠️  Port migration — user action optional.** The default server port
+> moved from 3002 → 11002. If your `~/.jstudio-commander/config.json`
+> has `"port": 3002`, the override still wins — remove the field or set
+> it to 11002 to pick up the new default. Also update
+> `~/.claude/hooks/commander-hook.sh` (the user-managed hook copy
+> outside the repo) to match, otherwise Claude Code hook events will
+> be POSTed at the wrong port.
+
+- HEAD: `9cf67af` (port migration) — Phase D commits: `6fda3c3` (signed health + server preflight), `23ea243` (client vite preflight), `02ae1ef` (macOS .app launcher), `9cf67af` (port 3002→11002). Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
-- Server port: **3002** (config.json override) · Vite: **5173**
+- Server port: **11002** (new default as of Phase D, migrated from 3002). Override via `~/.jstudio-commander/config.json` still honored. · Vite: **5173**
 - Blockers: none
 - Backlog: Batch `/output` endpoint deferred (low marginal value post-#219). Remaining suggestions are housekeeping (see Next up).
 
@@ -18,6 +27,7 @@
 - [x] Phase A — Token-audit cleanup sweep — Coder-11 (6 commits, 2026-04-16)
 - [x] **Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause) — Coder-11 (2 commits, 2026-04-16)**
 - [x] **Phase C — Project tech-stack pills + recent commits (#230) — Coder-12 (2 commits, 2026-04-17)**
+- [x] **Phase D — Launch UX hardening (signed health + preflight + macOS .app + port 11002) — Coder-12 (4 commits, 2026-04-17)**
 
 ## Feature Wave 2 Highlights
 
@@ -85,4 +95,4 @@
 - **Verify the served code** — curl the Vite endpoint and grep, not just git log
 - **`git add <specific-files>`** when coder-10 is active — NEVER `git add -A`
 - **`WHERE status != 'stopped'`** is a trap for pane-backed rows; use `OR tmux_session LIKE '%'`
-- **Always restart server** after edits: `lsof -ti:3002 | xargs kill -9; pnpm dev`
+- **Always restart server** after edits: `lsof -ti:11002 | xargs kill -9; pnpm dev` (substitute the active port from `~/.jstudio-commander/config.json` if overridden)
