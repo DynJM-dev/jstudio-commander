@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { Teammate } from '@commander/shared';
 import { eventBus } from '../ws/event-bus.js';
@@ -100,6 +100,41 @@ const readConfig = (path: string): TeamConfig | null => {
   }
 };
 
+// Atomic in-place rewrite of `leadSessionId` only — preserves all other
+// fields (members, metadata, formatting where possible) byte-for-byte
+// in their JSON-roundtripped form. Used after Phase G.2 adoption so the
+// next chokidar fire reconciles against the adopted PM's id rather than
+// the stale lead. tmp-then-rename keeps the file atomic vs partial reads.
+//
+// No-op (returns false) when the file is missing, unparseable, or
+// already carries the target id — keeping repeated adoptions idempotent.
+const updateTeamConfigLeadSessionId = (path: string, newLeadSessionId: string): boolean => {
+  if (!existsSync(path)) return false;
+  let raw: string;
+  let parsed: TeamConfig;
+  try {
+    raw = readFileSync(path, 'utf-8');
+    parsed = JSON.parse(raw) as TeamConfig;
+  } catch (err) {
+    console.warn(`[team-config] cannot rewrite ${path}: parse failed —`, (err as Error).message);
+    return false;
+  }
+  if (parsed.leadSessionId === newLeadSessionId) return false;
+
+  const next = { ...parsed, leadSessionId: newLeadSessionId };
+  // Preserve trailing newline if the original had one.
+  const trailing = raw.endsWith('\n') ? '\n' : '';
+  const tmp = `${path}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + trailing);
+    renameSync(tmp, path);
+    return true;
+  } catch (err) {
+    console.warn(`[team-config] cannot rewrite ${path}: write failed —`, (err as Error).message);
+    return false;
+  }
+};
+
 const buildTeammate = (member: TeamMember, parentSessionId: string, teamName: string, displayName?: string): Teammate => ({
   sessionId: member.agentId,
   sessionName: displayName ?? member.name,
@@ -167,48 +202,60 @@ const reconcile = (path: string): void => {
   const configParentSessionId = config.leadSessionId || config.leadAgentId;
   if (!configParentSessionId) return;
 
-  // Resolve the parent. Two paths:
-  //   (a) Adoption — user already has a Commander PM session at the lead's
-  //       cwd. Link that session to this team instead of creating a
-  //       duplicate "team-lead" row. Teammates then hang off that
-  //       existing session id.
-  //   (b) Fresh — no existing PM. Upsert under the config's parentSessionId
-  //       with a derived human-readable name (basename > team name >
-  //       generic "team-lead") so the UI stays scannable.
+  // Resolve the parent. Three paths in priority order:
+  //   (0) Idempotent — config.parentSessionId already points to a row
+  //       with team_name === teamName. Reuse its id, no work. This is
+  //       the steady state after a previous adoption rewrote the file.
+  //   (a) Adoption — user has a Commander PM at the lead's cwd that
+  //       isn't yet linked to any team. Link it (re-parenting any
+  //       teammates currently under the stale lead id) and rewrite
+  //       the on-disk team config so future reconciles use the
+  //       adopted id directly.
+  //   (b) Fresh — no existing PM. Upsert under the config's
+  //       parentSessionId with a derived human-readable name.
   const lead = config.members.find((m) => m.agentId === config.leadAgentId);
   let parentSessionId = configParentSessionId;
   if (lead) {
     const leadClaudeId = UUID_RE.test(configParentSessionId) ? configParentSessionId : undefined;
-    const adoptable = lead.cwd ? sessionService.findAdoptablePmAtCwd(lead.cwd) : null;
-    if (adoptable && adoptable.teamName !== teamName) {
-      sessionService.adoptPmIntoTeam({
-        sessionId: adoptable.id,
-        teamName,
-        claudeSessionId: leadClaudeId,
-      });
-      console.log(`[team-config] adopted existing PM "${adoptable.name}" (${adoptable.id.slice(0, 8)}) into ${teamName}`);
-      parentSessionId = adoptable.id;
-    } else if (adoptable) {
-      // Already owned by this team — just reuse its id for teammate links.
-      parentSessionId = adoptable.id;
+
+    const byConfigId = sessionService.getSession(configParentSessionId);
+    if (byConfigId && byConfigId.teamName === teamName) {
+      // Steady state — config already points at the team's lead row.
+      parentSessionId = byConfigId.id;
     } else {
-      const leadLive = hasLiveEvidence({
-        tmuxPaneId: lead.tmuxPaneId,
-        claudeSessionId: leadClaudeId,
-        cwd: lead.cwd,
-      });
-      const leadName = deriveTeamLeadName(lead.cwd, teamName, lead.name);
-      sessionService.upsertTeammateSession({
-        sessionId: configParentSessionId,
-        name: leadName,
-        tmuxTarget: lead.tmuxPaneId || `agent:${configParentSessionId}`,
-        projectPath: lead.cwd ?? null,
-        role: lead.agentType ?? 'pm',
-        teamName,
-        parentSessionId: null,
-        model: normalizeModel(lead.model),
-        live: leadLive,
-      });
+      const adoptable = lead.cwd ? sessionService.findAdoptablePmAtCwd(lead.cwd) : null;
+      if (adoptable && adoptable.teamName !== teamName) {
+        sessionService.adoptPmIntoTeam({
+          sessionId: adoptable.id,
+          teamName,
+          claudeSessionId: leadClaudeId,
+          previousLeadId: configParentSessionId,
+        });
+        const wrote = updateTeamConfigLeadSessionId(path, adoptable.id);
+        console.log(`[team-config] adopted existing PM "${adoptable.name}" (${adoptable.id.slice(0, 8)}) into ${teamName}${wrote ? ' [config rewritten]' : ''}`);
+        parentSessionId = adoptable.id;
+      } else if (adoptable) {
+        // Already owned by this team — just reuse its id for teammate links.
+        parentSessionId = adoptable.id;
+      } else {
+        const leadLive = hasLiveEvidence({
+          tmuxPaneId: lead.tmuxPaneId,
+          claudeSessionId: leadClaudeId,
+          cwd: lead.cwd,
+        });
+        const leadName = deriveTeamLeadName(lead.cwd, teamName, lead.name);
+        sessionService.upsertTeammateSession({
+          sessionId: configParentSessionId,
+          name: leadName,
+          tmuxTarget: lead.tmuxPaneId || `agent:${configParentSessionId}`,
+          projectPath: lead.cwd ?? null,
+          role: lead.agentType ?? 'pm',
+          teamName,
+          parentSessionId: null,
+          model: normalizeModel(lead.model),
+          live: leadLive,
+        });
+      }
     }
   }
 

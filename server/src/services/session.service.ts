@@ -504,10 +504,25 @@ export const sessionService = {
   // claude_session_id so downstream lookups by either id resolve. Emits
   // session:updated so connected clients reflect the new team affiliation
   // immediately.
+  //
+  // `previousLeadId` (Phase G.2): the stale lead id the team config was
+  // pointing at before adoption. When provided AND distinct from the
+  // adopted PM's id, all active teammates whose parent_session_id ===
+  // previousLeadId get re-parented to the adopted PM, and their
+  // agent_relationships are carried over (close old edge under
+  // previousLeadId, open a fresh one under adopted id). Without this
+  // re-parent the cross-session predicate (Phase G.1) would correctly
+  // flag those teammates as cross-session because their declared parent
+  // no longer matches the PM that owns their pane.
+  //
+  // The re-parent SQL is scoped to teamName so a stale-lead id that's
+  // also (somehow) referenced by a different team's teammates can't
+  // accidentally pull them in.
   adoptPmIntoTeam(opts: {
     sessionId: string;
     teamName: string;
     claudeSessionId?: string;
+    previousLeadId?: string;
   }): Session | null {
     const db = getDb();
     const existing = db.prepare('SELECT id, claude_session_id FROM sessions WHERE id = ?')
@@ -518,15 +533,54 @@ export const sessionService = {
       ? opts.claudeSessionId
       : null;
     const now = new Date().toISOString();
-    if (claudeId) {
-      db.prepare(
-        "UPDATE sessions SET team_name = ?, agent_role = 'pm', claude_session_id = ?, updated_at = ? WHERE id = ?",
-      ).run(opts.teamName, claudeId, now, opts.sessionId);
-    } else {
-      db.prepare(
-        "UPDATE sessions SET team_name = ?, agent_role = 'pm', updated_at = ? WHERE id = ?",
-      ).run(opts.teamName, now, opts.sessionId);
-    }
+
+    db.transaction(() => {
+      if (claudeId) {
+        db.prepare(
+          "UPDATE sessions SET team_name = ?, agent_role = 'pm', claude_session_id = ?, updated_at = ? WHERE id = ?",
+        ).run(opts.teamName, claudeId, now, opts.sessionId);
+      } else {
+        db.prepare(
+          "UPDATE sessions SET team_name = ?, agent_role = 'pm', updated_at = ? WHERE id = ?",
+        ).run(opts.teamName, now, opts.sessionId);
+      }
+
+      // Re-parent active teammates from the stale lead → adopted PM.
+      // No-op when previousLeadId is missing, equal to the adopted id,
+      // or no rows match. Scoped to teamName for safety so a coincidental
+      // id collision across teams can't pull in foreign rows.
+      const previousLeadId = opts.previousLeadId;
+      if (previousLeadId && previousLeadId !== opts.sessionId) {
+        const reparentedRows = db.prepare(
+          `UPDATE sessions SET parent_session_id = ?, updated_at = ?
+           WHERE parent_session_id = ? AND status != 'stopped' AND team_name = ?
+           RETURNING id`,
+        ).all(opts.sessionId, now, previousLeadId, opts.teamName) as Array<{ id: string }>;
+
+        if (reparentedRows.length > 0) {
+          // Close any active relationship rows still pointing at the stale
+          // lead so listTeammates' `ended_at IS NULL` filter doesn't
+          // double-count this teammate.
+          db.prepare(
+            "UPDATE agent_relationships SET ended_at = ? WHERE parent_session_id = ? AND ended_at IS NULL",
+          ).run(now, previousLeadId);
+
+          // Open a fresh relationship under the adopted PM for every
+          // re-parented teammate. INSERT OR IGNORE handles a pre-existing
+          // edge (rare but possible if a prior adoption attempt half-ran).
+          const insertRel = db.prepare(
+            `INSERT INTO agent_relationships (parent_session_id, child_session_id, relationship)
+             VALUES (?, ?, 'spawned_by')
+             ON CONFLICT(parent_session_id, child_session_id) DO UPDATE SET ended_at = NULL`,
+          );
+          for (const row of reparentedRows) {
+            insertRel.run(opts.sessionId, row.id);
+          }
+          console.log(`[sessions] re-parented ${reparentedRows.length} teammate(s) from ${previousLeadId.slice(0, 20)} → ${opts.sessionId.slice(0, 20)} (team ${opts.teamName})`);
+        }
+      }
+    })();
+
     const session = this.getSession(opts.sessionId);
     if (session) eventBus.emitSessionUpdated(session);
     return session;
