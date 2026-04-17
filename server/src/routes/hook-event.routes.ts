@@ -201,6 +201,29 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   const event = body.event ?? 'unknown';
   const transcriptPath = body.data?.transcript_path;
 
+  // Phase N.0 — Stop hook fires when Claude Code ends a turn (including
+  // after /compact). The 5s pane poller can lag seconds behind — or
+  // forever when the pane footer freezes on a past-tense verb like
+  // `✻ Cooked / 21261s`. Acting on the hook directly flips status to
+  // idle at turn boundary so the UI doesn't read "working" post-turn.
+  // Runs BEFORE the transcript_path branching below so Stop events
+  // without a transcript still trigger the flip.
+  if (event === 'Stop') {
+    const match = resolveOwner(body);
+    if (match?.id) {
+      const db = getDb();
+      db.prepare(
+        "UPDATE sessions SET status = 'idle', updated_at = datetime('now') WHERE id = ?",
+      ).run(match.id);
+      eventBus.emitSessionStatus(match.id, 'idle', {
+        to: 'idle',
+        evidence: 'stop-hook',
+        at: new Date().toISOString(),
+      });
+      console.log(`[hook:Stop] session=${match.id.slice(0, 30)} → idle (via ${match.strategy})`);
+    }
+  }
+
   console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
 
   if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
