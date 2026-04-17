@@ -3,7 +3,16 @@ import { homedir } from 'node:os';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 
 const home = homedir();
-const dataDir = join(home, '.jstudio-commander');
+// Phase P.4 — `COMMANDER_DATA_DIR` env override. Integration tests
+// (server/src/__tests__/integration/*) set this to a mkdtempSync path
+// before importing anything so config.dbPath + loadFileConfig read
+// from an isolated throwaway directory, never touching the dev
+// ~/.jstudio-commander/commander.db. Production is unchanged — when
+// the env is absent we fall back to `~/.jstudio-commander`.
+const dataDirEnv = process.env.COMMANDER_DATA_DIR?.trim();
+const dataDir = (dataDirEnv && dataDirEnv.length > 0)
+  ? dataDirEnv
+  : join(home, '.jstudio-commander');
 const configPath = join(dataDir, 'config.json');
 
 interface FileConfig {
