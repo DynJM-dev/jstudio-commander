@@ -1,7 +1,7 @@
 # JStudio Command Center — State
 
 ## Current State
-- Phase: **Phase I complete (Coder-15). Teammate-active session display state (light blue), muted teammate-idle, unified glass top bar in split view, force-close behind overflow + modal + PM system-notice endpoint.**
+- Phase: **Phase J complete (Coder-15 final). Live pane-activity on every session surface, status-flip evidence logs + `/status-history` endpoint, WS session:status carries from/to/evidence/activity, inter-session protocol messages render as cards instead of raw JSON.**
 - Last updated: 2026-04-17
 
 > **🪪 Rebrand 2026-04-17 — display-only (scope A).** User-facing product
@@ -19,7 +19,7 @@
 > outside the repo) to match, otherwise Claude Code hook events will
 > be POSTed at the wrong port.
 
-- HEAD: `d9ce052` (Phase I Bundles 3+4: glass top bar + force-close rework). Phase I commits: `a67dc1f` (Bundles 1+2 teammate palette + teammate-active display state), `d9ce052` (Bundles 3+4 split glass top bar + force-close + server system-notice endpoint). Phase H commits: `b13be92` (docs), `e4a1645` (Bundle 1 timer), `4fbe99d` (Bundle 2 dismissal), `b05a67a` (Bundle 3 plan recency). Phase G.2 commit: `425632b`. Phase G.2 commit: `425632b`. Phase G.1 commits: `68ce81a` (detector hoist), `976603d` (ContextBar monitoring label), `1b62f63` (predicate parent-exclusion + regression suite). Phase G commits: `0b0d632` (Bundle 3 dismiss button), `3ba49a9` (Bundles 1+2+4 cross-session guard + widened adoption + startup heal), `2f04086` (Bundle 5 icons), `a3ea2fa` (Bundle 6 top-bar filter + bot count badge). Phase F commits: `457d9e5` `d357f03` `b9e7bc4` `654cb05` (Bundle 1 structured chat), `2c0e063` (Bundle 2 auto-split), `467adce` (Bundle 3 pane adoption), `a1aa074` (Bundle 6 bypass-perm kill-switch), `ad163ba` (Bundle 5 team-lead adoption + coder naming). Phase E.2: `58434d9` (Vite → 11573 strictPort). Phase E.1: `f5da3ba` (dev-mode redirect). Phase E: `9cf67af` `02ae1ef` `23ea243` `6fda3c3` + `f956fcc` `15fe784` `ab72eec` `05ebbcd` `24f21f9` `26cfe2b` `603b398` `3d0de45` `eb9f85f` `4a040b8` `8089542`. Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
+- HEAD: `c852480` (Phase J Bundle 5 protocol cards). Phase J commits: `96c344e` (Bundles 1+2+3 shared types + activity detector + poller evidence + WS payload + status-history endpoint + 7 activity-detector tests), `0d295e9` (Bundle 4 client activity rendering in SessionCard / ContextBar / SplitChatLayout / TeammateRow), `c852480` (Bundle 5 chatMessageParser extended + ProtocolMessageCards + ChatThread routing + 15 parser tests). Phase I.0 emergency patch: `5a8ace2`. Phase I commits: `a67dc1f` `d9ce052`. Phase H commits: `b13be92` `e4a1645` `4fbe99d` `b05a67a`. Phase G.2 commit: `425632b`. Phase G.2 commit: `425632b`. Phase G.1 commits: `68ce81a` (detector hoist), `976603d` (ContextBar monitoring label), `1b62f63` (predicate parent-exclusion + regression suite). Phase G commits: `0b0d632` (Bundle 3 dismiss button), `3ba49a9` (Bundles 1+2+4 cross-session guard + widened adoption + startup heal), `2f04086` (Bundle 5 icons), `a3ea2fa` (Bundle 6 top-bar filter + bot count badge). Phase F commits: `457d9e5` `d357f03` `b9e7bc4` `654cb05` (Bundle 1 structured chat), `2c0e063` (Bundle 2 auto-split), `467adce` (Bundle 3 pane adoption), `a1aa074` (Bundle 6 bypass-perm kill-switch), `ad163ba` (Bundle 5 team-lead adoption + coder naming). Phase E.2: `58434d9` (Vite → 11573 strictPort). Phase E.1: `f5da3ba` (dev-mode redirect). Phase E: `9cf67af` `02ae1ef` `23ea243` `6fda3c3` + `f956fcc` `15fe784` `ab72eec` `05ebbcd` `24f21f9` `26cfe2b` `603b398` `3d0de45` `eb9f85f` `4a040b8` `8089542`. Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **11002** (new default as of Phase D, migrated from 3002). Override via `~/.jstudio-commander/config.json` still honored. · Vite: **5173**
 - Blockers: none
@@ -43,6 +43,7 @@
 - [x] **Phase H — ContextBar timer reset on turn boundary + StickyPlanWidget dismissal persistence (localStorage) + getActivePlan recency (latest plan only) + 3 new plan tests — Coder-15 (3 commits, 2026-04-17)**
 - [x] **Phase I.0 — Emergency PM patch: team-config reconcile never dismisses on isActive=false — Team-lead (1 commit `5a8ace2`, 2026-04-17)**
 - [x] **Phase I — Teammate palette (muted idle) + teammate-active display state (light blue) + split-pane glass top bar + force-close overflow/modal + PM system-notice endpoint — Coder-15 (2 commits, 2026-04-17)**
+- [x] **Phase J — Live pane-activity parser + status-flip evidence log + `/status-history` endpoint + WS session:status payload extension + inter-session protocol cards (shutdown/plan-approval) + sender-preamble detection — Coder-15 (3 commits, 2026-04-17). Final Coder-15 rotation.**
 
 ## Feature Wave 2 Highlights
 

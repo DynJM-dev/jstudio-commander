@@ -1,7 +1,12 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-17 — Coder-15 post-Phase-I refresh (4 bundles: color semantics + split top bar + force-close rework)
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + Phase I, 5 commits total)
+> Last updated: 2026-04-17 — Coder-15 post-Phase-J rotation-ending refresh
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + I + J, 11 commits + 1 Phase-I.0 team-lead emergency patch)
+>
+> **Coder-15 rotation — read this first if you are the incoming coder:**
+> The "Coder-15 Cold Start Guide" section near the end of this doc collects the
+> context a new coder needs before touching anything substantial. Start there,
+> then read the current phase's section only if you need depth.
 > Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
 ## HEAD of main (post-sprint)
@@ -948,6 +953,153 @@ e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
 4fbe99d fix(chat): persist plan widget dismissal in localStorage
 b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
 ```
+
+---
+
+## Coder-15 Session — Phase J (Live activity + flip evidence + protocol cards, 2026-04-17)
+
+### Commits (3)
+
+```
+c852480 feat(chat): shutdown + plan-approval + sender-preamble message cards
+0d295e9 feat(chat): surface live pane activity in card / context bar / split
+96c344e feat(status): SessionActivity + flip evidence + WS payload extension
+```
+
+### Triggering context
+
+Three drifts + flickers had eroded user trust in Commander's signals over the preceding phases:
+1. Sessions labeled `working` or `idle` without any way to confirm what Claude was doing — opening a tmux pane was the only reliable diagnostic. The Claude Code footer (`✽ Ruminating (1m 49s · ↓ 430 tokens · thinking with xhigh effort)`) already had better signal; we just weren't surfacing it.
+2. Status flips (working → waiting, idle → working, etc.) left no audit trail beyond the eventual DB write. When a session got stuck or flipped wrong, there was no way to reconstruct "why".
+3. Inter-session coordination messages (shutdown_request, plan_approval_*) arrived as raw JSON strings in user-role transcript messages, rendering as garbage in the JB bubble. Phase F handled `<task-notification>` + `<teammate-message>` XML; the JSON protocol was unaddressed.
+
+### What shipped
+
+**Bundle 1 — Activity parser (server).** `agent-status.service.ts` gains `detectActivity(paneContent): SessionActivity | null`. Regex `ACTIVITY_RE` matches `<spinner> <Verb>(…|...)? (<metadata>)?`. Scans the tail bottom-up over the last 12 lines so the newest stacked frame wins. Separate tiny regexes pluck elapsed / tokens / effort out of the parenthetical so a release that re-orders the segments still lights up the fields it does match. Greedy `[A-Z][a-z]+` for the verb — the non-greedy original clamped to a 2-char match and shipped "Ru" / "Do" instead of "Ruminating" / "Doodling" in the first attempt. Test coverage includes that exact regression.
+
+**Bundle 2 — Status-flip evidence + history endpoint.** `detectStatusDetailed` / `detectStatusDetailedBatch` return `{status, evidence, activity}` in one capture. The poller uses the detailed variant and:
+- Logs each flip: `[status] <id-prefix> <prev>→<next> evidence="<rationale>"`.
+- Pushes `{at, from, to, evidence}` into a per-session ring buffer (`statusFlipHistory: Map<id, StatusFlip[]>`, cap 20, FIFO drop).
+- Caches the most recent `activity` per session (`lastKnownActivity: Map<id, SessionActivity | null>`) so the route layer attaches data without fresh tmux shell-outs.
+- New `GET /api/sessions/:id/status-history` returns `{sessionId, flips: StatusFlip[]}`.
+
+**Bundle 3 — Richer WS `session:status` payload.** `eventBus.emitSessionStatus(id, status, extras)` now takes a third arg for `from`/`to`/`evidence`/`activity`/`at`. Shared `WSEvent` discriminated union extended with those fields as optional — legacy consumers that read only `status` still work unchanged.
+
+**Bundle 4 — Client activity rendering.**
+- `SessionCard` — shows the activity chip beneath the pills row when `status==='working' && activity`. Hides the `lastMessagePreview` during the active window to let the live signal take the row.
+- `ContextBar` — status label gets a dot + activity chip appended: `Working · ✽ Ruminating 1m 49s · 430 tokens`. Passes through `session.activity ?? null` from ChatPage.
+- `SplitChatLayout` single-tab header — activity inline with the name pill.
+- `TeammateRow` — swaps the muted project-path column for the live activity while the teammate is working.
+
+**Bundle 5 — Inter-session protocol cards.**
+- `chatMessageParser.ts` — extended with `parseShutdownRequest`, `parseShutdownResponse`, `parsePlanApprovalRequest`, `parsePlanApprovalResponse`, `parseSenderPreamble`. JSON detectors are strict (`{`/`}` boundaries + exact `type` discriminator). `parseStructuredUserContent` tries XML → JSON protocol → sender preamble in priority order.
+- New `ProtocolMessageCards.tsx` — 4 cards (Shutdown{Request,Response}, PlanApproval{Request,Response}) share a `CardShell` matching the Phase F Task/Teammate cards' left-border-accent shape.
+- `ChatThread.tsx` user-group routing extended with 4 new branches.
+- 15 new parser tests (37 client tests total, was 22); 7 new activity-detector tests (19 server tests total, was 12).
+
+### Patterns established
+
+- **Server-parse, client-render.** Heavy lifting (regex, shell-outs) lives in the server; the client receives a typed struct. Generalizes to any future "parse the Claude Code footer" need (memory %, connection badges, etc.) — add to `detectActivity` or a sibling, surface on Session, render in the existing surfaces.
+- **Non-persisted derived fields on API responses.** `activity` is attached in the route boundary, never written to the DB, never in `rowToSession`. Frees us from migrations every time we parse something new from the pane.
+- **Evidence strings as structured logs.** A short (<=40 char) deterministic string per classification branch is greppable via `[status] ... evidence=`, test-friendly, AND the substrate for the `/status-history` endpoint. Keep new branches' evidence strings unique + stable.
+- **Extras object on emitters.** Adding optional fields to event emitters without changing the positional signature: `emit(a, b, extras = {})`. Broadcast layer spreads `...extras`. Shared types marked optional. Zero blast radius on consumers.
+- **Priority-ordered detector cascade.** The parser runs strong-signal detectors first (XML unambiguous) → JSON-with-type-discriminator (near-unambiguous) → heuristics (sender preamble allowlist). New detectors insert at the priority point that matches their signal strength.
+
+### Critical lessons (read before touching nearby code)
+
+1. **`detectActivity` verb regex is greedy `[A-Z][a-z]+`, NOT non-greedy.** A non-greedy `+?` followed by an optional terminator clamps to the minimum (2 chars). Tests cover this. If you see "Ruminating" renderring as "Ru" again, check the regex first.
+2. **`workspace-build triggers client/dist build.** `pnpm -w run build` builds everything, including `client/dist`. Phase E.2's NODE_ENV gate prevents Fastify from serving that dist in dev, so it's safe — but if you ever disable the gate, stale dist WILL shadow Vite. See `feedback_dist_shadows_vite`.
+3. **Poller now captures more per tick.** `detectStatusDetailed` calls `capturePane` once and extracts status + activity + evidence. Cost is ~equal to the old path — same pane content feeds both classifiers.
+4. **Activity on list endpoints is cache-only.** `/api/sessions` and `/api/sessions/:id/teammates` read `statusPollerService.getCachedActivity(id)` — no tmux shell-outs per list. The cache is populated on every poll tick (5s), so list results are up-to-date within one poll cycle.
+5. **Status-history is process-scoped.** The `statusFlipHistory` map lives in the poller module. A server restart clears it. That's intentional — persistent flip history would need a new DB table and we don't need it yet. If the user asks "why did this session flip at 3am yesterday", tell them grep the log file (if retained) or say we can't answer.
+6. **WS `session:status` payload is backwards-compat.** Older `useWebSocket` consumers still read `status`. New code should prefer `to` for explicitness, and use `evidence` + `activity` for richer UX. Don't remove `status`.
+7. **Sender-preamble regex is tight on purpose.** `^(team-lead|coder-\d+|pm(?:-[a-z0-9]+)?|[a-z][a-z0-9-]{1,40}-\d+)\s*\n+([\s\S]+)$` — the required trailing `-\d+` on the fallback slug keeps ordinary user prose that starts with a word on its own line from mis-routing. If you loosen this, add tests for the false-positives you're introducing.
+8. **XML detectors run before JSON detectors.** `<task-notification>...<status>shutdown_request</status>` must never fall through into `parseShutdownRequest`. The regression test `XML tag wins over JSON detector when content is an XML tag` pins this invariant.
+9. **Activity renders are gated on BOTH `status==='working'` AND `activity` truthy.** A session can have cached activity from the last working window but be idle now; suppress the chip in that case. The gate is duplicated in every consumer — if you refactor, keep the gate, don't optimize into a shared helper without testing every site.
+
+### Tech debt opened by Phase J
+
+- **Ring buffer is in-process.** `statusFlipHistory` clears on restart. A session whose last flip was 2 minutes ago loses that history the moment the user `pnpm dev`s the server. Acceptable today; if flip debugging becomes a hot question, persist to a small `status_flips` SQLite table.
+- **Activity verb regex is monolingual.** Claude Code's current verbs are English. A localized release would break the detector. File in mind; not shipping-critical.
+- **Sender-preamble heuristic has no unit-test fuzz corpus.** 4 tests today. Expand if we see false positives in the wild (e.g. a doc that starts with a `-\d+`-suffixed word).
+- **`detectActivity` scans last 12 lines bottom-up.** Claude Code occasionally re-prints a frame more than 12 lines back; we miss that case. Bump the window if reports come in; current value is a balance between scan cost + newest-wins correctness.
+- **No integration test for the poller → WS event → client round-trip.** The unit tests cover each piece in isolation. If flip events stop arriving client-side post-Phase-J, bisect: `[status]` log entries → `rooms.broadcast('sessions', ...)` → WS message in browser devtools.
+- **`useWebSocket` consumers don't surface the new richer payload anywhere yet.** The team-lead's `useSessionTransitions(sessionId)` suggestion (toast on transition) is a natural next-phase item. Payload is ready; the hook is the missing piece.
+- **`session:status` WS listener type still destructures `(sessionId, status, extras)` from the event args.** If future server code forgets to pass `extras`, the broadcast spreads `...undefined` which is fine but relies on the `... ?? {}` default. Keep the default.
+
+### Verification (Phase J)
+
+- `pnpm -C client run typecheck` — exit 0.
+- `pnpm -C server run typecheck` — exit 0.
+- `pnpm -C client test` — 37/37 pass (was 22; +15 parser tests).
+- `pnpm -C server test` — 19/19 pass (was 12; +7 activity-detector tests).
+- **Server restart required** to pick up the new `detectStatusDetailed` batch path, the new endpoint, and the extended WS payload. I did NOT restart the user's live server.
+- **Live checks deferred to team-lead** per spec: SessionCard / ContextBar activity visible, `curl /api/sessions/<id>/status-history`, protocol cards on OvaGas/JLFamily transcripts.
+
+### HEAD (post-Phase-J)
+
+```
+c852480 feat(chat): shutdown + plan-approval + sender-preamble message cards
+0d295e9 feat(chat): surface live pane activity in card / context bar / split
+96c344e feat(status): SessionActivity + flip evidence + WS payload extension
+5854058 docs: Phase I.0 addendum — emergency team-config reconcile patch
+7f31fe3 docs: Phase I — color semantics + split-pane top bar + force-close rework
+d9ce052 feat(split): glass top bar + force-close behind overflow + PM notice
+a67dc1f feat(sessions): teammate-active display state + muted teammate-idle
+5a8ace2 fix(sessions): never dismiss teammate on isActive=false alone  ← Phase I.0 (team-lead)
+b13be92 docs: Phase H — timer reset + plan dismissal persistence + plan recency
+e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
+4fbe99d fix(chat): persist plan widget dismissal in localStorage
+b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
+```
+
+---
+
+## Coder-15 Cold Start Guide (rotation handoff to the next coder)
+
+If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
+
+### What Coder-15 shipped across rotations
+
+- **Phase H (3 commits).** ContextBar elapsed timer reset on turn boundary. StickyPlanWidget dismissal persisted to localStorage via `utils/dismissedPlans.ts`. `getActivePlan` recency fix — always returns the LATEST assistant group's plan, not a stale earlier one.
+- **Phase I (2 commits).** Teammate palette variant on StatusBadge (muted idle so green-means-working pops). `sessionDisplay.ts` exports `getDisplayStatus` for the derived `teammate-active` light-blue state. Split-pane glass top bar. Force-close behind overflow + modal + server `system-notice` endpoint.
+- **Phase I.0 (1 commit — team-lead emergency patch).** `5a8ace2` moved `next.add(member.agentId)` in `team-config.service.ts reconcile()` ABOVE the `isActive=false` gate. Previously idle teammates were dismissed and re-ingested every cycle.
+- **Phase J (3 commits).** Activity parser + flip evidence + WS payload extension + protocol cards + sender-preamble detection + 22 new tests. This is the "trust the signals" phase.
+
+### What you need to know that isn't obvious from the code
+
+1. **`~/.claude/skills/jstudio-pm/SKILL.md`** must have a Cold Start section. It's what the PM session reads on spawn via the bootstrap-prompt flow. If that file gets deleted or its preamble shortens, new PM sessions forget to invoke `/pm` on cold start and the whole orchestration model falls apart. Don't touch it unless you understand the three-piece bootstrap (see Coder-9 notes).
+2. **`feedback_isactive_flag_unreliable` memory is load-bearing.** The Agent tool's `isActive` flag flips to `false` when an agent idles, NOT when it's dismissed. `team-config.service.ts reconcile()` depends on this semantic. If you change the flag handling, read Phase I.0 above first.
+3. **`tsx watch` is NOT used.** Server dev script runs plain `tsx src/index.ts`. You MUST manually restart after server edits: `lsof -ti:<port> | xargs kill -9 2>/dev/null; pnpm -C server dev &>/tmp/jsc-dev.log &`. Port is 11002 by default OR whatever `~/.jstudio-commander/config.json` says — the user's override usually wins at 3002.
+4. **Vite port is 11573 (strictPort) post-Phase-E.2.** Server `NODE_ENV` gate (Phase E Bundle 2.1) prevents Fastify from serving `client/dist` in dev — so stale dist can't shadow Vite anymore. If multiple features suddenly vanish, the first move is still `ls -la client/dist/index.html` per `feedback_dist_shadows_vite` — if the mtime is recent and gating regressed, that's the issue.
+5. **Three layers of process cleanup.** `tsx` (no watch), `pnpm -C server dev` (the wrapper), and pane-polled tmux sessions. `pkill -9 -f 'jstudio-commander/server'` sweeps tsx zombies (feedback_tsx_watch_zombies). Always verify clean port with `lsof -ti:<port>` after kill.
+6. **Shared types live in `packages/shared`.** Adding a new type means exporting it from BOTH the origin file (e.g. `types/session.ts`) AND `src/index.ts`. `pnpm -w run build` rebuilds the `dist/` the server + client import. Don't skip the build; otherwise typecheck sees stale types.
+7. **Effort levels are `high | xhigh | max` only.** Legacy rows with `low`/`medium` got healed to `xhigh` in Phase E. If you see a fresh row with a legacy level, something regressed.
+8. **Teams config path.** `~/.claude/teams/*/config.json`. Chokidar watches the directory. `leadAgentId` + `members[].agentId` + `members[].isActive` + `members[].tmuxPaneId`. Member agentIds that look like UUIDs double as Claude UUIDs; non-UUID agentIds are custom slugs and need a tmuxPaneId to be live.
+9. **Commander's own DB is SQLite at `~/.jstudio-commander/commander.db`.** `db/connection.ts` owns schema migrations via `PRAGMA table_info` gates (SQLite doesn't support `ADD COLUMN IF NOT EXISTS`). Add columns by copying the pattern for `stack_json` / `recent_commits_json` from Phase C.
+10. **`session.activity` is NEVER in the DB.** Always attached at route boundaries from the poller's cache. If you ever write it to a column, you've broken the "derived, never persisted" invariant.
+11. **PhaseF parser + PhaseJ parsers live in `chatMessageParser.ts`.** One detector cascade, priority-ordered. Add new parsers at the priority point that matches their signal strength. Don't split into multiple files without thinking hard — a single cascade is the easier abstraction to reason about.
+
+### What's in the backlog (Coder-15 file)
+
+- `getDisplayStatus` unit tests (Phase I tech debt).
+- `listActiveMembers(config)` helper extraction so a Phase-I.0-style regression test drops to ~8 lines.
+- Persistent `status_flips` table if in-process ring buffer proves insufficient.
+- `useSessionTransitions(sessionId)` hook to toast the new WS payload's `from→to + evidence` on transitions. Server-side is ready; the hook is unwritten.
+- Batch `/output` endpoint (Phase B deferral, still deferred).
+- `jstudio-init-project` helper (pending since Feature Wave 2).
+- Memory/skill inventory browser view.
+- `.claude/status.json` upstream signal (if/when Anthropic exposes it, replace regex heuristics).
+
+### Start-of-session checklist
+
+1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-J should be `c852480`.
+2. `pnpm -C client run typecheck && pnpm -C server run typecheck` — both exit 0.
+3. `pnpm -C client test && pnpm -C server test` — 37 client + 19 server pass.
+4. `curl -s localhost:<port>/api/system/health` — returns `{service:'jstudio-commander', version: ..., status:'ok', dbConnected:true}`.
+5. `ls -la ~/.claude/prompts/pm-session-bootstrap.md` — file exists, ~134 bytes.
+6. `grep -c "Cold Start" ~/.claude/skills/jstudio-pm/SKILL.md` — non-zero.
+7. Wait for team-lead handoff. Do not start code changes.
 
 ---
 
