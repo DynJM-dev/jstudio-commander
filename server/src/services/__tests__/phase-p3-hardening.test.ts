@@ -84,7 +84,11 @@ describe('H2 — appendTranscriptPath does NOT bump updated_at', () => {
       join(import.meta.dirname ?? new URL('.', import.meta.url).pathname, '..', 'session.service.ts'),
       'utf-8',
     );
-    const appendBlock = src.split('appendTranscriptPath(')[1] ?? '';
+    // Split on the full method signature so a later callsite (e.g.
+    // the Phase T spawn-bind helper that calls
+    // sessionService.appendTranscriptPath(...)) doesn't shadow the
+    // definition.
+    const appendBlock = src.split('appendTranscriptPath(sessionId: string, path: string)')[1] ?? '';
     const firstCloseBrace = appendBlock.indexOf('  },');
     const body = appendBlock.slice(0, firstCloseBrace > 0 ? firstCloseBrace : 2000);
     assert.match(body, /UPDATE sessions SET transcript_paths = \?/);

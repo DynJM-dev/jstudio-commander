@@ -231,8 +231,10 @@ const bindClaudeSessionFromJsonl = (sessionId: string, cwd: string | null): void
     depth: 0,
     ignoreInitial: true,
     persistent: false, // don't keep the event loop alive if the process tries to exit
-    // Ignore anything that isn't a candidate JSONL to cut wakeups.
-    ignored: (p: string) => !p.endsWith('.jsonl'),
+    // Don't filter via `ignored` — chokidar v4 runs the predicate against
+    // the watched directory itself (which doesn't end in .jsonl), and a
+    // naïve filter would ignore the whole dir. The add handler below
+    // filters by filename pattern instead.
   });
 
   const cleanup = (): void => {

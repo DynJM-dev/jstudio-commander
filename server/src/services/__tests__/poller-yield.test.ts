@@ -2,27 +2,32 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
-// Phase N.0 Patch 2 — regression guard for the poller's "yield to recent
-// hook write" gate.
+// Phase T Patch 2 revision — regression guard for the poller's
+// "hook-authoritative yield" gate.
 //
-// Production: status-poller.service.poll runs every 5s, SELECTs each
-// active session + `ms_since_update` computed from julianday diff, then
-// skips re-classifying when the row is `idle` AND `ms_since_update <
-// HOOK_YIELD_MS`. The yield preserves hook-authored `idle` writes from
-// being clobbered by the pane-regex classifier on the next tick.
+// Production: status-poller.service.poll runs every 5s. For each row
+// it SELECTs `last_hook_at` (epoch ms, written by hook-event routes
+// that resolved an owner). If the difference between `Date.now()` and
+// the stored timestamp is less than HOOK_YIELD_MS (60_000), the
+// poller skips pane-regex reclassification entirely — the hook is
+// authoritative.
+//
+// Revision note: previous Phase N.0 Patch 2 (cfd1e65) gated on
+// `status = 'idle'` AND `ms_since_update < 10_000` (julianday math
+// against updated_at). That was too narrow — append-only transcript
+// writes never bumped updated_at, so active turns could slip outside
+// the window and let a stale pane-regex flip a just-stopped row back
+// to working. The rev drops the status predicate and widens the
+// window to 60s, using a dedicated column.
 //
 // Invariants:
-//   1. Fresh (ms_since_update < 10_000) `idle` row → yield (no write,
-//      regardless of what the pane regex classified).
-//   2. Stale (ms_since_update >= 10_000) `idle` row → NO yield (poller
-//      proceeds to classify + write as usual).
-//   3. Fresh `working` row → NO yield (the gate is scoped to `idle`
-//      only; hook writes only set idle, and a stale working row must
-//      not get frozen).
-//   4. The julianday diff SQL correctly produces ms-scale integers for
-//      rows updated ~now vs ~20s ago — proves the SELECT contract.
+//   1. Recent hook (last_hook_at within 60s) → yield (any status).
+//   2. Stale hook (last_hook_at > 60s ago) → NO yield (poller proceeds).
+//   3. Never-hooked row (last_hook_at = 0) → NO yield.
+//   4. Yield is independent of status: fresh hook on 'working' AND
+//      fresh hook on 'idle' both skip the poller.
 
-const HOOK_YIELD_MS = 10_000;
+const HOOK_YIELD_MS = 60_000;
 
 const createSchema = (db: Database.Database) => {
   db.exec(`
@@ -30,92 +35,108 @@ const createSchema = (db: Database.Database) => {
       id TEXT PRIMARY KEY,
       tmux_session TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL DEFAULT 'idle',
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_hook_at INTEGER NOT NULL DEFAULT 0
     );
   `);
 };
 
-// Mirrors the poller SELECT added in Patch 2.
-const PATCH_2_SELECT = `SELECT id, tmux_session, status,
-       CAST((julianday('now') - julianday(updated_at)) * 86400000 AS INTEGER) AS ms_since_update
+// Mirrors the poller SELECT post-revision.
+const POLLER_SELECT = `SELECT id, tmux_session, status, last_hook_at
 FROM sessions
 WHERE status != 'stopped'`;
 
 // Mirrors the yield decision in the poll loop. Returns true iff the
-// poller would SKIP writing for this session.
-const shouldYield = (row: { status: string; ms_since_update: number }): boolean =>
-  row.status === 'idle' && row.ms_since_update < HOOK_YIELD_MS;
+// poller would SKIP reclassifying this session. `now` is injected so
+// tests are deterministic — production calls Date.now() inline.
+const shouldYield = (
+  row: { last_hook_at: number },
+  now: number,
+): boolean => now - Number(row.last_hook_at ?? 0) < HOOK_YIELD_MS;
 
-describe('poller yield to hook — Phase N.0 Patch 2', () => {
-  test('fresh idle row (updated_at = now) → yield fires, poller skips', () => {
+describe('poller yield (Phase T Patch 2 revision) — hook-authoritative', () => {
+  test('recent hook (within 60s) → yield fires regardless of status', () => {
     const db = new Database(':memory:');
     createSchema(db);
-    // datetime('now') writes UTC without trailing Z; the julianday math
-    // handles it natively — no timezone parsing on our side.
-    db.prepare("INSERT INTO sessions (id, tmux_session, status) VALUES (?, ?, 'idle')").run('pm-1', 't1');
+    const now = 10_000_000;
+    const recent = now - 5_000; // 5s ago — well within 60s
+    db.prepare(
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'idle', ?)",
+    ).run('pm-idle', 't1', recent);
+    db.prepare(
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'working', ?)",
+    ).run('pm-working', 't2', recent);
 
-    const row = db.prepare(PATCH_2_SELECT).get() as { status: string; ms_since_update: number };
-    assert.equal(row.status, 'idle');
-    assert.ok(row.ms_since_update < HOOK_YIELD_MS, `expected <${HOOK_YIELD_MS}, got ${row.ms_since_update}`);
-    assert.equal(shouldYield(row), true);
+    const rows = db.prepare(POLLER_SELECT).all() as Array<{ last_hook_at: number }>;
+    for (const r of rows) {
+      assert.equal(shouldYield(r, now), true);
+    }
     db.close();
   });
 
-  test('stale idle row (updated_at = 20s ago) → no yield, poller proceeds', () => {
+  test('stale hook (>60s ago) → no yield, poller proceeds', () => {
+    const db = new Database(':memory:');
+    createSchema(db);
+    const now = 10_000_000;
+    const stale = now - 75_000; // 75s ago — past the 60s window
+    db.prepare(
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'idle', ?)",
+    ).run('pm-stale', 't1', stale);
+
+    const row = db.prepare(POLLER_SELECT).get() as { last_hook_at: number };
+    assert.equal(shouldYield(row, now), false);
+    db.close();
+  });
+
+  test('never-hooked row (last_hook_at = 0 default) → no yield', () => {
+    // A row that was never matched by any hook has last_hook_at=0 (the
+    // migration default). `Date.now() - 0` is enormous, so the gate must
+    // let the poller run normally. Without this behavior, freshly-booted
+    // sessions would be stuck yielding until the first hook fires.
     const db = new Database(':memory:');
     createSchema(db);
     db.prepare(
-      "INSERT INTO sessions (id, tmux_session, status, updated_at) VALUES (?, ?, 'idle', datetime('now', '-20 seconds'))",
-    ).run('pm-2', 't2');
+      "INSERT INTO sessions (id, tmux_session, status) VALUES (?, ?, 'working')",
+    ).run('fresh', 't1');
 
-    const row = db.prepare(PATCH_2_SELECT).get() as { status: string; ms_since_update: number };
-    // 20s back-dated → ms_since_update should be ≥ 20000 (julianday is
-    // sub-second-precise but our CAST to INTEGER can land at 20000 exact).
-    assert.ok(
-      row.ms_since_update >= HOOK_YIELD_MS,
-      `expected ≥${HOOK_YIELD_MS}, got ${row.ms_since_update}`,
-    );
-    assert.equal(shouldYield(row), false);
+    const row = db.prepare(POLLER_SELECT).get() as { last_hook_at: number };
+    assert.equal(row.last_hook_at, 0);
+    assert.equal(shouldYield(row, Date.now()), false);
     db.close();
   });
 
-  test('fresh working row → no yield (gate is scoped to idle only)', () => {
+  test('yield is status-agnostic: stale hook on idle AND working alike', () => {
+    // Key invariant the revision encodes: the hook, when recent, is
+    // authoritative — not the cached status. When the hook is stale,
+    // neither status value should influence the decision.
     const db = new Database(':memory:');
     createSchema(db);
-    db.prepare("INSERT INTO sessions (id, tmux_session, status) VALUES (?, ?, 'working')").run('pm-3', 't3');
-
-    const row = db.prepare(PATCH_2_SELECT).get() as { status: string; ms_since_update: number };
-    assert.equal(row.status, 'working');
-    assert.ok(row.ms_since_update < HOOK_YIELD_MS);
-    // Even though the row IS fresh, status !== 'idle' so no yield.
-    assert.equal(shouldYield(row), false);
-    db.close();
-  });
-
-  test('fresh waiting row → no yield (gate is scoped to idle only)', () => {
-    const db = new Database(':memory:');
-    createSchema(db);
-    db.prepare("INSERT INTO sessions (id, tmux_session, status) VALUES (?, ?, 'waiting')").run('pm-4', 't4');
-
-    const row = db.prepare(PATCH_2_SELECT).get() as { status: string; ms_since_update: number };
-    assert.equal(shouldYield(row), false);
-    db.close();
-  });
-
-  test('ms_since_update SELECT contract: now vs -20s differ by ~20000', () => {
-    const db = new Database(':memory:');
-    createSchema(db);
-    db.prepare("INSERT INTO sessions (id, tmux_session, status) VALUES (?, ?, 'idle')").run('now-row', 'ta');
+    const now = 10_000_000;
+    const stale = now - 70_000;
     db.prepare(
-      "INSERT INTO sessions (id, tmux_session, status, updated_at) VALUES (?, ?, 'idle', datetime('now', '-20 seconds'))",
-    ).run('old-row', 'tb');
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'idle', ?)",
+    ).run('a', 't1', stale);
+    db.prepare(
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'working', ?)",
+    ).run('b', 't2', stale);
+    db.prepare(
+      "INSERT INTO sessions (id, tmux_session, status, last_hook_at) VALUES (?, ?, 'waiting', ?)",
+    ).run('c', 't3', stale);
 
-    const rows = db.prepare(PATCH_2_SELECT).all() as Array<{ id: string; ms_since_update: number }>;
-    const now = rows.find((r) => r.id === 'now-row')!;
-    const old = rows.find((r) => r.id === 'old-row')!;
-    const delta = old.ms_since_update - now.ms_since_update;
-    // Allow ±500ms jitter around the 20000ms target.
-    assert.ok(delta >= 19_500 && delta <= 20_500, `expected ~20000ms delta, got ${delta}`);
+    const rows = db.prepare(POLLER_SELECT).all() as Array<{ last_hook_at: number }>;
+    for (const r of rows) {
+      assert.equal(shouldYield(r, now), false);
+    }
     db.close();
+  });
+
+  test('boundary: exactly at the 60s edge resolves to NO yield', () => {
+    // shouldYield uses strict `<`, so a diff of exactly HOOK_YIELD_MS
+    // falls outside the window. Guard against off-by-one regressions.
+    const now = 10_000_000;
+    const onEdge = { last_hook_at: now - HOOK_YIELD_MS };
+    assert.equal(shouldYield(onEdge, now), false);
+    const justInside = { last_hook_at: now - (HOOK_YIELD_MS - 1) };
+    assert.equal(shouldYield(justInside, now), true);
   });
 });
