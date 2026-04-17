@@ -12,6 +12,9 @@ import { SessionTerminalPreview } from '../components/chat/SessionTerminalPrevie
 import { StickyPlanWidget } from '../components/chat/StickyPlanWidget';
 import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
+import { useSessionTick } from '../hooks/useSessionTick';
+import { ContextLowToast } from '../components/shared/ContextLowToast';
+import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 
@@ -36,6 +39,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const { messages, loading, error, hasMore, stats, loadMore, refetch } = useChat(sessionId, session?.status);
+  // Phase M — live session telemetry from the statusline forwarder.
+  // Drives both the context-band color strip (when present) and the
+  // context-low toast that fires on upward band crossings.
+  const tick = useSessionTick(sessionId);
+  const ctxPct = tick?.contextWindow.usedPercentage ?? null;
+  const ctxBand = bandForPercentage(ctxPct);
 
   // Force re-sync — clears any lingering local-command bubbles, refetches
   // chat + stats, and fire-and-forget POSTs /sessions/:id/rescan so the
@@ -406,6 +415,28 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Phase M — context-low warning toast. Only surfaces on upward
+          band crossings (green→yellow noise is suppressed; toast fires
+          at yellow→orange and orange→red). Dismisses on click or auto
+          after ~6s. */}
+      <ContextLowToast band={ctxBand} percentage={ctxPct} />
+
+      {/* Phase M — tick-derived context band strip (1px full-width rail
+          above the ContextBar). Green/yellow/orange/red directly maps
+          to `ctxBand`; muted grey when the session has never received
+          a tick (pre-statusline legacy or brand-new). */}
+      {sessionId && (
+        <div
+          className="shrink-0 h-[3px] mx-3 lg:mx-6 rounded-full"
+          style={{
+            background: bandColor(ctxBand),
+            opacity: ctxBand === 'unknown' ? 0.25 : 0.85,
+            transition: 'background 200ms ease-out',
+          }}
+          title={ctxPct !== null ? `Context ${Math.round(ctxPct)}% — band ${ctxBand}` : 'Context: no tick yet'}
+        />
+      )}
 
       {/* ContextBar — above input */}
       <ContextBar
