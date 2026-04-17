@@ -1067,6 +1067,7 @@ Three commits on top of `18f42f3`:
 | `9a37ec3` | `refactor(chat): parseChatMessage returns ordered fragment array` | Parser rewrite. `parseChatMessage(content)` returns `ParsedChatMessage[]`. Scanner walks content L-to-R emitting wrappers + prose fragments in order. JSON-in-wrapper routing recognizes `idle_notification` / `teammate_terminated` / `shutdown_approved` (plus existing shutdown / plan-approval). Unparseable JSON body in a wrapper degrades to a TeammateMessageCard with "(unparseable payload)" trailer. Unknown `type` JSON emits an `unrecognized-protocol` fragment. `parseStructuredUserContent` retained as deprecated shim for Phase F/J tests + belt-and-suspenders call sites. |
 | `686392d` | `feat(chat): system-event chips + unrecognized-protocol card + fragment renderer` | `SystemEventChip.tsx` (chip/card variants), `UnrecognizedProtocolCard.tsx`, `utils/systemEvents.ts` (`useSystemEventsMode` + `collapseConsecutiveIdles` + `isSystemEventFragment`), `utils/teammateColors.ts` (extracted palette used by three components). ChatThread iterates fragments; UserMessage belt-and-suspenders walks the array for the first card-worthy fragment. Collapse window: 60s. Default visibility: `chips`. |
 | `0c6210f` | `test(chat): Phase K parser + collapse coverage (+24 tests)` | Parser tests for each new detector, array-mode scenarios (multi-wrapper same-kind, mixed kinds, prose-between-wrappers, unparseable, unknown-type both inside and outside a wrapper), collapse tests (burst, non-adjacent, non-idle passthrough). 37 → 61 client tests. |
+| `f40ad04` | `feat(chat): sender-preamble + JSON (zero-whitespace) routing` | Phase K addendum. `SENDER_JSON_PREAMBLE_RE` tolerates zero whitespace between a sender slug and its `{...}` body (the unwrapped `team-lead{"type":"shutdown_request",...}` shape the messaging layer emits in the wild). Preamble sender overwrites the JSON's `from` field on disagreement (wire-level sender wins). `UnrecognizedProtocolFragment` gains `senderOverride`; UnrecognizedProtocolCard renders "from <sender>" for unknown JSON types. +5 tests, 61 → 66 client. |
 
 ### Why this phase existed
 
@@ -1086,6 +1087,8 @@ In the shutdown sequence at the end of Phase J.1, Claude Code's messaging layer 
 5. **Consecutive same-teammate idles collapse within 60s.** The counter and the newest timestamp survive; the chip renders "coder-15 idled ×3" with the end-of-burst timestamp on hover.
 6. **Never render raw JSON in a user bubble.** Unknown `type` → `UnrecognizedProtocolCard`. Unparseable JSON body in a wrapper → TeammateMessageCard with "(unparseable payload)" trailer. These two paths are the last line of defense.
 7. **Teammate color palette lives in `utils/teammateColors.ts`.** TeammateMessageCard, SystemEventChip, UnrecognizedProtocolCard all import `resolveTeammateColor`. Don't inline the palette a third time.
+8. **Sender-preamble + JSON body (zero whitespace) is a valid wire form.** `team-lead{"type":"shutdown_request",...}` — no newline, no wrapper — is how the messaging layer delivers many protocol payloads. `SENDER_JSON_PREAMBLE_RE` matches this; JSON-preamble is tried BEFORE pure top-level JSON in `detectTopLevelStructured` so the sender always binds when present.
+9. **Preamble sender wins attribution over JSON `from`.** The preamble is the authoritative wire sender; the JSON's own `from` is author-supplied and can diverge. `routeJsonByType` overwrites `from` on every protocol payload when a `senderOverride` is provided. UnrecognizedProtocolFragment stores `senderOverride` separately (no `from` field to overwrite).
 
 ### Known footguns for next-you
 
@@ -1150,9 +1153,9 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 
 ### Start-of-session checklist
 
-1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-K should be `0c6210f`.
+1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-K-addendum should be `f40ad04` (or later if a docs commit followed).
 2. `pnpm -C client run typecheck && pnpm -C server run typecheck` — both exit 0.
-3. `pnpm -C client test && pnpm -C server test` — 61 client + 23 server pass.
+3. `pnpm -C client test && pnpm -C server test` — 66 client + 23 server pass.
 4. `curl -s localhost:<port>/api/system/health` — returns `{service:'jstudio-commander', version: ..., status:'ok', dbConnected:true}`.
 5. `ls -la ~/.claude/prompts/pm-session-bootstrap.md` — file exists, ~134 bytes.
 6. `grep -c "Cold Start" ~/.claude/skills/jstudio-pm/SKILL.md` — non-zero.
