@@ -29,6 +29,31 @@ const ELAPSED_RE = /(\d+m\s*\d+s|\d+s|\d+m)/;
 const TOKENS_RE = /(?:↓\s*)?(\d[\d,]*)\s*tokens?/i;
 const EFFORT_RE = /thinking with (high|xhigh|max) effort/i;
 
+// Phase L — Claude Code's post-turn footer occasionally splits the verb
+// and the elapsed onto separate lines, with `·` separator lines between:
+//   ✻ Cooked
+//   ·
+//   21261s
+// The verb-line paren is empty in this form, so elapsed must be sourced
+// from a line a few rows below. We only scan forward (past the verb line)
+// up to MULTI_LINE_ELAPSED_SPAN lines, stopping at a new prompt or blank
+// break so we don't accidentally harvest an elapsed from a later frame.
+const MULTI_LINE_ELAPSED_SPAN = 4;
+
+// Parses an elapsed string ("21261s", "5m", "2m 30s") into seconds.
+// Returns null on unparseable input — caller decides the fallback.
+export const parseElapsedSeconds = (elapsed: string | undefined | null): number | null => {
+  if (!elapsed) return null;
+  const trimmed = elapsed.trim();
+  const mmSec = /^(\d+)m\s*(\d+)s$/.exec(trimmed);
+  if (mmSec) return Number(mmSec[1]) * 60 + Number(mmSec[2]);
+  const m = /^(\d+)m$/.exec(trimmed);
+  if (m) return Number(m[1]) * 60;
+  const s = /^(\d+)s$/.exec(trimmed);
+  if (s) return Number(s[1]);
+  return null;
+};
+
 export const detectActivity = (paneContent: string): SessionActivity | null => {
   // Scan the tail — the active indicator sits at/near the bottom of the
   // pane. Reading bottom-up caps the regex scan to O(lines-checked) and
@@ -45,7 +70,25 @@ export const detectActivity = (paneContent: string): SessionActivity | null => {
     const verb = match[2] ?? '';
     const paren = match[3] ?? '';
 
-    const elapsed = ELAPSED_RE.exec(paren)?.[1]?.replace(/\s+/g, ' ').trim();
+    let elapsed = ELAPSED_RE.exec(paren)?.[1]?.replace(/\s+/g, ' ').trim();
+
+    // Multi-line footer: if the verb line had no parenthetical (or the
+    // paren lacked an elapsed), look a few lines below for a bare elapsed
+    // token. Claude Code's "✻ Cooked" / "21261s" split is the canonical
+    // case. Stop at a new `❯` prompt so we don't slurp elapsed from a
+    // subsequent frame.
+    if (!elapsed) {
+      for (let j = i + 1; j < Math.min(lines.length, i + 1 + MULTI_LINE_ELAPSED_SPAN); j++) {
+        const below = lines[j] ?? '';
+        if (/^\s*❯/.test(below)) break;
+        const bare = ELAPSED_RE.exec(below);
+        if (bare?.[1]) {
+          elapsed = bare[1].replace(/\s+/g, ' ').trim();
+          break;
+        }
+      }
+    }
+
     const tokensMatch = TOKENS_RE.exec(paren)?.[1];
     const tokens = tokensMatch ? Number.parseInt(tokensMatch.replace(/,/g, ''), 10) : undefined;
     const effortMatch = EFFORT_RE.exec(paren)?.[1]?.toLowerCase();
@@ -196,6 +239,39 @@ export interface DetectedStatus {
 // every time their pane shows "✻ Idle · teammates running".
 const IDLE_VERBS = new Set(['Idle', 'Waiting', 'Paused', 'Standing']);
 
+// Phase L — past-tense / completion verbs. Claude Code's footer lingers
+// on `✻ Cooked`, `✻ Crunched`, `✻ Brewed`, `✻ Finished`, etc. AFTER a
+// turn completes; the spinner glyph stays for visual continuity but the
+// turn is done. Without this allowlist, any pane that happens to still
+// show the post-turn frame gets misclassified as `working` indefinitely
+// (#Phase-L report: a session with `✻ Cooked / 21261s` was flagged
+// working for 5.9 hours).
+//
+// The explicit set covers the verbs observed in the wild; the `/ed$/`
+// fallback catches future past-tense additions without a code change.
+const COMPLETION_VERBS = new Set([
+  'Cooked', 'Crunched', 'Brewed', 'Finished', 'Composed',
+  'Ruminated', 'Doodled', 'Cogitated', 'Pondered', 'Nested',
+  'Stewed', 'Percolated', 'Hullaballooed', 'Tomfoolered',
+]);
+
+const isCompletionVerb = (verb: string): boolean => {
+  if (COMPLETION_VERBS.has(verb)) return true;
+  // 4-char+ floor so three-letter odd-balls don't false-trigger. Every
+  // past-tense Claude verb observed so far is >=5 characters (Cooked,
+  // Brewed, Nested, etc).
+  return verb.length >= 4 && /ed$/.test(verb);
+};
+
+// Phase L — any Claude turn longer than STALE_ELAPSED_SECONDS is almost
+// certainly a frozen footer, not a live turn. Real high-effort runs cap
+// well under this; the user's stale pane read 21261s (5.9h). When the
+// activity carries an elapsed this large, force idle regardless of the
+// verb — belt-and-suspenders for cases where a brand-new Claude verb
+// slips past the COMPLETION_VERBS allowlist but still stays visible
+// past a fresh turn boundary.
+const STALE_ELAPSED_SECONDS = 600;
+
 // Exposed for unit tests — pure function, single-string input, no I/O.
 // `classifyStatusFromPane` is the same branch tree the poller uses, just
 // without the live tmux capture. Testing the branches in isolation is
@@ -214,16 +290,28 @@ export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus
   }
 
   if (hasActiveInTail(paneContent)) {
-    // Verb-aware override (Phase J.1): the spinner glyph alone is not
-    // enough to call this `working`. ✻ Idle / ✻ Waiting / ✻ Paused /
-    // ✻ Standing all carry a spinner for visual continuity but the verb
-    // says parked. detectActivity already extracts the verb; if it lands
-    // in IDLE_VERBS, short-circuit to `idle` rather than misfiring the
-    // hoist. A genuine `✻ Ruminating` / `✽ Doodling` / `⏺ Brewing` still
-    // wins the original branch.
+    // Verb-aware override (Phase J.1 + L): the spinner glyph alone is
+    // not enough to call this `working`. Three separate exits beat the
+    // hoist:
+    //   1. IDLE_VERBS — parked verbs (Idle / Waiting / Paused / Standing).
+    //   2. COMPLETION_VERBS / `-ed` suffix — the post-turn footer shows
+    //      past-tense verbs (Cooked / Crunched / Brewed / Finished) with
+    //      the spinner still drawn for visual continuity.
+    //   3. Stale elapsed — any turn elapsed past STALE_ELAPSED_SECONDS
+    //      is not a real live turn; the footer just never repainted.
+    // A genuine `✻ Ruminating` / `✽ Doodling` / `⏺ Brewing` still wins.
     const activity = detectActivity(paneContent);
-    if (activity && IDLE_VERBS.has(activity.verb)) {
-      return { status: 'idle', evidence: `verb=${activity.verb} overrides spinner hoist` };
+    if (activity) {
+      if (IDLE_VERBS.has(activity.verb)) {
+        return { status: 'idle', evidence: `verb=${activity.verb} overrides spinner hoist` };
+      }
+      if (isCompletionVerb(activity.verb)) {
+        return { status: 'idle', evidence: `past-tense verb=${activity.verb}` };
+      }
+      const secs = parseElapsedSeconds(activity.elapsed);
+      if (secs !== null && secs > STALE_ELAPSED_SECONDS) {
+        return { status: 'idle', evidence: `stale elapsed ${secs}s` };
+      }
     }
     return { status: 'working', evidence: 'active-indicator in tail' };
   }

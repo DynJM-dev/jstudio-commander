@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectActivity, classifyStatusFromPane } from '../agent-status.service.js';
+import { detectActivity, classifyStatusFromPane, parseElapsedSeconds } from '../agent-status.service.js';
 
 describe('detectActivity — Phase J pane-footer parser', () => {
   test('full line → spinner + verb + elapsed + tokens + effort', () => {
@@ -110,5 +110,125 @@ describe('classifyStatusFromPane — Phase J.1 IDLE_VERBS override', () => {
     const result = classifyStatusFromPane(pane);
     assert.equal(result.status, 'waiting');
     assert.equal(result.evidence, 'numbered-choice prompt');
+  });
+});
+
+// ============================================================================
+// Phase L — past-tense completion verbs + stale-elapsed gate + multi-line
+// footer elapsed extraction.
+// ============================================================================
+
+describe('parseElapsedSeconds — Phase L', () => {
+  test('pure seconds', () => {
+    assert.equal(parseElapsedSeconds('21261s'), 21261);
+    assert.equal(parseElapsedSeconds('30s'), 30);
+  });
+  test('pure minutes', () => {
+    assert.equal(parseElapsedSeconds('5m'), 300);
+  });
+  test('minutes + seconds', () => {
+    assert.equal(parseElapsedSeconds('2m 30s'), 150);
+    assert.equal(parseElapsedSeconds('1m 49s'), 109);
+  });
+  test('null / undefined / garbage → null', () => {
+    assert.equal(parseElapsedSeconds(undefined), null);
+    assert.equal(parseElapsedSeconds(null), null);
+    assert.equal(parseElapsedSeconds('abc'), null);
+  });
+});
+
+describe('classifyStatusFromPane — Phase L past-tense + stale-elapsed', () => {
+  test('✻ Cooked alone → idle (past-tense verb)', () => {
+    const result = classifyStatusFromPane('✻ Cooked');
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /past-tense verb=Cooked/);
+  });
+
+  test('✻ Crunched alone → idle', () => {
+    const result = classifyStatusFromPane('✻ Crunched');
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /past-tense verb=Crunched/);
+  });
+
+  test('✻ Finished alone → idle', () => {
+    const result = classifyStatusFromPane('✻ Finished');
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /past-tense verb=Finished/);
+  });
+
+  test('✻ Brewing (present-tense) → working (regression guard)', () => {
+    const result = classifyStatusFromPane('✻ Brewing');
+    assert.equal(result.status, 'working');
+    assert.equal(result.evidence, 'active-indicator in tail');
+  });
+
+  test('✻ Ruminating (30s) → working (live turn)', () => {
+    const result = classifyStatusFromPane('✻ Ruminating… (30s · ↓ 120 tokens)');
+    assert.equal(result.status, 'working');
+    assert.equal(result.evidence, 'active-indicator in tail');
+  });
+
+  test('✻ Ruminating (620s) → idle (stale-elapsed override)', () => {
+    const result = classifyStatusFromPane('✻ Ruminating… (620s · ↓ 120 tokens)');
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /stale elapsed 620s/);
+  });
+
+  test('multi-line footer: ✻ Cooked / · / 21261s → idle (both gates fire, past-tense wins first)', () => {
+    const pane = [
+      'Claude',
+      'Thinking deeply...',
+      'Composing response...',
+      '·',
+      '✻ Cooked',
+      '·',
+      '21261s',
+      'Step 1/1',
+    ].join('\n');
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'idle');
+    // Past-tense verb fires before stale-elapsed, so evidence reads "past-tense verb=Cooked".
+    assert.match(result.evidence, /past-tense verb=Cooked/);
+  });
+
+  test('future past-tense verb (Schlepped) caught by /ed$/ fallback', () => {
+    const result = classifyStatusFromPane('✻ Schlepped');
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /past-tense verb=Schlepped/);
+  });
+});
+
+describe('detectActivity — Phase L multi-line elapsed', () => {
+  test('verb with no paren, elapsed on a line two rows below → extracted', () => {
+    const pane = [
+      '✻ Cooked',
+      '·',
+      '21261s',
+      'Step 1/1',
+    ].join('\n');
+    const activity = detectActivity(pane);
+    assert.ok(activity);
+    assert.equal(activity!.verb, 'Cooked');
+    assert.equal(activity!.elapsed, '21261s');
+  });
+
+  test('verb with no paren, no elapsed below → elapsed stays undefined', () => {
+    const pane = '✻ Cooked';
+    const activity = detectActivity(pane);
+    assert.ok(activity);
+    assert.equal(activity!.verb, 'Cooked');
+    assert.equal(activity!.elapsed, undefined);
+  });
+
+  test('multi-line scan stops at ❯ prompt — does not slurp a later frame', () => {
+    // The `30s` below belongs to a later frame we should NOT harvest.
+    const pane = [
+      '✻ Cooked',
+      '❯ user typed something',
+      '30s',
+    ].join('\n');
+    const activity = detectActivity(pane);
+    assert.ok(activity);
+    assert.equal(activity!.elapsed, undefined);
   });
 });
