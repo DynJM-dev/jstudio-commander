@@ -141,6 +141,30 @@ export const getDb = (): Database.Database => {
     console.log(`[db] Migration: healed ${healed.changes} legacy session(s) to effort=xhigh`);
   }
 
+  // Phase R M6 — boot-time audit for non-UTC `updated_at` values. The
+  // poller + aggregate-rate-limits queries assume every persisted
+  // timestamp is naïve UTC (what `datetime('now')` emits). A future
+  // write that uses `datetime('now', 'localtime')`, `CURRENT_TIMESTAMP`
+  // in a non-UTC environment, or a JS `Date.prototype.toString()`
+  // would silently corrupt the poll's ms_since_update calc. This
+  // LIKE scan catches the common drift shapes: localized 12-hour
+  // strings ('03:42 PM'), ISO-8601 with explicit offsets (`-0400`,
+  // `+0100`), or trailing `Z`. `datetime('now')` emits none of these.
+  const auditRow = db.prepare(
+    `SELECT COUNT(*) AS n FROM sessions
+     WHERE updated_at LIKE '%AM%'
+        OR updated_at LIKE '%PM%'
+        OR updated_at LIKE '%+__:__'
+        OR updated_at LIKE '%-__:__'
+        OR updated_at LIKE '%Z'`,
+  ).get() as { n: number };
+  if (auditRow.n > 0) {
+    console.warn(
+      `[db] audit: ${auditRow.n} session row(s) have a non-UTC updated_at format. ` +
+      `Poller + aggregate queries assume datetime('now') UTC. Investigate writers.`,
+    );
+  }
+
   // Key/value preference store — replaces ad-hoc localStorage on the
   // client so layout, sidebar, and split-pane state survive across
   // browsers and devices.

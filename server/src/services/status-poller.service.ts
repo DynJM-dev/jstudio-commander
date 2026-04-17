@@ -56,14 +56,18 @@ const poll = (): void => {
   // marked stopped by a prior glitch — if tmux still reports it live, we
   // must re-probe and un-stick it. jsc-* session names stay filtered by
   // status because those are Commander-created and stopping is authoritative.
-  // `ms_since_update` is computed in SQL via julianday diff so we don't
-  // have to worry about SQLite's TEXT `updated_at` format vs JS `Date`
-  // timezone parsing (SQLite emits naïve UTC without a trailing Z, which
-  // `new Date(...)` interprets as local on some platforms and UTC on
-  // others). Integer ms since the row's last write.
+  //
+  // Phase R M6 — `ms_since_update` uses `strftime('%s', ...)` (UTC second
+  // epochs) instead of `julianday()` diff. Both produce identical results
+  // against UTC datetimes, but strftime is more defensive: it returns
+  // NULL on unparseable input (surfaces a typed boundary bug as a NULL
+  // rather than silently producing nonsense diffs). The boot-time audit
+  // in connection.ts logs a warn count when any persisted `updated_at`
+  // looks non-UTC, so future writes that drift from `datetime('now')`
+  // (UTC) are caught at startup instead of silently corrupting the poll.
   const activeSessions = db.prepare(
     `SELECT id, tmux_session, status,
-            CAST((julianday('now') - julianday(updated_at)) * 86400000 AS INTEGER) AS ms_since_update
+            (strftime('%s','now') - strftime('%s', updated_at)) * 1000 AS ms_since_update
      FROM sessions
      WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
   ).all() as Array<{ id: string; tmux_session: string; status: string; ms_since_update: number }>;
