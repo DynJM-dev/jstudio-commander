@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>JStudio Commander</string>
+  <string>JStudio Command Center</string>
   <key>CFBundleDisplayName</key>
-  <string>JStudio Commander</string>
+  <string>JStudio Command Center</string>
   <key>CFBundleIdentifier</key>
   <string>dev.jstudio.commander</string>
   <key>CFBundleExecutable</key>
