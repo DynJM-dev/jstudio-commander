@@ -4,6 +4,7 @@ import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
 import type { SessionTick } from './session-tick.js';
 import type { SystemStatsPayload, AggregateRateLimitsPayload } from './system-stats.js';
+import type { PreCompactState } from './pre-compact.js';
 
 export type WSEvent =
   | { type: 'session:created'; session: Session }
@@ -45,7 +46,15 @@ export type WSEvent =
   | { type: 'session:tick'; sessionId: string; tick: SessionTick }
   | { type: 'session:heartbeat'; sessionId: string; ts: number }
   | { type: 'system:stats'; stats: SystemStatsPayload }
-  | { type: 'system:rate-limits'; rateLimits: AggregateRateLimitsPayload };
+  | { type: 'system:rate-limits'; rateLimits: AggregateRateLimitsPayload }
+  | {
+      type: 'pre-compact:state-changed';
+      sessionId: string;
+      state: PreCompactState;
+      ctxPct: number | null;
+      timestamp: string;
+      reason: 'warn-threshold' | 'ready-ack' | 'emergency' | 'reset' | 'hysteresis';
+    };
 
 export type WSCommand =
   | { type: 'terminal:input'; sessionId: string; data: string }

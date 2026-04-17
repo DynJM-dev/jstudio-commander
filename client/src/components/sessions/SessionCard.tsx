@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Pencil, SplitSquareHorizontal, Zap } from 'lucide-react';
+import { Pencil, SplitSquareHorizontal, Zap, ZapOff } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
@@ -9,8 +9,11 @@ import { HeartbeatDot } from '../shared/HeartbeatDot';
 import { CommandInput } from './CommandInput';
 import { SessionActions } from './SessionActions';
 import { TeammateRow } from './TeammateRow';
+import { PreCompactIndicator } from './PreCompactIndicator';
 import { getDisplayStatus } from '../../utils/sessionDisplay';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
+import { usePreCompactState } from '../../hooks/usePreCompactState';
+import { api } from '../../services/api';
 
 // Phase N.0 Patch 3 — when a session hasn't heartbeated in >30s, force
 // the visual badge to `idle` regardless of stored status. DOES NOT
@@ -124,6 +127,26 @@ export const SessionCard = ({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const preCompactState = usePreCompactState(session.id);
+  // Optimistic local mirror of the opt-in flag so the toggle responds
+  // instantly. Re-syncs with the server value on session prop changes
+  // (the sessions hook re-fetches on WS session:updated events).
+  const [autoCompactEnabled, setAutoCompactEnabled] = useState(session.autoCompactEnabled);
+  useEffect(() => {
+    setAutoCompactEnabled(session.autoCompactEnabled);
+  }, [session.autoCompactEnabled]);
+
+  const handleToggleAutoCompact = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();  // don't trigger handleCardClick on the header click
+    const next = !autoCompactEnabled;
+    setAutoCompactEnabled(next);
+    try {
+      await api.patch(`/pre-compact/sessions/${session.id}`, { autoCompactEnabled: next });
+    } catch {
+      // Roll back on failure; the server stays the source of truth.
+      setAutoCompactEnabled(!next);
+    }
+  }, [autoCompactEnabled, session.id]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -168,6 +191,10 @@ export const SessionCard = ({
           <div className="flex items-center gap-2 min-w-0">
             <StatusBadge status={effectiveStatus} showLabel size="sm" />
             <HeartbeatDot sessionId={session.id} initialTs={session.lastActivityAt} />
+            {/* Phase Q — pre-compact state indicator. Renders nothing
+                when state is `idle`, surfaces only when Commander is
+                actively managing the session's context window. */}
+            <PreCompactIndicator state={preCompactState} />
           </div>
           <span
             className="font-mono-stats text-xs"
@@ -377,6 +404,34 @@ export const SessionCard = ({
               <SplitSquareHorizontal size={14} />
             </button>
           )}
+          {/* Phase Q — auto-compact opt-out toggle. Zap = enabled,
+              ZapOff = disabled. Optimistic local state so the click
+              feels instant; falls back to the server-reported value
+              on next fetch if the PATCH fails. */}
+          <button
+            onClick={handleToggleAutoCompact}
+            className="shrink-0 flex items-center justify-center rounded p-1 transition-colors"
+            style={{
+              color: autoCompactEnabled
+                ? 'var(--color-accent-light)'
+                : 'var(--color-text-tertiary)',
+              opacity: autoCompactEnabled ? 1 : 0.6,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = autoCompactEnabled ? '1' : '0.6';
+            }}
+            title={autoCompactEnabled
+              ? 'Auto-compact at 85% (click to disable)'
+              : 'Auto-compact disabled (click to enable)'}
+            aria-label={autoCompactEnabled
+              ? 'Disable auto-compact'
+              : 'Enable auto-compact'}
+            data-testid="auto-compact-toggle"
+            data-enabled={autoCompactEnabled}
+          >
+            {autoCompactEnabled ? <Zap size={14} /> : <ZapOff size={14} />}
+          </button>
           <SessionActions
             sessionId={session.id}
             isStopped={isStopped}
