@@ -54,11 +54,64 @@ export const tmuxService = {
     return name;
   },
 
+  // Phase S.1 Patch 1 — resolve the first (top) pane id owned by a tmux
+  // session. Commander stores this as `sessions.tmux_session` so every
+  // subsequent `send-keys -t %NN` routes to THAT pane, not whichever pane
+  // happens to be active when the user clicks around inside the session.
+  //
+  // Before this helper existed, createSession stored the session NAME
+  // (`jsc-<uuid>`) in the column. `tmux send-keys -t jsc-<uuid>` targets
+  // the session's currently-active pane, which drifts when users split
+  // or navigate — PM messages leaked into a sibling coder pane the moment
+  // the coder pane became active. See OvaGas PM bug in Phase S.1.
+  //
+  // Idempotent: when called with a value that already starts with `%` it
+  // returns the input unchanged — so callers can safely pass anything
+  // they stored in `tmux_session` without pre-branching. Returns null
+  // when the session has no panes (shouldn't happen post-new-session)
+  // or doesn't exist.
+  resolveFirstPaneId(sessionName: string): string | null {
+    if (sessionName.startsWith('%')) return sessionName;
+    try {
+      const out = exec(['list-panes', '-t', sessionName, '-F', '#{pane_id}']);
+      if (!out) return null;
+      const first = out.split('\n')[0]?.trim();
+      return first && first.startsWith('%') ? first : null;
+    } catch {
+      return null;
+    }
+  },
+
   killSession(name: string): void {
     exec(['kill-session', '-t', name]);
   },
 
   sendKeys(name: string, keys: string): void {
+    // Phase S.1 Patch 3 — target guard. Accept pane ids (`%NN`) and the
+    // `retired:` sentinel (no-op targets on dead rows). Anything else —
+    // raw session names, `agent:` sentinels, empty strings — is a
+    // routing foot-gun: `send-keys -t <session-name>` targets whichever
+    // pane is currently active in that session, which is non-
+    // deterministic when the user splits or navigates.
+    //
+    // DEV throws so the regression surfaces in tests; PROD logs + still
+    // attempts the send so a misrouted write-path doesn't crash a live
+    // server. Commander-generated session names (`jsc-*`) are allowed
+    // through in PROD with a warn — we don't want to hard-break legacy
+    // rows that haven't been healed yet.
+    if (!name.startsWith('%') && !name.startsWith('retired:')) {
+      const msg =
+        `[tmux] sendKeys target '${name}' is not a pane id — ` +
+        `may route to an unexpected pane inside the session.`;
+      if (process.env.NODE_ENV !== 'production') {
+        throw new Error(msg);
+      }
+      console.warn(msg);
+    }
+    // Retired targets are explicit no-ops — the row is stopped and its
+    // pane was freed. Writing would either fail or hit a foreign pane.
+    if (name.startsWith('retired:')) return;
+
     // Send literal text with -l flag (prevents special key interpretation),
     // then send Enter separately to ensure reliable delivery
     if (keys) {

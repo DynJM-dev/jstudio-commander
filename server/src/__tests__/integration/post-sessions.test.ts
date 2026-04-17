@@ -74,7 +74,11 @@ test('POST /api/sessions — 201 + DB row + session:created event', async (t) =>
   };
   assert.match(body.id, /^[0-9a-f-]{36}$/i);
   assert.equal(typeof body.name, 'string');
-  assert.match(body.tmuxSession, /^jsc-[0-9a-f]{8}$/);
+  // Phase S.1 Patch 1 — createSession now stores the first pane id
+  // (`%NN`) in `tmux_session`, not the session name (`jsc-<uuid>`).
+  // The session name still exists in tmux; cleanup via `kill-session
+  // -t %NN` resolves to the owning session.
+  assert.match(body.tmuxSession, /^%\d+$/);
   assert.ok(['working', 'idle'].includes(body.status), `status=${body.status}`);
   SPAWNED_TMUX.push(body.tmuxSession);
 

@@ -241,16 +241,27 @@ teamConfigService.start();
   for (const tmuxSession of liveTmuxSessions) {
     if (!knownTmuxNames.has(tmuxSession.name)) {
       // Orphaned tmux session — add to DB via the single write surface so
-      // defaults stay consistent with every other path.
+      // defaults stay consistent with every other path. Phase S.1 Patch 1:
+      // resolve the session's first pane id and store THAT in
+      // `tmux_session` so later send-keys target a specific pane instead
+      // of whichever pane happens to be active (OvaGas bug class).
       const id = tmuxSession.name.replace('jsc-', '') + '-0000-0000-0000-000000000000';
       const liveStatus = agentStatusService.detectStatus(tmuxSession.name);
+      const paneId = tmux.resolveFirstPaneId(tmuxSession.name);
+      if (!paneId) {
+        console.warn(
+          `[startup] orphan tmux ${tmuxSession.name} — resolveFirstPaneId returned null; ` +
+          `skipping adoption to avoid storing a session-name target.`,
+        );
+        continue;
+      }
       sessionService.upsertSession({
         id,
         name: `recovered-${tmuxSession.name}`,
-        tmuxSession: tmuxSession.name,
+        tmuxSession: paneId,
         status: liveStatus,
       });
-      console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} → added as ${liveStatus}`);
+      console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} (${paneId}) → added as ${liveStatus}`);
     }
   }
 

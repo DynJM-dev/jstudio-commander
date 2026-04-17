@@ -270,6 +270,25 @@ export const sessionService = {
     // Create tmux session (in project directory if specified)
     tmuxService.createSession(tmuxName, opts.projectPath);
 
+    // Phase S.1 Patch 1 — resolve the first pane id of the just-created
+    // tmux session and persist THAT in `tmux_session`. Without this step
+    // the column stored the session name (`jsc-<uuid>`), and every later
+    // `send-keys -t <session-name>` routed to whichever pane was active
+    // when the command ran — PM messages leaked into a sibling coder
+    // pane as soon as the user focused the coder (OvaGas bug).
+    //
+    // Falls back to the session name with a warn when resolution fails
+    // (tmux race, pane not yet reported). The boot-time heal re-tries
+    // on the next restart so a transient miss self-corrects.
+    const resolvedPaneId = tmuxService.resolveFirstPaneId(tmuxName);
+    if (!resolvedPaneId) {
+      console.warn(
+        `[sessions] createSession(${tmuxName}) — resolveFirstPaneId returned null; ` +
+        `storing session name as fallback. Boot-time heal will retry.`,
+      );
+    }
+    const sendTarget = resolvedPaneId ?? tmuxName;
+
     // Auto-start Claude Code in the tmux session. The model string can
     // carry brackets (`[1m]` for 1M context) which zsh/bash glob-expand
     // if unquoted — single-quote the value so strict shells don't error.
@@ -279,7 +298,7 @@ export const sessionService = {
     // Small delay to let the shell initialize, then send the claude command
     setTimeout(() => {
       try {
-        tmuxService.sendKeys(tmuxName, claudeCmd);
+        tmuxService.sendKeys(sendTarget, claudeCmd);
 
         // The UI will detect and surface any interactive prompts (trust, permissions)
         // via the /api/sessions/:id/output endpoint
@@ -302,7 +321,7 @@ export const sessionService = {
         this.upsertSession({
           id,
           name: slug,
-          tmuxSession: tmuxName,
+          tmuxSession: sendTarget,
           projectPath: opts.projectPath ?? null,
           status: 'working',
           model,
@@ -312,7 +331,13 @@ export const sessionService = {
         db.prepare(`
           INSERT INTO session_events (session_id, event, detail)
           VALUES (?, 'created', ?)
-        `).run(id, JSON.stringify({ name: slug, tmuxSession: tmuxName, projectPath: opts.projectPath, claudeCmd }));
+        `).run(id, JSON.stringify({
+          name: slug,
+          tmuxSession: sendTarget,
+          tmuxSessionName: tmuxName,
+          projectPath: opts.projectPath,
+          claudeCmd,
+        }));
       })();
     } catch (err) {
       // DB transaction rolled back — kill the tmux session we spawned
@@ -340,13 +365,13 @@ export const sessionService = {
     }
 
     (async () => {
-      const ready = await waitForClaudeReady(tmuxName);
+      const ready = await waitForClaudeReady(sendTarget);
       if (!ready) {
         console.warn(`[sessions] ${shortId} post-boot injection skipped — Claude did not become ready`);
         return;
       }
       try {
-        tmuxService.sendKeys(tmuxName, '/effort xhigh');
+        tmuxService.sendKeys(sendTarget, '/effort xhigh');
         console.log(`[sessions] ${shortId} effort set to max`);
       } catch (err) {
         console.warn(`[sessions] ${shortId} /effort xhigh send failed:`, (err as Error).message);
@@ -356,7 +381,7 @@ export const sessionService = {
         // the bootstrap so the two don't concatenate into one input line.
         await new Promise((r) => setTimeout(r, 800));
         try {
-          tmuxService.sendKeys(tmuxName, bootstrap);
+          tmuxService.sendKeys(sendTarget, bootstrap);
           console.log(`[sessions] ${shortId} PM bootstrap injected`);
         } catch (err) {
           console.warn(`[sessions] ${shortId} PM bootstrap send failed:`, (err as Error).message);
