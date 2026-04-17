@@ -126,6 +126,13 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
   transcriptPaths: parseTranscriptPaths(row.transcript_paths),
   lastActivityAt: Number(row.last_activity_at ?? 0),
+  // SQLite has no boolean type — the column is INTEGER 0/1. Default
+  // to true for legacy rows that pre-date the column (the migration
+  // defaults new rows to 1, but reading a pre-migration row with the
+  // column absent yields undefined here).
+  autoCompactEnabled: row.auto_compact_enabled === undefined
+    ? true
+    : Number(row.auto_compact_enabled) !== 0,
 });
 
 // Column mapping kept in one place so every write surface applies the same
@@ -153,6 +160,10 @@ interface UpsertSessionInput {
   transcriptPath?: string | null;
   transcriptPaths?: string[];
   stationId?: string | null;
+  // SQLite stores this as INTEGER 0/1. Callers pass boolean; the
+  // serializer below coerces. Undefined leaves the existing value
+  // untouched (sparse-update semantics).
+  autoCompactEnabled?: boolean;
 }
 
 // Columns whose values aren't primitive strings/numbers — SQLite doesn't
@@ -160,6 +171,7 @@ interface UpsertSessionInput {
 // read (rowToSession handles the parse side).
 const serializeCol = (col: string, value: unknown): unknown => {
   if (col === 'transcript_paths' && Array.isArray(value)) return JSON.stringify(value);
+  if (col === 'auto_compact_enabled' && typeof value === 'boolean') return value ? 1 : 0;
   return value;
 };
 
@@ -181,6 +193,7 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
   { col: 'parent_session_id', key: 'parentSessionId' },
   { col: 'team_name',         key: 'teamName' },
   { col: 'session_type',      key: 'sessionType' },
+  { col: 'auto_compact_enabled', key: 'autoCompactEnabled' },
 ];
 
 export const sessionService = {

@@ -9,6 +9,7 @@ import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
 import { readJsonlOrigin, isCoderJsonl } from './jsonl-origin.service.js';
+import { preCompactService, READY_PHRASE } from './pre-compact.service.js';
 
 export const setupWatcherBridge = (): void => {
   // Wire JSONL file changes → parse new lines → emit chat messages
@@ -116,6 +117,24 @@ export const setupWatcherBridge = (): void => {
         tokenTrackerService.recordUsage(session.id, null, messages);
       } catch (err) {
         console.error('[bridge] Token tracking error:', err);
+      }
+
+      // Phase Q — pre-compact ack detection. The session's AI replies
+      // with a user-role message whose text includes READY_TO_COMPACT
+      // (case-sensitive). Wrapped + bounded to a quick substring
+      // scan so slow parsing here can't lag the bridge callback.
+      try {
+        for (const msg of messages) {
+          if (msg.role !== 'user') continue;
+          for (const block of msg.content) {
+            if (block.type === 'text' && block.text.includes(READY_PHRASE)) {
+              preCompactService.onChatMessageReceived(session.id, block.text);
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[pre-compact] onChatMessageReceived error:', (err as Error).message);
       }
     } else {
       console.log(`[bridge] JSONL change at ${encodedProjectDir} — no matching session found`);

@@ -59,6 +59,21 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0');
     console.log('[db] Migration: added last_activity_at column to sessions');
   }
+  // Phase Q — per-session auto-compact opt-out. Default on. Existing
+  // PM / lead-PM rows get flipped off in a one-shot heal below so
+  // Commander never auto-compacts a session responsible for durable
+  // handoff state without the user explicitly re-enabling it.
+  if (!cols.some((c) => c.name === 'auto_compact_enabled')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN auto_compact_enabled INTEGER NOT NULL DEFAULT 1');
+    console.log('[db] Migration: added auto_compact_enabled column to sessions');
+    const healed = db.prepare(
+      `UPDATE sessions SET auto_compact_enabled = 0
+       WHERE agent_role IN ('lead-pm', 'pm')`,
+    ).run();
+    if (healed.changes > 0) {
+      console.log(`[db] Migration: disabled auto-compact on ${healed.changes} PM session row(s)`);
+    }
+  }
 
   // #230 — project tech-stack pills + recent commits persistence.
   const projCols = db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;

@@ -3,6 +3,7 @@ import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
+import { preCompactService } from './pre-compact.service.js';
 
 // Phase O — aggregate rate-limit freshness window. Claude Code's
 // statusline emits rate-limit fields on every tick, so "fresh" here
@@ -186,6 +187,19 @@ export const sessionTickService = {
     // AFTER the tick upsert + emit so a client receiving both events
     // in-order never sees a heartbeat-then-stale-tick gap.
     sessionService.bumpLastActivity(tick.commanderSessionId);
+
+    // Phase Q — run the pre-compact watcher on every tick. The
+    // service is a no-op for opted-out sessions and for ctx % below
+    // the warn threshold. Wrapped in try/catch so a bug in the
+    // state machine can't break tick ingest for everyone else.
+    try {
+      preCompactService.onTickReceived(
+        tick.commanderSessionId,
+        tick.contextWindow.usedPercentage,
+      );
+    } catch (err) {
+      console.error('[pre-compact] onTickReceived error:', (err as Error).message);
+    }
 
     // Phase O — recompute the aggregate rate-limit payload and emit on
     // `system:rate-limits` when it changes. Piggybacks off the tick

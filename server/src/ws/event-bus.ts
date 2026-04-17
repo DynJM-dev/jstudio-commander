@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick, SystemStatsPayload, AggregateRateLimitsPayload } from '@commander/shared';
+import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick, SystemStatsPayload, AggregateRateLimitsPayload, PreCompactStateChangedEvent } from '@commander/shared';
 
 export interface StatusEmitExtras {
   from?: SessionStatus;
@@ -91,6 +91,13 @@ class CommanderEventBus extends EventEmitter {
 
   emitSystemRateLimits(rateLimits: AggregateRateLimitsPayload): void {
     this.emit('system:rate-limits', rateLimits);
+  }
+
+  // Phase Q — pre-compact state-machine transition for a given
+  // session. Fires on idle→warned, warned→compacting (both READY
+  // ack and emergency paths), and compacting→idle resets.
+  emitPreCompactStateChanged(evt: PreCompactStateChangedEvent): void {
+    this.emit('pre-compact:state-changed', evt);
   }
 
   // System events

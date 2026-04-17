@@ -8,6 +8,11 @@ export type { TokenUsageEntry, CostEntry, DailyStats } from './types/analytics.j
 export type { WSEvent, WSCommand } from './types/ws-events.js';
 export type { SessionTick, StatuslineRawPayload } from './types/session-tick.js';
 export type { SystemStatsPayload, AggregateRateLimitsPayload, RateLimitWindow } from './types/system-stats.js';
+export type {
+  PreCompactState,
+  PreCompactStateChangedEvent,
+  PreCompactStatusSnapshot,
+} from './types/pre-compact.js';
 
 // Constants
 export {

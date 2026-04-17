@@ -64,6 +64,12 @@ export interface Session {
   // render "Xs ago" from `Date.now() - lastActivityAt` and force-
   // display idle after a 30s stale threshold regardless of `status`.
   lastActivityAt: number;
+  // Phase Q — when true, Commander watches this session's context-window
+  // percentage and injects a warning message at 85% + auto-compacts
+  // at 95% (or after the session's AI responds READY_TO_COMPACT).
+  // Defaults on for coder/teammate rows, off for lead-pm/pm rows
+  // (PMs compact more carefully — they own durable handoff state).
+  autoCompactEnabled: boolean;
   // Live pane activity — populated on route boundaries (GET /sessions/:id
   // and the teammates list) by re-capturing the tmux pane tail. Null when
   // nothing parses, when the session is stopped, or when the list endpoint
