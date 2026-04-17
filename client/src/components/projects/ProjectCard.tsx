@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, X, FileText, Sparkles, Clock } from 'lucide-react';
-import type { Project, Session } from '@commander/shared';
+import { Check, X, FileText, Sparkles, Clock, GitCommit, ChevronDown, ChevronRight } from 'lucide-react';
+import type { Project, Session, StackCategory, StackPill as StackPillType, RecentCommit } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 
 const M = 'Montserrat, sans-serif';
@@ -53,12 +54,85 @@ const timeSince = (iso: string): string => {
   return `${d}d ago`;
 };
 
+const MAX_PILLS = 6;
+const COMMITS_COLLAPSED = 3;
+
+// Category colors — framework/backend/database lean on existing theme
+// vars so dark-mode inherits automatically; language (violet) and tool
+// (slate) use literals since they're not in the palette.
+const CATEGORY_COLOR: Record<StackCategory, string> = {
+  framework: 'var(--color-accent-light)',
+  language: '#8B5CF6',
+  tool: '#94A3B8',
+  backend: 'var(--color-working)',
+  database: 'var(--color-idle)',
+};
+
+const CommitRow = ({ commit }: { commit: RecentCommit }) => (
+  <li
+    className="flex items-baseline gap-2 min-w-0"
+    title={`${commit.sha} · ${new Date(commit.date).toLocaleString()}`}
+  >
+    <span
+      className="text-[10px] font-mono-stats shrink-0"
+      style={{ color: 'var(--color-accent-light)', fontWeight: 600 }}
+    >
+      {commit.sha}
+    </span>
+    <span
+      className="text-[11px] truncate min-w-0 flex-1"
+      style={{ fontFamily: M, color: 'var(--color-text-secondary)' }}
+    >
+      {commit.subject}
+    </span>
+    <span
+      className="text-[10px] font-mono-stats shrink-0"
+      style={{ color: 'var(--color-text-tertiary)' }}
+    >
+      {timeSince(commit.date)}
+    </span>
+  </li>
+);
+
+const StackPillChip = ({ pill }: { pill: StackPillType }) => {
+  const color = CATEGORY_COLOR[pill.category];
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+      style={{
+        fontFamily: M,
+        fontWeight: 600,
+        color,
+        background: `color-mix(in srgb, ${color} 10%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${color} 22%, transparent)`,
+      }}
+      title={`${pill.label} · ${pill.category}`}
+    >
+      <span
+        className="w-1 h-1 rounded-full shrink-0"
+        style={{ background: color }}
+      />
+      {pill.label}
+    </span>
+  );
+};
+
 export const ProjectCard = ({ project, linkedSessions }: ProjectCardProps) => {
   const navigate = useNavigate();
+  const [showAllCommits, setShowAllCommits] = useState(false);
   const hasPhaseData = project.totalPhases > 0;
   const progress = hasPhaseData ? (project.completedPhases / project.totalPhases) * 100 : 0;
   const liveSessions = (linkedSessions ?? []).filter((s) => s.status !== 'stopped');
   const inProgress = project.currentPhaseStatus === 'in_progress';
+
+  const stack = project.stack ?? [];
+  const visiblePills = stack.slice(0, MAX_PILLS);
+  const overflow = stack.slice(MAX_PILLS);
+  const commits = project.recentCommits ?? [];
+  const canCollapseCommits = commits.length > COMMITS_COLLAPSED;
+  const visibleCommits = canCollapseCommits && !showAllCommits
+    ? commits.slice(0, COMMITS_COLLAPSED)
+    : commits;
 
   return (
     <GlassCard
@@ -170,6 +244,66 @@ export const ProjectCard = ({ project, linkedSessions }: ProjectCardProps) => {
         >
           No phase data
         </p>
+      )}
+
+      {/* Tech-stack pills — omit entirely when empty */}
+      {stack.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+          {visiblePills.map((pill) => (
+            <StackPillChip key={`${pill.category}:${pill.label}`} pill={pill} />
+          ))}
+          {overflow.length > 0 && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full"
+              style={{
+                fontFamily: M,
+                fontWeight: 600,
+                color: 'var(--color-text-secondary)',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+              }}
+              title={overflow.map((p) => p.label).join(', ')}
+            >
+              +{overflow.length}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Recent commits — omit entirely when empty */}
+      {commits.length > 0 && (
+        <div className="mb-3">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <GitCommit size={11} strokeWidth={2} style={{ color: 'var(--color-text-tertiary)' }} />
+            <span
+              className="text-[10px] uppercase tracking-wide"
+              style={{ fontFamily: M, color: 'var(--color-text-tertiary)', fontWeight: 600 }}
+            >
+              Recent commits
+            </span>
+          </div>
+          <ul className="space-y-0.5">
+            {visibleCommits.map((c) => (
+              <CommitRow key={c.sha} commit={c} />
+            ))}
+          </ul>
+          {canCollapseCommits && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAllCommits((v) => !v);
+              }}
+              className="mt-1 inline-flex items-center gap-1 text-[10px]"
+              style={{ fontFamily: M, color: 'var(--color-text-secondary)', fontWeight: 600 }}
+            >
+              {showAllCommits
+                ? <ChevronDown size={10} strokeWidth={2.4} />
+                : <ChevronRight size={10} strokeWidth={2.4} />}
+              {showAllCommits ? 'Show less' : `Show ${commits.length - COMMITS_COLLAPSED} more`}
+            </button>
+          )}
+        </div>
       )}
 
       {/* Footer — file indicators + last-scanned */}
