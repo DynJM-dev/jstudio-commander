@@ -210,6 +210,7 @@ const renderFragment = (
           protocolType={frag.protocolType}
           raw={frag.raw}
           context={frag.context}
+          senderOverride={frag.senderOverride}
         />
       );
     default:

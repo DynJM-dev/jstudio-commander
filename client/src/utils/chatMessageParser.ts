@@ -221,6 +221,14 @@ export interface ShutdownApproved {
 // starts with a word and a newline.
 const SENDER_PREAMBLE_RE = /^(team-lead|coder-\d+|pm(?:-[a-z0-9]+)?|[a-z][a-z0-9-]{1,40}-\d+)\s*\n+([\s\S]+)$/;
 
+// Phase K addendum — when the messaging layer delivers a protocol JSON
+// without any XML wrapper, it concatenates the sender slug directly to the
+// opening `{` with NO whitespace (e.g. `team-lead{"type":"shutdown_request",
+// ...}`). The regex above requires a newline separator, so this variant
+// needs its own detector. Preamble whitespace is optional; body is greedy
+// up to the trailing `}`.
+const SENDER_JSON_PREAMBLE_RE = /^(team-lead|coder-\d+|pm(?:-[a-z0-9]+)?|[a-z][a-z0-9-]{1,40}-\d+)\s*(\{[\s\S]*\})\s*$/;
+
 const tryParseJson = (content: string): unknown | null => {
   const trimmed = content.trim();
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
@@ -413,6 +421,10 @@ export interface UnrecognizedProtocolFragment {
   protocolType: string;
   raw: string;
   context?: TeammateContext;
+  // Wire-level sender when the payload arrived via the `sender{json}`
+  // preamble form. Cards prefer this over any `from` field buried in the
+  // unknown JSON since the preamble is the authoritative sender.
+  senderOverride?: string;
 }
 
 export type ParsedChatMessage =
@@ -431,49 +443,105 @@ export type ParsedChatMessage =
 // Turn a parsed JSON object carrying a recognized `type` field into the
 // matching fragment. Returns null if the object shape isn't one we handle
 // (caller decides whether to emit an `unrecognized-protocol` fragment).
+//
+// `context` carries the teammate_id + color of a wrapping <teammate-message>
+// when the JSON came from inside a wrapper. `senderOverride` carries the
+// wire-level sender when the JSON came from a bare-preamble payload like
+// `team-lead{"type":"shutdown_request", ...}`. The preamble is the
+// authoritative sender — if the JSON's own `from` field disagrees, the
+// preamble wins (it's the wire sender; the JSON `from` is author-supplied).
+const applySender = <T extends { from?: string }>(data: T, senderOverride?: string): T =>
+  senderOverride ? { ...data, from: senderOverride } : data;
+
 const routeJsonByType = (
   obj: Record<string, unknown>,
   raw: string,
   context?: TeammateContext,
+  senderOverride?: string,
 ): ParsedChatMessage | null => {
   switch (obj.type) {
     case 'shutdown_request': {
       const parsed = parseShutdownRequest(raw);
-      return parsed ? { kind: 'shutdown-request', request: parsed } : null;
+      return parsed ? { kind: 'shutdown-request', request: applySender(parsed, senderOverride) } : null;
     }
     case 'shutdown_response': {
       const parsed = parseShutdownResponse(raw);
-      return parsed ? { kind: 'shutdown-response', response: parsed } : null;
+      return parsed ? { kind: 'shutdown-response', response: applySender(parsed, senderOverride) } : null;
     }
     case 'plan_approval_request': {
       const parsed = parsePlanApprovalRequest(raw);
-      return parsed ? { kind: 'plan-approval-request', request: parsed } : null;
+      return parsed ? { kind: 'plan-approval-request', request: applySender(parsed, senderOverride) } : null;
     }
     case 'plan_approval_response': {
       const parsed = parsePlanApprovalResponse(raw);
-      return parsed ? { kind: 'plan-approval-response', response: parsed } : null;
+      return parsed ? { kind: 'plan-approval-response', response: applySender(parsed, senderOverride) } : null;
     }
     case 'idle_notification': {
       const parsed = parseIdleNotification(raw);
-      return parsed ? { kind: 'idle-notification', notification: parsed, context } : null;
+      if (!parsed) return null;
+      const withSender = senderOverride ? { ...parsed, from: senderOverride } : parsed;
+      return { kind: 'idle-notification', notification: withSender, context };
     }
     case 'teammate_terminated': {
       const parsed = parseTeammateTerminated(raw);
-      return parsed ? { kind: 'teammate-terminated', notification: parsed, context } : null;
+      if (!parsed) return null;
+      const withSender = applySender(parsed, senderOverride);
+      return { kind: 'teammate-terminated', notification: withSender, context };
     }
     case 'shutdown_approved': {
       const parsed = parseShutdownApproved(raw);
-      return parsed ? { kind: 'shutdown-approved', notification: parsed, context } : null;
+      if (!parsed) return null;
+      const withSender = applySender(parsed, senderOverride);
+      return { kind: 'shutdown-approved', notification: withSender, context };
     }
     default:
       return null;
   }
 };
 
+// Phase K addendum — detect a `sender{json}` payload (or `sender<ws>{json}`
+// with any whitespace including newlines). Returns null if the preamble
+// slug doesn't match or the trailing JSON doesn't parse.
+interface SenderJsonPreambleMatch {
+  sender: string;
+  body: string;
+  obj: Record<string, unknown>;
+}
+
+const parseSenderJsonPreambleMatch = (content: string): SenderJsonPreambleMatch | null => {
+  const match = SENDER_JSON_PREAMBLE_RE.exec(content);
+  if (!match) return null;
+  const sender = match[1] ?? '';
+  const body = (match[2] ?? '').trim();
+  if (!sender || !body) return null;
+  const obj = asRecord(tryParseJson(body));
+  if (!obj) return null;
+  return { sender, body, obj };
+};
+
 // Detect a top-level JSON protocol or sender-preamble on a segment of content
 // that does NOT live inside a wrapper. Returns null when the segment is plain
 // prose (caller emits a ProseFragment if it's non-empty).
+//
+// Priority order (strongest signal first):
+//   1. `sender{json}` or `sender <ws> {json}` — sender-preamble + JSON body,
+//      zero-whitespace form included. Sender wins attribution.
+//   2. `{json}` — pure top-level JSON, no preamble.
+//   3. `sender\n<prose>` — sender-preamble + prose body → TeammateMessageCard.
+//   4. null → caller emits ProseFragment.
 const detectTopLevelStructured = (segment: string): ParsedChatMessage | null => {
+  const preambleJson = parseSenderJsonPreambleMatch(segment);
+  if (preambleJson && typeof preambleJson.obj.type === 'string') {
+    const routed = routeJsonByType(preambleJson.obj, preambleJson.body, undefined, preambleJson.sender);
+    if (routed) return routed;
+    return {
+      kind: 'unrecognized-protocol',
+      protocolType: preambleJson.obj.type,
+      raw: preambleJson.body,
+      senderOverride: preambleJson.sender,
+    };
+  }
+
   const json = tryParseJson(segment);
   const obj = asRecord(json);
   if (obj && typeof obj.type === 'string') {

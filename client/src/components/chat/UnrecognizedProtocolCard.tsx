@@ -16,16 +16,22 @@ interface UnrecognizedProtocolCardProps {
   // <teammate-message>. The border tints to the teammate's color so the
   // placeholder stays visually consistent with nearby teammate cards.
   context?: { teammateId: string; color: string };
+  // Wire-level sender when the payload arrived via the `sender{json}`
+  // preamble form (Phase K addendum). Preferred over any context.teammateId
+  // for the "from ..." attribution because the preamble is the authoritative
+  // sender; the wrapper context tints color only.
+  senderOverride?: string;
 }
 
 // Ghost placeholder for JSON payloads that carry a `type` we don't model.
 // The goal is to never leak raw curly-brace JSON into the JB bubble; future
 // Claude Code protocol additions render as a neutral "Protocol event: <type>"
 // row with opt-in access to the underlying JSON.
-export const UnrecognizedProtocolCard = ({ protocolType, raw, context }: UnrecognizedProtocolCardProps) => {
+export const UnrecognizedProtocolCard = ({ protocolType, raw, context, senderOverride }: UnrecognizedProtocolCardProps) => {
   const [expanded, setExpanded] = useState(false);
   const reduced = prefersReducedMotion();
   const borderColor = context ? resolveTeammateColor(context.color) : 'var(--color-text-tertiary)';
+  const attribution = senderOverride ?? context?.teammateId ?? '';
 
   const pretty = (() => {
     try {
@@ -61,9 +67,9 @@ export const UnrecognizedProtocolCard = ({ protocolType, raw, context }: Unrecog
           <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
             Protocol event: <code style={{ color: 'var(--color-text-secondary)' }}>{protocolType}</code>
           </span>
-          {context?.teammateId && (
+          {attribution && (
             <span className="text-[11px] italic" style={{ color: 'var(--color-text-tertiary)', opacity: 0.7 }}>
-              from {context.teammateId}
+              from {attribution}
             </span>
           )}
           <span className="ml-auto flex items-center gap-0.5 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>

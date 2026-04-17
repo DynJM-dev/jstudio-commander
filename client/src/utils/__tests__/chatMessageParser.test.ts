@@ -434,6 +434,82 @@ describe('parseChatMessage', () => {
     assert.equal(parsed[0]?.kind, 'shutdown-approved');
     assert.equal(parsed[1]?.kind, 'idle-notification');
   });
+
+  // Phase K addendum — `sender{json}` form with zero whitespace between the
+  // sender slug and the JSON body. This is the shape the messaging layer
+  // uses for every `shutdown_request` / `shutdown_approved` that isn't
+  // wrapped in <teammate-message>. All three tests below cover scenarios
+  // the team-lead called out.
+  test('sender + JSON with zero whitespace → routes to protocol card with sender attribution', () => {
+    const raw = 'team-lead' + JSON.stringify({
+      type: 'shutdown_request',
+      requestId: 'shutdown-1776383084629@coder',
+      from: 'team-lead',
+      reason: 'Respawning on Opus 4.7 per user request',
+      timestamp: '2026-04-16T23:44:44.630Z',
+    });
+    const parsed = parseChatMessage(raw);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.kind, 'shutdown-request');
+    if (parsed[0]?.kind === 'shutdown-request') {
+      assert.equal(parsed[0].request.from, 'team-lead');
+      assert.equal(parsed[0].request.requestId, 'shutdown-1776383084629@coder');
+      assert.match(parsed[0].request.reason ?? '', /Respawning/);
+    }
+  });
+
+  test('sender preamble + idle_notification JSON (newline separator) → idle-notification', () => {
+    const raw = 'coder-15\n' + JSON.stringify({
+      type: 'idle_notification',
+      from: 'coder-15',
+      timestamp: '2026-04-17T18:14:00.000Z',
+      idleReason: 'available',
+    });
+    const parsed = parseChatMessage(raw);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.kind, 'idle-notification');
+    if (parsed[0]?.kind === 'idle-notification') {
+      assert.equal(parsed[0].notification.from, 'coder-15');
+      assert.equal(parsed[0].notification.idleReason, 'available');
+    }
+  });
+
+  test('sender preamble + plain prose (no JSON) still routes to teammate-message', () => {
+    const parsed = parseChatMessage('team-lead\nready for Phase K');
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.kind, 'teammate-message');
+    if (parsed[0]?.kind === 'teammate-message') {
+      assert.equal(parsed[0].teammate.teammateId, 'team-lead');
+      assert.match(parsed[0].teammate.body, /Phase K/);
+    }
+  });
+
+  test('preamble sender wins over JSON.from when they disagree', () => {
+    // Wire-level sender (preamble) must win: the JSON's `from` is
+    // author-supplied and could be wrong; the preamble is the transport.
+    const raw = 'team-lead' + JSON.stringify({
+      type: 'shutdown_approved',
+      requestId: 'r1',
+      from: 'coder-14', // claims it's from coder-14
+    });
+    const parsed = parseChatMessage(raw);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.kind, 'shutdown-approved');
+    if (parsed[0]?.kind === 'shutdown-approved') {
+      assert.equal(parsed[0].notification.from, 'team-lead');
+    }
+  });
+
+  test('sender + unknown JSON type → unrecognized-protocol with senderOverride', () => {
+    const raw = 'team-lead' + JSON.stringify({ type: 'future_event_kind', foo: 'bar' });
+    const parsed = parseChatMessage(raw);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]?.kind, 'unrecognized-protocol');
+    if (parsed[0]?.kind === 'unrecognized-protocol') {
+      assert.equal(parsed[0].protocolType, 'future_event_kind');
+      assert.equal(parsed[0].senderOverride, 'team-lead');
+    }
+  });
 });
 
 describe('collapseConsecutiveIdles', () => {
