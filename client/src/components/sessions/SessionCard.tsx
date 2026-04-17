@@ -26,6 +26,17 @@ const applyStaleOverride = (rawStatus: Session['status'], isStale: boolean): Ses
   return rawStatus;
 };
 
+// Phase U Patch 3 — pure predicate for the "⚠ stale?" visibility chip.
+// Shown ONLY when the server-reported status is 'working' AND the
+// client hasn't received a heartbeat in >60s (longer than the 30s
+// threshold that drives applyStaleOverride above, so the chip only
+// surfaces when the discrepancy is clearly beyond the grace band).
+// Display-only — the server is still authoritative. Exported for
+// unit-test isolation without mounting React.
+export const STALE_BADGE_THRESHOLD_S = 60;
+export const shouldShowStaleBadge = (rawStatus: Session['status'], secondsAgo: number): boolean =>
+  rawStatus === 'working' && secondsAgo > STALE_BADGE_THRESHOLD_S;
+
 const M = 'Montserrat, sans-serif';
 
 interface SessionCardProps {
@@ -110,8 +121,9 @@ export const SessionCard = ({
   // status-derived visual state. If no heartbeat in 30s, we pretend
   // working/waiting are idle for ALL downstream derivations (status
   // badge, halos, activity row).
-  const { isStale: heartbeatStale } = useHeartbeat(session.id, session.lastActivityAt);
+  const { isStale: heartbeatStale, secondsAgo } = useHeartbeat(session.id, session.lastActivityAt);
   const effectiveStatus = applyStaleOverride(session.status, heartbeatStale);
+  const showStaleBadge = shouldShowStaleBadge(session.status, secondsAgo);
   // Glow the parent card yellow when its teammate needs attention — makes
   // the "someone is waiting on you" signal bubble up to the top of the list.
   const anyTeammateWaiting = teammates?.some((t) => t.status === 'waiting') ?? false;
@@ -195,6 +207,27 @@ export const SessionCard = ({
                 when state is `idle`, surfaces only when Commander is
                 actively managing the session's context window. */}
             <PreCompactIndicator state={preCompactState} />
+            {/* Phase U Patch 3 — routing-gap visibility chip. Shown when
+                the server still says 'working' but we haven't seen a
+                heartbeat in >60s. Pure display: Patches 1/2 fix the
+                root causes, this chip surfaces any residual drift so
+                routing regressions can't hide in the wild. */}
+            {showStaleBadge && (
+              <span
+                data-testid="stale-badge"
+                className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px]"
+                style={{
+                  fontFamily: M,
+                  fontWeight: 600,
+                  color: 'var(--color-warning, #d97706)',
+                  background: 'rgba(217, 119, 6, 0.12)',
+                  border: '1px solid rgba(217, 119, 6, 0.3)',
+                }}
+                title={`Status shows working but no activity in ${secondsAgo}s — may be a routing gap.`}
+              >
+                ⚠ stale?
+              </span>
+            )}
           </div>
           <span
             className="font-mono-stats text-xs"
