@@ -1,16 +1,45 @@
 import type { FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
+import type { VerifyClientCallbackSync } from 'ws';
 import { eventBus } from './event-bus.js';
 import { rooms } from './rooms.js';
 import { registerWebSocketHandler, stopWebSocketTimers } from './handler.js';
+import { CORS_ORIGINS } from '../config.js';
+
+// Phase P.1 H2 — WebSocket Origin allowlist. The WS path has no CORS
+// enforcement (WebSocket handshake is a plain HTTP upgrade that browsers
+// send the Origin header on, but they don't block it). Reuse the CORS
+// allowlist so any cross-origin upgrade is refused with a 403 at
+// handshake time — matches the server's HTTP posture exactly.
+//
+// `info.origin` can legitimately be undefined (non-browser callers like
+// curl don't send the header); `ws` types it as `string`, so we widen
+// here. Empty-string Origin is treated the same as missing.
+export const isAllowedWsOrigin = (origin: string | undefined | null): boolean => {
+  // Non-browser callers (Node process, curl) don't send an Origin
+  // header. We allow those through because the PIN middleware + route
+  // guards still apply on the ws upgrade HTTP request. Browser abuse
+  // is the target of this check.
+  if (!origin) return true;
+  return CORS_ORIGINS.includes(origin);
+};
 
 export { eventBus } from './event-bus.js';
 export { rooms } from './rooms.js';
 export { stopWebSocketTimers } from './handler.js';
 
 export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
-  // Register WebSocket plugin
-  await app.register(websocket);
+  // Phase P.1 H2 — pass verifyClient into the underlying ws.Server so
+  // the upgrade is rejected BEFORE any handler runs when Origin is
+  // cross-origin. Non-browser callers (no Origin header) fall through
+  // to the route-level + PIN checks.
+  const verifyClient: VerifyClientCallbackSync<import('node:http').IncomingMessage> = (info) => {
+    // `info.origin` is the already-extracted Origin header. When absent
+    // (non-browser caller), isAllowedWsOrigin returns true. Return false
+    // rejects the upgrade — ws returns 401 by default on false.
+    return isAllowedWsOrigin(info.origin);
+  };
+  await app.register(websocket, { options: { verifyClient } });
 
   // Register WebSocket route handler
   registerWebSocketHandler(app);
