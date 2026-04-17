@@ -542,8 +542,10 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
           disabled={refreshing}
           className="flex items-center justify-center rounded ml-2 transition-colors"
           style={{
-            width: 26,
-            height: 22,
+            /* Phase P.2 C4 — 44×44 hit area. Icon size stays at 12
+               via lucide; only the clickable surface grows. */
+            minWidth: 44,
+            minHeight: 44,
             color: refreshedAt ? 'var(--color-working)' : 'var(--color-accent-light)',
             background: refreshedAt ? 'rgba(34, 197, 94, 0.12)' : 'rgba(42, 183, 182, 0.08)',
             border: '1px solid rgba(42, 183, 182, 0.2)',

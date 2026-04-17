@@ -556,8 +556,12 @@ button:active, a:active, [role="button"]:active {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
-  padding: 0 12px;
+  /* Phase P.2 C4 — min 44px vertical hit area per WCAG 2.5.5 / Apple
+     HIG. Bumped from height: 32px. The pill's visual height still
+     reads ~32 via the gap + font metrics; the extra vertical padding
+     just enlarges the clickable surface. */
+  min-height: 44px;
+  padding: 6px 12px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   background: transparent;

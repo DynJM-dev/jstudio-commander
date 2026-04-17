@@ -357,8 +357,9 @@ export const SessionCard = ({
               onClick={(e) => { e.stopPropagation(); navigate(`/chat/${session.id}`); }}
               className="flex items-center justify-center rounded-lg transition-colors shrink-0"
               style={{
-                width: 32,
-                height: 32,
+                /* Phase P.2 C4 — 44×44 minimum hit area for touch. */
+                minWidth: 44,
+                minHeight: 44,
                 color: 'var(--color-text-tertiary)',
                 background: 'transparent',
               }}
