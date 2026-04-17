@@ -252,6 +252,63 @@ Both typechecks PASS, server `/api/system/health` returns `{status:"ok",dbConnec
 
 ---
 
+## Coder-12 Session (Phase C, 2026-04-17)
+
+### Commits
+
+```
+dae794f feat(projects): ProjectCard stack pills + recent commits UI (#230)
+0970950 feat(projects): stack detection + recent-commits service (#230)
+```
+
+### What shipped
+
+- **`server/src/services/project-stack.service.ts`** — new. `detectStack(path)` is sync: scans package.json (JSON.parse, deps+devDeps, TS/JS language pill), pyproject.toml (regex on PEP-621 + poetry blocks), Cargo.toml (regex on `[dependencies]`), go.mod (both `require ( ... )` block and single-line `require`), Gemfile (`gem '...'`), composer.json (JSON.parse), pubspec.yaml (regex; Flutter pill if present). `getRecentCommits(path, limit)` is async, `execFile('git', ['-C', path, 'log', '--no-merges', '--format=%h|%s|%cI', '-n', N])` with 3s timeout + 256KB maxBuffer. Both return `[]` on missing/unparseable/non-git.
+- **Mapping table** — single ordered array, longest-prefix-first (so `@react-pdf/renderer` hits before bare `react` if it ever becomes a direct dep). ~35 entries across framework/backend/database/tool.
+- **Monorepo support** — `resolveWorkspaceDirs()` reads `pnpm-workspace.yaml` (regex on `-  'glob'` lines) AND `package.json.workspaces` (array OR `{packages: []}`). Supports bare paths, `pkg/*`, `pkg/**`. Manifests in each workspace dir are merged into the root pill set. Without this, the Commander repo itself reported `[TypeScript]` only (root pkg.json is tooling-only).
+- **`project-scanner.service.ts`** — `scanDirectories` now populates `stack` synchronously. New `enrichWithCommits(projects)` runs `Promise.all(getRecentCommits)` per project. `syncToDb` persists JSON.stringified columns; `rowToProject` parses them back via a `safeParseJson` helper. `runInitialScan` is now async; all 3 call sites awaited.
+- **DB** — projects table `stack_json` + `recent_commits_json` (TEXT NOT NULL DEFAULT '[]'). Idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`-style pattern (checks `PRAGMA table_info` first since SQLite ALTER doesn't support `IF NOT EXISTS` on ADD COLUMN). Schema.sql also updated for fresh installs.
+- **Routes** — `POST /api/projects/scan` now enriches + emits `project:scanned` via `eventBus.emitProjectsScanned(listed)`. New `POST /api/projects/:id/rescan` for per-project refresh (scans parent dir, filters to the target path, enriches, persists, emits `project:updated`). Returns the refreshed Project.
+- **Watcher-bridge** — STATE.md/HANDOFF.md changes kick off `enrichWithCommits` fire-and-forget; syncToDb + emit happen inside the `.then()`. Non-blocking.
+- **Shared** — `Project` gains `stack: StackPill[]` + `recentCommits: RecentCommit[]`. New exports: `StackPill`, `StackCategory`, `RecentCommit`. Because WS events `project:updated` / `project:scanned` pass the full Project shape (unchanged type structure), clients receive the fields automatically.
+- **ProjectCard** — new pills row between phase progress and footer; new commits section with 3-visible collapsed state + Show N more toggle. Both sections omit entirely when their array is empty. Category color map: framework=color-accent-light (teal), language=violet (#8B5CF6), tool=slate (#94A3B8), backend=color-working (green), database=color-idle (amber). Overflow chip `+N` shows count with a `title` listing the overflow labels.
+
+### Patterns established
+
+- **Sync manifest detect + async commit enrich** — keep detection costs where they're cheapest (filesystem) and batch the shell-out cost. This separation lets `scanDirectories` stay sync for any future caller that doesn't care about commits.
+- **`safeParseJson<T>(raw, fallback)`** — swallows malformed DB JSON + non-array values into an empty array. Pattern for any future JSON-blob column on a sync row mapper.
+- **Monorepo manifest walking** — `resolveWorkspaceDirs` is the pattern: read both `pnpm-workspace.yaml` and `package.json.workspaces`, expand `*`/`**` shallowly, merge all manifests into a single pill set. Dedup via `seen: Set<${category}:${label}>`.
+- **Fire-and-forget async enrichment in watcher callbacks** — `void fn().then(...)` keeps the file-watcher callback sync while letting git log run async. Don't await inside chokidar callbacks; they'll queue and throttle each other.
+
+### Critical lessons (read before touching nearby code)
+
+1. **SQLite ALTER TABLE doesn't support `ADD COLUMN IF NOT EXISTS`.** The `IF NOT EXISTS` works for `CREATE TABLE` but not column adds. Use the pre-existing pattern in `connection.ts`: `PRAGMA table_info(t)` → `.some((c) => c.name === '<col>')` gate. I mirrored the sessions-table migrations block.
+2. **The root `package.json` in a pnpm monorepo is almost empty.** Any `detectStack` that doesn't recurse into workspace members returns only the language pill for the root. Test case: jstudio-commander itself. If you add another detection step and it silently returns `[]` for monorepo roots, check workspace recursion.
+3. **`git log --no-merges` keeps the recent-commits list useful.** Without it, merge commits clutter the preview. The subject line for a merge is usually auto-generated ("Merge branch ...") and adds no signal.
+4. **`execFile`, not `exec`.** Shell expansion on project paths with spaces/quotes would be a cmd-injection risk. `execFile(['git', '-C', path, 'log', ...])` passes args as separate tokens.
+5. **POST /projects/scan was silent on WS before.** Only the watcher-bridge emitted `project:updated`; the manual scan endpoint just returned the list without a broadcast. I added `emitProjectsScanned(listed)` so any other connected client's `useProjects` gets the fresh data without a re-fetch.
+
+### Tech debt opened by Phase C
+
+- `resolveWorkspaceDirs` handles `pkg`, `pkg/*`, `pkg/**` shallowly (only one directory level deep). A Lerna-style `packages/scope-*/pkg-*` wouldn't be caught. Fine for current repos; add a real minimatch if someone brings a 3-level monorepo.
+- Stack mapping table is ~35 entries. Every net-new framework we see in a live project is a one-line add. Grow organically; don't over-engineer.
+- `pyproject.toml` uses regex-lite — a pyproject that puts deps in `[tool.uv]` or some other newer config section won't be parsed. Adding `smol-toml` is the upgrade path if this gets noisy.
+- Per-project `/rescan` accepts a path-parent scan then filters — wasteful if the parent has 30+ siblings. If this hot-paths, refactor `scanDirectories` to accept a single project path.
+- Pills use inline hex for violet/slate. If a dark/light-mode variant of the theme adds those, swap to CSS vars.
+- `enrichWithCommits` is unbounded concurrency via `Promise.all`. With 32+ projects on initial scan each doing a git shell-out, this could spike. Fine today; add a small concurrency gate (e.g. `p-limit(8)`) if scans feel slow on larger setups.
+
+### HEAD (post-Phase-C)
+
+```
+dae794f feat(projects): ProjectCard stack pills + recent commits UI (#230)
+0970950 feat(projects): stack detection + recent-commits service (#230)
+2d86bf7 docs: Phase B completion + coder-11 brain refresh
+```
+
+All three typechecks PASS (shared, client, server). Server restart clean; `/api/system/health` → `{status:"ok",dbConnected:true,tmuxAvailable:true}`. Initial scan detected 32 projects; 20 have a non-empty stack, 11 have commits, 0 crashes on missing-manifest/no-git. jstudio-commander itself reports `[TypeScript, SQLite, Fastify, React, Tailwind, Vite]` + 10 recent commits. `POST /api/projects/:id/rescan` round-trip verified.
+
+---
+
 ### Verify-before-compact checklist (if you need to reproduce any of the above)
 
 - HEAD commits visible via `git log --oneline -20`

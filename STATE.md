@@ -1,13 +1,13 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: **Phase A + Phase B complete (Coder-11). Awaiting Phase C handoff to Coder-12.**
-- Last updated: 2026-04-16
-- HEAD: `ad3d7fe` (#219 offscreen pause) — Phase B commits: `6177fe2` `ad3d7fe`. Phase A commits: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
+- Phase: **Phase C complete (Coder-12). Clean baseline — #230 closes the prior backlog.**
+- Last updated: 2026-04-17
+- HEAD: `dae794f` (client pills UI) — Phase C commits: `0970950` (server+types+DB), `dae794f` (client). Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **3002** (config.json override) · Vite: **5173**
 - Blockers: none
-- Backlog: #230 (project tech-stack pills, needs server endpoint) — Phase C target. Batch `/output` endpoint deferred (low marginal value post-#219). All other token-audit items shipped.
+- Backlog: Batch `/output` endpoint deferred (low marginal value post-#219). Remaining suggestions are housekeeping (see Next up).
 
 ## Phases
 - [x] Phase 0-10: v1 Complete (see PM_HANDOFF.md)
@@ -17,7 +17,7 @@
 - [x] Feature Wave 2 + Stabilization — Coder-9 (25 commits, 2026-04-15 → 2026-04-16)
 - [x] Phase A — Token-audit cleanup sweep — Coder-11 (6 commits, 2026-04-16)
 - [x] **Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause) — Coder-11 (2 commits, 2026-04-16)**
-- [ ] Phase C — #230 project tech-stack pills (Coder-12, fresh respawn)
+- [x] **Phase C — Project tech-stack pills + recent commits (#230) — Coder-12 (2 commits, 2026-04-17)**
 
 ## Feature Wave 2 Highlights
 
@@ -72,11 +72,11 @@
 
 ## Next up (pending backlog)
 
-1. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint). Phase C target.
-2. **Batch `/output` endpoint** — deferred Phase B sub-item. Skip until multi-teammate views are measurably hot post-#219.
-3. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
-4. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
-5. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
+1. **Batch `/output` endpoint** — deferred Phase B sub-item. Skip until multi-teammate views are measurably hot post-#219.
+2. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
+3. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
+4. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
+5. **Stack detection follow-ups (#230)** — only scans 1-level workspace children today; deeper monorepos would need glob recursion. Mapping table starts at ~30 entries — grow as new stacks appear in live projects.
 
 ## Critical rules for future coders
 
