@@ -730,6 +730,22 @@ Triggered by user-reported false positive: a team-lead PM with `✢ Tomfoolering
 
 Commits `68ce81a` (server) + `976603d` (client).
 
+### Phase G.1 addendum — startup-heal over-closes codeman relationships (2026-04-17)
+
+User-reported follow-up to Phase G Bundle 4: codeman-managed coders (panes inside `codeman-*` tmux sessions, not `jsc-*`) had their `agent_relationships.ended_at` set on server boot. The original predicate had the `jsc-*` prefix filter, but it was missing the parent-exclusion case — a coder whose pane legitimately lives in its OWN parent PM's `jsc-*` tmux session was being misflagged as cross-session and dismissed every boot.
+
+**Fix:**
+1. `detectCrossSessionPaneOwner` signature changed: `excludeIds: string[]` instead of a single `excludeSessionId`. Callers pass `[teammate.id, parent.id]`.
+2. `healCrossSessionTeammates` fetches `parent_session_id` per row and threads it into the exclusion list.
+3. `team-config.service.ts` reconcile guard does the same.
+4. Pure decision logic extracted to `server/src/services/cross-session.ts` as `isCrossSessionPaneOwner(paneFact, candidate, excludeIds)`. Service-level fn does the I/O (listAllPanes + DB lookup) and delegates the final yes/no to this predicate.
+5. Seven regression tests in `server/src/services/__tests__/cross-session.test.ts` cover: codeman-* prefix passthrough, jsc-* legitimate cross flagging, jsc-* same-parent passthrough, pane-gone passthrough, no-owner-row passthrough, non-PM owner passthrough, null/undefined exclude tolerance.
+6. New `pnpm -C server test` script (`node --import tsx --test`).
+
+The bug surface now has belt-and-suspenders: codeman-* short-circuits at the prefix check, AND same-parent short-circuits at the exclude check. Either alone would prevent the over-heal; both ensure no future regression.
+
+Commit `1b62f63`.
+
 ---
 
 All three typechecks PASS (shared, client, server). Verification:
