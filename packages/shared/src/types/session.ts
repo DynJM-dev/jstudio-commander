@@ -1,5 +1,11 @@
 export type SessionStatus = 'idle' | 'working' | 'waiting' | 'stopped' | 'error';
 
+// Commander effort matrix per ~/.claude/skills/jstudio-pm/SKILL.md.
+// Legacy rows ('low', 'medium') are healed to 'xhigh' on boot —
+// any fresh write from Commander must land in this union.
+export const EFFORT_LEVELS = ['high', 'xhigh', 'max'] as const;
+export type EffortLevel = typeof EFFORT_LEVELS[number];
+
 export interface Session {
   id: string;
   name: string;
@@ -13,7 +19,7 @@ export interface Session {
   stoppedAt: string | null;
   stationId: string | null;
   agentRole: string | null;
-  effortLevel: string;
+  effortLevel: EffortLevel;
   parentSessionId: string | null;
   teamName: string | null;
   // 'pm' sessions auto-invoke /pm after Claude boots. 'raw' sessions are

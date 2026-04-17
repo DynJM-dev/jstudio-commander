@@ -2,7 +2,17 @@ import { v4 as uuidv4 } from 'uuid';
 import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import type { Session, SessionStatus } from '@commander/shared';
+import type { Session, SessionStatus, EffortLevel } from '@commander/shared';
+
+// Coerce any legacy or malformed effort_level value (pre-migration
+// 'low'/'medium', NULL from a row that pre-dates the column default
+// migration, junk from direct SQL) to a valid EffortLevel. The boot
+// heal migration in connection.ts handles persisted rows; this handles
+// the in-memory read path so a stale row never breaks the typed API.
+const normalizeEffortLevel = (raw: string | null | undefined): EffortLevel => {
+  if (raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
+  return 'xhigh';
+};
 import { getDb } from '../db/connection.js';
 import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
@@ -98,7 +108,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   stoppedAt: row.stopped_at as string | null,
   stationId: row.station_id as string | null,
   agentRole: row.agent_role as string | null,
-  effortLevel: (row.effort_level as string) ?? 'max',
+  effortLevel: normalizeEffortLevel(row.effort_level as string | null | undefined),
   parentSessionId: (row.parent_session_id as string | null) ?? null,
   teamName: (row.team_name as string | null) ?? null,
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
@@ -118,6 +128,8 @@ interface UpsertSessionInput {
   projectPath?: string | null;
   claudeSessionId?: string | null;
   status?: SessionStatus;
+  // Narrow EffortLevel type kept on the UpsertSessionInput — shared
+  // EFFORT_LEVELS union enforced at the boundary.
   model?: string;
   effortLevel?: string;
   stoppedAt?: string | null;
