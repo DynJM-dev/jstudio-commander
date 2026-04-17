@@ -857,12 +857,22 @@ e5624e6 docs: Phase G.2 — adoption re-parents + config rewrite
 
 ## Coder-15 Session — Phase I (Color semantics + split-pane glass top bar + force-close rework, 2026-04-17)
 
-### Commits (2)
+### Commits (2 new + 1 emergency patch landed mid-phase by team-lead)
 
 ```
 d9ce052 feat(split): glass top bar + force-close behind overflow + PM notice
 a67dc1f feat(sessions): teammate-active display state + muted teammate-idle
+5a8ace2 fix(sessions): never dismiss teammate on isActive=false alone  ← Phase I.0 (team-lead)
 ```
+
+### Phase I.0 — emergency PM patch (team-lead, `5a8ace2`)
+
+Landed on main between Coder-15's Phase H docs and Phase I work. Unrelated to Phase I scope, but committed on the same branch during the same clock hour so history groups them together.
+
+- **File**: `server/src/services/team-config.service.ts`, inside `reconcile()`.
+- **Before**: `if (member.isActive === false) continue;` ran BEFORE `next.add(member.agentId)`. So idle teammates weren't added to `next`, which meant the downstream `seen \ next` diff dismissed them as if they'd been removed from the config — causing re-ingest on the next hook event and user-visible flicker / split-view auto-close on the OvaGas coder.
+- **After**: `next.add()` runs FIRST, then the `isActive=false` continue. Upsert work is still skipped for idle members (preserving the original intent), but membership tracking is now based on the config listing — not the runtime liveness flag.
+- **Why this is correct**: `feedback_isactive_flag_unreliable` memory documents that `isActive=false` from the Agent tool means the agent is currently idle, NOT that the teammate was dismissed. Dismissal is a config-write decision, not a liveness flag.
 
 ### Triggering context
 
@@ -911,6 +921,7 @@ Three intertwined user asks after hands-on use:
 
 ### Tech debt opened by Phase I
 
+- **Phase I.0 regression test deferred.** Team-lead asked for a "10-line test" verifying that a member with `isActive=false` stays in `next` and doesn't get dismissed. `reconcile()` is a private module-level function (not exported) and its test-via-staging pattern (see `team-config-rewrite.test.ts`) would require restaging ~50+ lines of reconcile body. Not cheap. Better path: extract a tiny pure helper like `listActiveMembers(config): Set<MemberKey>` (or `buildNextSet(config)` — same shape) that both `reconcile()` and a fresh test can import. ~15 lines of refactor, then the regression test drops to ~8 lines. File as cleanup pass, not Phase I scope.
 - **getDisplayStatus isn't unit-tested.** Pure function, easy to add 4-5 tests (each branch). Worth doing in a future pass; not shipping-critical.
 - **`workingTeammateByParent` is computed in two places** (TopCommandBar and ContextBar). Both derive from the same `sessions` array. Worth hoisting into a shared selector hook (e.g. `useTeammateActivity()`) if a third consumer lands.
 - **Force-close toast is local state, not a global toast system.** If a third "operation-outcome toast" lands, consider adopting a tiny toast library or rolling a `useToast()` hook. Don't inline-replicate more than twice.
@@ -931,6 +942,7 @@ Three intertwined user asks after hands-on use:
 ```
 d9ce052 feat(split): glass top bar + force-close behind overflow + PM notice
 a67dc1f feat(sessions): teammate-active display state + muted teammate-idle
+5a8ace2 fix(sessions): never dismiss teammate on isActive=false alone  ← Phase I.0 (team-lead)
 b13be92 docs: Phase H — timer reset + plan dismissal persistence + plan recency
 e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
 4fbe99d fix(chat): persist plan widget dismissal in localStorage
