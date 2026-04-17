@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Terminal, ShieldCheck, ShieldAlert, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -25,9 +25,32 @@ interface Props {
 export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
   const [output, setOutput] = useState<SessionOutput | null>(null);
   const [responding, setResponding] = useState(false);
+  // #219 — pause polling when the preview leaves the viewport. Multi-
+  // teammate views mount up to three previews simultaneously and a
+  // long SessionsPage scrolls plenty of them off-screen. Callback ref
+  // re-binds the observer when the wrapper element swaps across the
+  // loading / not-alive / normal return paths.
+  const [isOnscreen, setIsOnscreen] = useState(true);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const wrapperRef = useCallback((el: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => setIsOnscreen(entry?.isIntersecting ?? true),
+      { threshold: 0.1 },
+    );
+    obs.observe(el);
+    observerRef.current = obs;
+  }, []);
+  useEffect(() => () => observerRef.current?.disconnect(), []);
 
-  // Poll terminal output every 2s
+  // Poll terminal output every 2s — gated on visibility so off-screen
+  // previews skip the network call entirely (not just the state update).
   useEffect(() => {
+    if (!isOnscreen) return;
     let mounted = true;
 
     const poll = async () => {
@@ -42,7 +65,7 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
     poll();
     const interval = setInterval(poll, 2000);
     return () => { mounted = false; clearInterval(interval); };
-  }, [sessionId]);
+  }, [sessionId, isOnscreen]);
 
   const handlePromptAction = useCallback(async (action: string) => {
     setResponding(true);
@@ -71,7 +94,7 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
 
   if (!output) {
     return (
-      <div className="flex items-center justify-center gap-2 py-8">
+      <div ref={wrapperRef} className="flex items-center justify-center gap-2 py-8">
         <Loader2 size={16} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
         <span className="text-sm" style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}>
           Connecting to session...
@@ -82,7 +105,7 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
 
   if (!output.alive) {
     return (
-      <div className="glass-card p-4 mx-4" style={{ fontFamily: M }}>
+      <div ref={wrapperRef} className="glass-card p-4 mx-4" style={{ fontFamily: M }}>
         <div className="flex items-center gap-2 mb-2">
           <XCircle size={16} style={{ color: 'var(--color-error)' }} />
           <span className="text-sm font-medium" style={{ color: 'var(--color-error)' }}>
@@ -102,7 +125,7 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
   );
 
   return (
-    <div className="flex flex-col gap-3 px-4 lg:px-6 py-4" style={{ fontFamily: M }}>
+    <div ref={wrapperRef} className="flex flex-col gap-3 px-4 lg:px-6 py-4" style={{ fontFamily: M }}>
 
       {/* Interactive prompts */}
       {output.prompts.map((prompt, i) => (
