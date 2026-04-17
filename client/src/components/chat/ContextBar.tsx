@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { ChatMessage, SessionActivity } from '@commander/shared';
+import type { ChatMessage, SessionActivity, SessionTick } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
 import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
@@ -201,16 +201,30 @@ interface ContextBarProps {
   // for a server-side status re-probe (fire-and-forget; silently
   // ignores 404 if endpoint is absent).
   onRefresh?: () => Promise<void> | void;
+  // Phase S.1 Patch 4 — single-source-of-truth ctx%. When present, the
+  // bar renders tick.contextWindow.usedPercentage as the authoritative
+  // percentage (same feed LiveActivityRow and the band rail read from).
+  // Absent-or-null falls back to the legacy token/contextLimit ratio so
+  // pre-Phase-M sessions still render something sensible.
+  sessionTick?: SessionTick | null;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
   const compacted = contextTokens !== undefined && contextTokens !== totalTokens;
-  const contextPercent = displayTokens > 0
-    ? Math.min(Math.round((displayTokens / contextLimit) * 100), 100)
-    : 0;
+  // Phase S.1 Patch 4 — tick-first ctx%. When a SessionTick has arrived
+  // we render its `usedPercentage` verbatim so this bar, LiveActivityRow,
+  // the band rail, and ContextLowToast all display the same number.
+  // Fallback path (no tick yet, or `usedPercentage` is null) keeps the
+  // legacy token/contextLimit ratio so pre-Phase-M sessions don't blank.
+  const tickPct = sessionTick?.contextWindow.usedPercentage ?? null;
+  const contextPercent = tickPct !== null
+    ? Math.min(Math.round(tickPct), 100)
+    : (displayTokens > 0
+        ? Math.min(Math.round((displayTokens / contextLimit) * 100), 100)
+        : 0);
 
   const barColor = contextPercent > 85
     ? 'var(--color-error)'

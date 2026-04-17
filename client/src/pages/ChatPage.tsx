@@ -486,6 +486,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         effortLevel={session?.effortLevel}
         onInterrupt={interruptSession}
         onRefresh={handleRefresh}
+        sessionTick={tick}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}
