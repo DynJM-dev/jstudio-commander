@@ -100,15 +100,61 @@ const readConfig = (path: string): TeamConfig | null => {
   }
 };
 
-const buildTeammate = (member: TeamMember, parentSessionId: string, teamName: string): Teammate => ({
+const buildTeammate = (member: TeamMember, parentSessionId: string, teamName: string, displayName?: string): Teammate => ({
   sessionId: member.agentId,
-  sessionName: member.name,
+  sessionName: displayName ?? member.name,
   role: member.agentType ?? 'agent',
   teamName,
   parentSessionId,
   color: member.color,
   tmuxPaneId: member.tmuxPaneId,
 });
+
+// Derive a display name for a team-lead when no existing Commander PM is
+// available to adopt. Fallback order: titled basename of cwd → team name
+// → generic "team-lead" (absolute last resort). Prevents a fresh ingest
+// from littering the UI with rows labelled literally "team-lead".
+const deriveTeamLeadName = (cwd: string | undefined, teamName: string, rawName: string): string => {
+  if (cwd) {
+    const basename = cwd.split('/').filter(Boolean).pop();
+    if (basename) return basename;
+  }
+  if (teamName) return teamName;
+  return rawName || 'team-lead';
+};
+
+// Best-effort role hint for coder naming. Known categories map to short
+// labels; otherwise a generic "coder" is used. Keeps names scannable:
+// "PM - OvaGas (qa)" vs "PM - OvaGas (coder 2)" vs "PM - OvaGas (coder)".
+const ROLE_HINT_RE = /^(qa|security|ui|db|landing|scaffold|supabase|docs?|test)/i;
+const roleHintFromAgentType = (agentType?: string): string => {
+  if (!agentType) return 'coder';
+  const match = agentType.match(ROLE_HINT_RE);
+  return match ? match[1]!.toLowerCase() : 'coder';
+};
+
+const deriveCoderName = (
+  parentName: string | undefined,
+  memberRawName: string,
+  memberAgentType: string | undefined,
+  existingSiblingNames: string[],
+): string => {
+  // No parent display to inherit from — fall back to the raw config name
+  // (e.g. coder-14), which the orchestrator already disambiguates.
+  if (!parentName) return memberRawName;
+  // Generic parent names aren't worth inheriting; they don't read well as
+  // "(coder)" suffixes and the raw name already has more info.
+  if (/^team[-_ ]?lead$/i.test(parentName)) return memberRawName;
+  const hint = roleHintFromAgentType(memberAgentType);
+  const taken = new Set(existingSiblingNames);
+  const base = `${parentName} (${hint})`;
+  if (!taken.has(base)) return base;
+  for (let n = 2; n < 20; n++) {
+    const candidate = `${parentName} (${hint} ${n})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return base;
+};
 
 const reconcile = (path: string): void => {
   const config = readConfig(path);
@@ -118,33 +164,63 @@ const reconcile = (path: string): void => {
   // Parent session = lead's Commander session if known, else the lead agent id
   // (which we'll also upsert as a session row so the FK in agent_relationships
   // resolves either way).
-  const parentSessionId = config.leadSessionId || config.leadAgentId;
-  if (!parentSessionId) return;
+  const configParentSessionId = config.leadSessionId || config.leadAgentId;
+  if (!configParentSessionId) return;
 
-  // Ensure the lead has a sessions row so agent_relationships FK is satisfied
-  // when we relate teammates to it. The lead's tmux target is unknown from the
-  // config (it's whatever launched the team) — store agentId as a placeholder.
+  // Resolve the parent. Two paths:
+  //   (a) Adoption — user already has a Commander PM session at the lead's
+  //       cwd. Link that session to this team instead of creating a
+  //       duplicate "team-lead" row. Teammates then hang off that
+  //       existing session id.
+  //   (b) Fresh — no existing PM. Upsert under the config's parentSessionId
+  //       with a derived human-readable name (basename > team name >
+  //       generic "team-lead") so the UI stays scannable.
   const lead = config.members.find((m) => m.agentId === config.leadAgentId);
+  let parentSessionId = configParentSessionId;
   if (lead) {
-    // For the lead, leadSessionId IS the Claude UUID when set.
-    const leadClaudeId = UUID_RE.test(parentSessionId) ? parentSessionId : undefined;
-    const leadLive = hasLiveEvidence({
-      tmuxPaneId: lead.tmuxPaneId,
-      claudeSessionId: leadClaudeId,
-      cwd: lead.cwd,
-    });
-    sessionService.upsertTeammateSession({
-      sessionId: parentSessionId,
-      name: lead.name,
-      tmuxTarget: lead.tmuxPaneId || `agent:${parentSessionId}`,
-      projectPath: lead.cwd ?? null,
-      role: lead.agentType ?? 'pm',
-      teamName,
-      parentSessionId: null,
-      model: normalizeModel(lead.model),
-      live: leadLive,
-    });
+    const leadClaudeId = UUID_RE.test(configParentSessionId) ? configParentSessionId : undefined;
+    const adoptable = lead.cwd ? sessionService.findAdoptablePmAtCwd(lead.cwd) : null;
+    if (adoptable && adoptable.teamName !== teamName) {
+      sessionService.adoptPmIntoTeam({
+        sessionId: adoptable.id,
+        teamName,
+        claudeSessionId: leadClaudeId,
+      });
+      console.log(`[team-config] adopted existing PM "${adoptable.name}" (${adoptable.id.slice(0, 8)}) into ${teamName}`);
+      parentSessionId = adoptable.id;
+    } else if (adoptable) {
+      // Already owned by this team — just reuse its id for teammate links.
+      parentSessionId = adoptable.id;
+    } else {
+      const leadLive = hasLiveEvidence({
+        tmuxPaneId: lead.tmuxPaneId,
+        claudeSessionId: leadClaudeId,
+        cwd: lead.cwd,
+      });
+      const leadName = deriveTeamLeadName(lead.cwd, teamName, lead.name);
+      sessionService.upsertTeammateSession({
+        sessionId: configParentSessionId,
+        name: leadName,
+        tmuxTarget: lead.tmuxPaneId || `agent:${configParentSessionId}`,
+        projectPath: lead.cwd ?? null,
+        role: lead.agentType ?? 'pm',
+        teamName,
+        parentSessionId: null,
+        model: normalizeModel(lead.model),
+        live: leadLive,
+      });
+    }
   }
+
+  // Existing sibling teammate display names — used by the coder-naming
+  // disambiguator so "(coder)" / "(coder 2)" stays stable as more coders
+  // join under the same parent PM.
+  const existingSiblings = sessionService
+    .listTeammates(parentSessionId)
+    .map((s) => s.name)
+    .filter(Boolean);
+  const parentSession = sessionService.getSession(parentSessionId);
+  const parentDisplayName = parentSession?.name;
 
   const seen = knownMembers.get(path) ?? new Set<MemberKey>();
   const next = new Set<MemberKey>();
@@ -174,9 +250,23 @@ const reconcile = (path: string): void => {
       claudeSessionId: UUID_RE.test(member.agentId) ? member.agentId : undefined,
       cwd: member.cwd,
     });
+
+    // Fresh spawns inherit the parent PM's display name when the parent
+    // has a human-readable one ("PM - OvaGas (coder)"); already-seen
+    // members go through a name-less upsert so a rename doesn't get
+    // clobbered mid-lifecycle. Siblings are collected once before the
+    // loop; we update the local set as we derive so two fresh spawns in
+    // one reconcile don't collide on "(coder)".
+    let nameForUpsert: string | undefined;
+    if (isFresh) {
+      const derived = deriveCoderName(parentDisplayName, member.name, member.agentType, existingSiblings);
+      existingSiblings.push(derived);
+      nameForUpsert = derived;
+    }
+
     sessionService.upsertTeammateSession({
       sessionId: member.agentId,
-      name: member.name,
+      ...(nameForUpsert !== undefined ? { name: nameForUpsert } : {}),
       tmuxTarget: member.tmuxPaneId || `agent:${member.agentId}`,
       projectPath: member.cwd ?? null,
       role: member.agentType ?? 'agent',
@@ -187,7 +277,7 @@ const reconcile = (path: string): void => {
     });
 
     if (isFresh) {
-      const teammate = buildTeammate(member, parentSessionId, teamName);
+      const teammate = buildTeammate(member, parentSessionId, teamName, nameForUpsert);
       console.log(`[team-config] reconciled ${teammate.sessionName} (${teammate.role}) in ${teamName}${memberLive ? ' [live]' : ' [no live evidence — not resurrecting]'}`);
       eventBus.emitTeammateSpawned(teammate);
     } else {

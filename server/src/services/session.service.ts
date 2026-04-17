@@ -376,7 +376,10 @@ export const sessionService = {
   // decide liveness via tmux pane check or recent JSONL/hook activity.
   upsertTeammateSession(opts: {
     sessionId: string;
-    name: string;
+    // Optional on re-upserts (e.g. mid-lifecycle pane heal) so a prior
+    // derivation (parent-PM-inherited name, adoption) isn't clobbered
+    // back to the config's raw name. Fresh spawns should always pass it.
+    name?: string;
     tmuxTarget: string;
     projectPath: string | null;
     role: string;
@@ -420,7 +423,7 @@ export const sessionService = {
 
     this.upsertSession({
       id: opts.sessionId,
-      name: opts.name,
+      ...(opts.name !== undefined ? { name: opts.name } : {}),
       tmuxSession: tmuxTarget,
       projectPath: opts.projectPath,
       model: opts.model,
@@ -444,6 +447,58 @@ export const sessionService = {
 
     const session = this.getSession(opts.sessionId)!;
     eventBus.emitSessionUpdated(session);
+    return session;
+  },
+
+  // Locate a still-alive, Commander-created PM session at a given cwd that
+  // hasn't yet been linked to any team. Used by the team-config ingestion
+  // path to adopt an existing "PM - <something>" session instead of
+  // spawning a duplicate "team-lead" row when the orchestrator writes a
+  // team config in a cwd the user already has a PM for.
+  findAdoptablePmAtCwd(cwd: string): Session | null {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT * FROM sessions
+       WHERE session_type = 'pm'
+         AND project_path = ?
+         AND (team_name IS NULL OR team_name = '')
+         AND status != 'stopped'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+    ).get(cwd) as Record<string, unknown> | undefined;
+    return row ? rowToSession(row) : null;
+  },
+
+  // Link an existing PM session to a team without renaming it or touching
+  // its tmux target. Optionally records the team's Claude UUID as
+  // claude_session_id so downstream lookups by either id resolve. Emits
+  // session:updated so connected clients reflect the new team affiliation
+  // immediately.
+  adoptPmIntoTeam(opts: {
+    sessionId: string;
+    teamName: string;
+    claudeSessionId?: string;
+  }): Session | null {
+    const db = getDb();
+    const existing = db.prepare('SELECT id, claude_session_id FROM sessions WHERE id = ?')
+      .get(opts.sessionId) as { id: string; claude_session_id: string | null } | undefined;
+    if (!existing) return null;
+
+    const claudeId = opts.claudeSessionId && !existing.claude_session_id
+      ? opts.claudeSessionId
+      : null;
+    const now = new Date().toISOString();
+    if (claudeId) {
+      db.prepare(
+        "UPDATE sessions SET team_name = ?, agent_role = 'pm', claude_session_id = ?, updated_at = ? WHERE id = ?",
+      ).run(opts.teamName, claudeId, now, opts.sessionId);
+    } else {
+      db.prepare(
+        "UPDATE sessions SET team_name = ?, agent_role = 'pm', updated_at = ? WHERE id = ?",
+      ).run(opts.teamName, now, opts.sessionId);
+    }
+    const session = this.getSession(opts.sessionId);
+    if (session) eventBus.emitSessionUpdated(session);
     return session;
   },
 
