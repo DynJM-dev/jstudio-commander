@@ -18,6 +18,7 @@ import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { isCrossSessionPaneOwner } from './cross-session.js';
+import { removeSessionUploads } from '../routes/upload.routes.js';
 
 const getClaudeEffortLevel = (): string => {
   try {
@@ -920,6 +921,12 @@ export const sessionService = {
     db.prepare('DELETE FROM agent_relationships WHERE parent_session_id = ? OR child_session_id = ?').run(session.id, session.id);
     db.prepare('DELETE FROM sessions WHERE id = ?').run(session.id);
 
+    // Phase S — hard-delete wipes staged uploads. Soft-stopped rows
+    // (the plain deleteSession path for non-team sessions) keep their
+    // uploads — the user may still reference them by path in a
+    // follow-up session even after the pane is gone.
+    removeSessionUploads(session.id);
+
     eventBus.emitSessionDeleted(session.id);
     session.status = 'stopped';
     return session;
@@ -1069,6 +1076,18 @@ export const sessionService = {
   // they're the user's history. Returns the number of rows deleted.
   cleanupStaleTeammates(): number {
     const db = getDb();
+    // Phase S — collect ids first so we can wipe each session's
+    // uploads dir alongside the row deletion. A bulk DELETE returns
+    // only a count, which isn't enough to target the per-session
+    // upload directories.
+    const stale = db.prepare(`
+      SELECT id FROM sessions
+      WHERE status = 'stopped'
+        AND parent_session_id IS NOT NULL
+        AND stopped_at IS NOT NULL
+        AND stopped_at < datetime('now', '-7 days')
+    `).all() as Array<{ id: string }>;
+    if (stale.length === 0) return 0;
     const result = db.prepare(`
       DELETE FROM sessions
       WHERE status = 'stopped'
@@ -1076,6 +1095,7 @@ export const sessionService = {
         AND stopped_at IS NOT NULL
         AND stopped_at < datetime('now', '-7 days')
     `).run();
+    for (const row of stale) removeSessionUploads(row.id);
     return result.changes;
   },
 };

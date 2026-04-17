@@ -25,23 +25,29 @@
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyMultipart from '@fastify/multipart';
 import { CORS_ORIGINS } from '../../config.js';
 import { sessionRoutes } from '../../routes/session.routes.js';
 import { systemRoutes } from '../../routes/system.routes.js';
 import { chatRoutes } from '../../routes/chat.routes.js';
 import { hookEventRoutes } from '../../routes/hook-event.routes.js';
 import { sessionTickRoutes } from '../../routes/session-tick.routes.js';
+import { uploadRoutes } from '../../routes/upload.routes.js';
 import { getDb, closeDb } from '../../db/connection.js';
 import { eventBus } from '../../ws/event-bus.js';
 
 export const buildTestApp = async (): Promise<FastifyInstance> => {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: CORS_ORIGINS });
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: 10 * 1024 * 1024, files: 5, fields: 0 },
+  });
   await app.register(systemRoutes);
   await app.register(sessionRoutes);
   await app.register(chatRoutes);
   await app.register(hookEventRoutes);
   await app.register(sessionTickRoutes);
+  await app.register(uploadRoutes);
   // Force DB init up front so the test can assume a working schema.
   getDb();
   return app;

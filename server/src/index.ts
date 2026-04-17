@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
+import fastifyMultipart from '@fastify/multipart';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -24,6 +25,7 @@ import { teammatesRoutes } from './routes/teammates.routes.js';
 import { maintenanceRoutes } from './routes/maintenance.routes.js';
 import { preferencesRoutes } from './routes/preferences.routes.js';
 import { cityRoutes } from './routes/city.routes.js';
+import { uploadRoutes } from './routes/upload.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
 import { sessionService } from './services/session.service.js';
 import { tunnelService } from './services/tunnel.service.js';
@@ -73,6 +75,15 @@ if (refuseBindWithoutPin(config.host, config.pin)) {
 // in dev). Keep the legacy :5173 entry too so pre-Phase-E.2 local
 // bookmarks / tabs still authorize during the migration window.
 await app.register(cors, { origin: CORS_ORIGINS });
+
+// Phase S — multipart uploads for chat attachments. Hard-capped at
+// 10 MB per file (5 MB per image) inside the route; we also set a
+// plugin-level ceiling here so a multi-GB upload attempt can't chew
+// RAM before our per-chunk check kicks in. `files: 5` is the same
+// per-request cap the route enforces — belt-and-braces.
+await app.register(fastifyMultipart, {
+  limits: { fileSize: 10 * 1024 * 1024, files: 5, fields: 0 },
+});
 
 // Serve client dist — production only. In dev, Vite serves the UI
 // from :11573 with HMR; letting fastify-static win there silently
@@ -139,6 +150,7 @@ await app.register(teammatesRoutes);
 await app.register(maintenanceRoutes);
 await app.register(preferencesRoutes);
 await app.register(cityRoutes);
+await app.register(uploadRoutes);
 
 // Initial project scan
 await projectScannerService.runInitialScan();
