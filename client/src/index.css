@@ -112,6 +112,38 @@ html, body {
   box-sizing: border-box;
 }
 
+/* === Phase P.2 C1 — global :focus-visible ring ===
+   Keyboard-only users previously had no indication of focus anywhere in
+   the app. Tailwind's reset zeroes the outline, and every custom
+   element here had explicit `outline: none` on inputs + `outline-none`
+   on buttons. The :focus-visible pseudo-class only fires on keyboard
+   focus (not mouse-click) — so the ring shows for Tab navigation
+   without cluttering pointer-driven flows. Accent color + 2px offset
+   keep it readable over glass + dark surfaces. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+/* Defensive re-enablement — Tailwind's `outline-none` utility sets
+   `outline-style: none`, which overrides the rules above. Applying
+   outline-style: auto (which turns into the solid 2px rule via the
+   :focus-visible block) ensures the ring still renders on any
+   element the designer explicitly zeroed. */
+.outline-none:focus-visible {
+  outline-style: solid;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
