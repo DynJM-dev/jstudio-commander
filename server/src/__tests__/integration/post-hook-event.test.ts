@@ -117,3 +117,50 @@ test('POST /api/hook-event unknown session → 200 ok (drop silently)', async ()
   assert.equal(res.statusCode, 200);
   assert.deepEqual(JSON.parse(res.body), { ok: true });
 });
+
+test('POST /api/hook-event queue cap — 503 + Retry-After when depth already at HOOK_QUEUE_MAX', async () => {
+  // Phase R M5 — HOOK_QUEUE_MAX guards against runaway queue growth
+  // under a downstream stall. Simulating true concurrency with
+  // Promise.all(inject×21) is racy because processHook finishes
+  // between enqueues; instead we use `_setHookQueueDepthForTests`
+  // to deterministically saturate the queue with stalled promises,
+  // then verify the next POST is shed.
+  const { _setHookQueueDepthForTests, HOOK_QUEUE_MAX } = await import(
+    '../../routes/hook-event.routes.js'
+  );
+  const { release } = _setHookQueueDepthForTests(HOOK_QUEUE_MAX);
+  try {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/hook-event',
+      payload: { event: 'Stop', sessionId: randomUUID(), data: { cwd: '/tmp' } },
+    });
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.headers['retry-after'], '1');
+    const body = JSON.parse(res.body) as { error: string };
+    assert.match(body.error, /queue full/i);
+  } finally {
+    release();
+  }
+});
+
+test('POST /api/hook-event queue — accepts when depth is HOOK_QUEUE_MAX - 1 (boundary)', async () => {
+  // At exactly one below the cap, a new POST enqueues (bringing
+  // depth to HOOK_QUEUE_MAX) BEFORE the gate rejects. We release
+  // the stall before awaiting so the handler's chain resolves and
+  // we can observe the 200.
+  const { _setHookQueueDepthForTests, HOOK_QUEUE_MAX } = await import(
+    '../../routes/hook-event.routes.js'
+  );
+  const { release } = _setHookQueueDepthForTests(HOOK_QUEUE_MAX - 1);
+  const session = seedSession({ status: 'working' });
+  const injectPromise = app.inject({
+    method: 'POST',
+    url: '/api/hook-event',
+    payload: { event: 'Stop', sessionId: session.id, data: { cwd: '/tmp' } },
+  });
+  // Release the stall so the chain (including our new inject) drains.
+  release();
+  const res = await injectPromise;
+  assert.equal(res.statusCode, 200);
+});

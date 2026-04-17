@@ -209,6 +209,35 @@ let hookQueue: Promise<unknown> = Promise.resolve();
 let hookQueueDepth = 0;
 export const getHookQueueDepth = (): number => hookQueueDepth;
 
+// Phase R M5 — hard cap on the hook queue depth. The Claude CLI
+// wraps its hook-event POST in `--max-time 2` and treats any
+// non-2xx as a fire-and-forget drop, so returning 503 here just
+// means "Commander shed this hook". Previous behavior was
+// unbounded growth under a downstream stall, with only a warn
+// log at depth > 5. 20 is a generous ceiling that absorbs normal
+// multi-session bursts (up to ~4 active sessions × 5 in-flight
+// hooks) but rejects runaway state.
+export const HOOK_QUEUE_MAX = 20;
+
+// Test-only. Lets integration tests deterministically drive the
+// queue depth without racing processHook. Caller simulates a
+// downstream stall by adding N in-flight promises; `release()`
+// resolves them all so the queue drains cleanly at teardown.
+// Not re-exported outside tests — the file's public surface is
+// just the `hookEventRoutes` Fastify plugin.
+export const _setHookQueueDepthForTests = (
+  depth: number,
+): { release: () => void } => {
+  let resolveAll: () => void = () => {};
+  const stall = new Promise<void>((resolve) => { resolveAll = resolve; });
+  for (let i = 0; i < depth; i++) {
+    hookQueueDepth += 1;
+    const next = hookQueue.then(() => stall);
+    hookQueue = next.catch(() => {}).finally(() => { hookQueueDepth -= 1; });
+  }
+  return { release: () => resolveAll() };
+};
+
 export const hookEventRoutes = async (app: FastifyInstance) => {
   // Phase P.1 H1 — loopback-only. Hooks fire from the Claude CLI running
   // on the same machine as Commander; the endpoint has no legitimate
@@ -221,6 +250,15 @@ export const hookEventRoutes = async (app: FastifyInstance) => {
     async (request, reply) => {
       if (!isLoopbackIp(request.ip)) {
         return reply.status(403).send({ error: 'loopback only' });
+      }
+      // Phase R M5 — reject past capacity. Checked BEFORE the depth
+      // increment so a 21st concurrent POST never transiently occupies
+      // a queue slot. `Retry-After: 1` nudges well-behaved clients to
+      // back off a second before retrying — Claude Code's hook client
+      // itself is fire-and-forget so this is mostly for other callers.
+      if (hookQueueDepth >= HOOK_QUEUE_MAX) {
+        console.warn(`[hook-event] queue full (depth=${hookQueueDepth}) — shedding`);
+        return reply.status(503).header('Retry-After', '1').send({ error: 'queue full' });
       }
       const body = request.body ?? ({} as HookEventBody);
       hookQueueDepth += 1;
