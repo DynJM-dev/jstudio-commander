@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
 import { hookMatchStats } from './hook-event.routes.js';
+import { SERVICE_ID, SERVICE_VERSION } from '../version.js';
 
 const startTime = Date.now();
 
@@ -32,6 +33,12 @@ export const systemRoutes = async (app: FastifyInstance) => {
   app.get('/api/system/health', async () => {
     return {
       status: 'ok',
+      // Signed identifier — preflight (`pnpm dev`, client `predev`, macOS
+      // launcher) checks for `service === 'jstudio-commander'` so it can
+      // tell our server apart from an unrelated process squatting on the
+      // same port. Do NOT rename without updating those callers.
+      service: SERVICE_ID,
+      version: SERVICE_VERSION,
       timestamp: new Date().toISOString(),
       uptime: Math.floor((Date.now() - startTime) / 1000),
       dbConnected: isDbConnected(),
@@ -60,7 +67,7 @@ export const systemRoutes = async (app: FastifyInstance) => {
       dbPath: config.dbPath,
       serverPort: config.port,
       effortLevel,
-      version: '0.1.0',
+      version: SERVICE_VERSION,
     };
   });
 

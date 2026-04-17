@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { config } from './config.js';
 import { getDb, closeDb } from './db/connection.js';
 import { acquireInstanceLock, releaseInstanceLock } from './db/instance-lock.js';
+import { detectExistingCommander, printDuplicateBanner } from './preflight.js';
 import { sessionRoutes } from './routes/session.routes.js';
 import { systemRoutes } from './routes/system.routes.js';
 import { chatRoutes } from './routes/chat.routes.js';
@@ -32,6 +33,17 @@ import { setupWebSocket, stopWebSocketTimers } from './ws/index.js';
 import { setupWatcherBridge } from './services/watcher-bridge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Preflight: if another Commander is already serving the signed health
+// endpoint on our configured port, exit cleanly with a friendly banner
+// instead of bubbling up EADDRINUSE. A non-signed response (e.g. an
+// unrelated service on the same port) falls through to the normal bind
+// path, where Fastify's own error handling + the instance-lock below
+// cover the remaining cases.
+if (await detectExistingCommander(config.port)) {
+  printDuplicateBanner(config.port);
+  process.exit(0);
+}
 
 const app = Fastify({
   logger: {
