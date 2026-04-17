@@ -13,6 +13,12 @@ let jsonlWatcher: FSWatcher | null = null;
 let projectWatcher: FSWatcher | null = null;
 const jsonlHandlers: JsonlChangeHandler[] = [];
 const projectHandlers: ProjectFileChangeHandler[] = [];
+// Phase P.1 H1/M5 — LRU-capped fs.watch bag. The map is keyed by full
+// path; JS Map iteration order is insertion, so the first key is the
+// oldest and gets evicted when we breach the cap. Without this limit,
+// a rogue `/api/hook-event` stream could allocate fs.watch FDs until
+// the host runs out (easy local DoS).
+export const SPECIFIC_WATCHER_CAP = 100;
 const specificWatchers = new Map<string, NodeFSWatcher>();
 
 const getIncrementalLines = (filePath: string): string[] => {
@@ -172,6 +178,20 @@ export const fileWatcherService = {
   // Much more reliable than directory-level watching for individual files
   watchSpecificFile(filePath: string): void {
     if (specificWatchers.has(filePath)) return; // Already watching
+
+    // Phase P.1 H1/M5 — LRU evict before allocating the new FD. Map
+    // iteration is insertion order, so `.keys().next().value` gives the
+    // oldest entry. Close its FD and drop it so the incoming watcher
+    // stays below SPECIFIC_WATCHER_CAP.
+    if (specificWatchers.size >= SPECIFIC_WATCHER_CAP) {
+      const oldestKey = specificWatchers.keys().next().value;
+      if (oldestKey !== undefined) {
+        const oldest = specificWatchers.get(oldestKey);
+        try { oldest?.close(); } catch { /* already closed */ }
+        specificWatchers.delete(oldestKey);
+        console.log(`[watcher] LRU-evicted specific watcher: ${basename(oldestKey)}`);
+      }
+    }
 
     try {
       const watcher = fsWatch(filePath, { persistent: false }, (eventType) => {

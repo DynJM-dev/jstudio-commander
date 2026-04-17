@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { basename } from 'node:path';
+import { basename, resolve as resolvePath } from 'node:path';
 import { fileWatcherService } from '../services/file-watcher.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
 import { readJsonlOrigin, isCoderJsonl, type JsonlOrigin } from '../services/jsonl-origin.service.js';
+import { config, isLoopbackIp } from '../config.js';
 
 interface HookEventBody {
   event: string;
@@ -66,10 +67,19 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   const cwd = body.data?.cwd;
 
   // 1. Fast path — a row already has this transcript_path in its list.
+  // Phase P.1 H1/M4: replaced the LIKE-substring query with a
+  // json_each-backed exact match. Sidesteps the LIKE wildcard-injection
+  // class entirely (attacker-supplied `%` / `_` in the path used to
+  // match arbitrary rows) and is semantically stricter — we only ever
+  // stored exact JSON strings in this array, so substring was never
+  // the right tool. The query is still one parameterized SELECT.
   if (transcriptPath) {
     const row = db.prepare(
-      `SELECT id FROM sessions WHERE transcript_paths LIKE ?`
-    ).get(`%${JSON.stringify(transcriptPath).slice(1, -1)}%`) as { id: string } | undefined;
+      `SELECT s.id FROM sessions s, json_each(s.transcript_paths)
+       WHERE s.transcript_paths IS NOT NULL
+         AND json_each.value = ?
+       LIMIT 1`
+    ).get(transcriptPath) as { id: string } | undefined;
     if (row) return { id: row.id, strategy: 'claudeSessionId' };
   }
 
@@ -165,6 +175,29 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   return null;
 };
 
+// Phase P.1 H1 — transcript_path allowlist. Every legitimate hook
+// event's `transcript_path` resolves under `~/.claude/projects/` (the
+// directory Claude Code writes JSONLs into). Previous code accepted any
+// attacker-supplied path, then:
+//   (a) fs.watch()'d the path (FD growth + DoS),
+//   (b) LIKE-substring matched it against an existing row (hijack risk),
+//   (c) stored it in transcript_paths for the chat endpoint to later
+//       readFileSync — arbitrary-file-read amplification.
+// The guard rejects any path that, after `path.resolve`, doesn't start
+// with the canonical projects dir + separator (prevents `/foo/../etc`
+// traversal and `/etc/hosts.jsonl` variants that happen to end in
+// `.jsonl`). Exported so tests can pin the contract.
+export const isAllowedTranscriptPath = (
+  transcriptPath: string,
+  projectsDir: string = config.claudeProjectsDir,
+): boolean => {
+  if (typeof transcriptPath !== 'string' || transcriptPath.length === 0) return false;
+  if (!transcriptPath.endsWith('.jsonl')) return false;
+  const resolved = resolvePath(transcriptPath);
+  const dirPrefix = projectsDir.endsWith('/') ? projectsDir : projectsDir + '/';
+  return resolved.startsWith(dirPrefix);
+};
+
 // Hook events must be processed in the order they arrive at the server.
 // Two sessions rotating transcripts within the same second can race on
 // the cwd-exclusive matcher (both see `transcript_paths = '[]'` for a
@@ -177,12 +210,18 @@ let hookQueueDepth = 0;
 export const getHookQueueDepth = (): number => hookQueueDepth;
 
 export const hookEventRoutes = async (app: FastifyInstance) => {
-  // Receive hook events from Claude Code — bypass PIN auth (localhost only,
-  // fired by the Claude process itself).
+  // Phase P.1 H1 — loopback-only. Hooks fire from the Claude CLI running
+  // on the same machine as Commander; the endpoint has no legitimate
+  // cross-host caller. Previous code relied on the PIN middleware, which
+  // was bypassable via the Host header (see C1). Gate on the raw socket
+  // peer with the same predicate session-tick.routes.ts uses.
   app.post<{ Body: HookEventBody }>(
     '/api/hook-event',
     { logLevel: 'warn' as const },
-    async (request) => {
+    async (request, reply) => {
+      if (!isLoopbackIp(request.ip)) {
+        return reply.status(403).send({ error: 'loopback only' });
+      }
       const body = request.body ?? ({} as HookEventBody);
       hookQueueDepth += 1;
       if (hookQueueDepth > 5) {
@@ -277,6 +316,18 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
 
   if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
+    eventBus.emitSystemEvent(`hook:${event}`, body);
+    return { ok: true };
+  }
+
+  // Phase P.1 H1 — reject any transcript_path that doesn't resolve
+  // under `~/.claude/projects/`. Prevents FD-leak DoS via fs.watch on
+  // attacker-chosen paths AND the chat-endpoint's arbitrary-file-read
+  // amplification (transcript_paths fed into readFileSync later).
+  if (!isAllowedTranscriptPath(transcriptPath)) {
+    console.warn(
+      `[hook-event] REJECT transcript_path outside claudeProjectsDir: ${transcriptPath}`,
+    );
     eventBus.emitSystemEvent(`hook:${event}`, body);
     return { ok: true };
   }
