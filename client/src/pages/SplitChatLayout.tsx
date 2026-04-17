@@ -15,7 +15,7 @@ const LEGACY_STORAGE_KEY = 'jsc-split-state-v1';
 const MIN_PERCENT = 30;
 const MAX_PERCENT = 70;
 const DEFAULT_PERCENT = 55;
-const STRIP_WIDTH = 48;
+const STRIP_WIDTH = 64;
 const MAX_TEAMMATES = 3;
 
 interface SplitState {
@@ -292,7 +292,7 @@ export const SplitChatLayout = () => {
               title="Expand teammates"
               className="flex items-center justify-center rounded-md transition-colors"
               style={{
-                width: 32, height: 32,
+                width: 44, height: 44,
                 color: 'var(--color-text-secondary)',
                 background: 'rgba(255,255,255,0.04)',
                 border: '1px solid rgba(255,255,255,0.06)',
@@ -300,7 +300,7 @@ export const SplitChatLayout = () => {
               onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
             >
-              <Users size={14} />
+              <Users size={18} />
             </button>
           )}
           <AnimatePresence>
@@ -324,20 +324,20 @@ export const SplitChatLayout = () => {
                   }
                 }}
                 title={`${t.name}${t.agentRole ? ` · ${t.agentRole}` : ''}`}
-                className={`relative flex flex-col items-center justify-center rounded-md px-0.5 py-1 transition-all ${pulseSessionId === t.id ? 'waiting-tab-alarm' : ''} ${t.status === 'waiting' ? 'waiting-tab-alarm' : ''}`}
+                className={`relative flex flex-col items-center justify-center rounded-md px-1 py-1.5 transition-all ${pulseSessionId === t.id ? 'waiting-tab-alarm' : ''} ${t.status === 'waiting' ? 'waiting-tab-alarm' : ''}`}
                 style={{
-                  width: 32,
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px solid rgba(255,255,255,0.06)',
+                  width: 52,
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.08)',
                   color: 'var(--color-text-secondary)',
                 }}
               >
-                <StatusBadge status={t.status} size="sm" />
+                <StatusBadge status={t.status} size="md" />
                 <span
-                  className="text-[9px] leading-tight mt-0.5 truncate w-full text-center"
-                  style={{ color: 'var(--color-text-tertiary)' }}
+                  className="text-[10px] leading-tight mt-1 truncate w-full text-center font-medium"
+                  style={{ color: 'var(--color-text-secondary)' }}
                 >
-                  {t.agentRole?.slice(0, 4) ?? t.name.slice(0, 4)}
+                  {t.agentRole?.slice(0, 6) ?? t.name.slice(0, 6)}
                 </span>
               </motion.button>
             ))}
