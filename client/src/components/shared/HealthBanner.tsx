@@ -77,7 +77,7 @@ export const HealthBanner = () => {
         >
           <Loader2 size={13} className="animate-spin shrink-0" />
           <span className="font-medium">
-            {showDisconnected ? 'Reconnecting to Commander server…' : 'Server is slow or restarting…'}
+            {showDisconnected ? 'Reconnecting to Command Center server…' : 'Server is slow or restarting…'}
           </span>
         </motion.div>
       )}

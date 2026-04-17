@@ -33,7 +33,7 @@ export const Logo = ({ collapsed = false }: LogoProps) => (
         className="text-sm font-semibold whitespace-nowrap"
         style={{ color: 'var(--color-text-primary)', fontFamily: M }}
       >
-        JStudio Commander
+        JStudio Command Center
       </span>
     )}
   </div>

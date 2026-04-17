@@ -99,7 +99,7 @@ export const PinGate = ({ children }: PinGateProps) => {
           className="text-lg font-semibold mb-1"
           style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
         >
-          JStudio Commander
+          JStudio Command Center
         </h2>
         <p
           className="text-sm mb-5"
