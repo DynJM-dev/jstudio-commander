@@ -718,6 +718,18 @@ a1aa074 fix(status): bypass-permissions kill-switch + tighten prompt fallback
 
 All three typechecks PASS. 19/19 unit tests pass. Server restart required for Bundles 1, 2, 3, 4 (all server-touching). Bundles 5 + 6 are client-only (Vite HMR picks up).
 
+### Phase G.1 hotfix — status detector + ContextBar label (2026-04-17)
+
+Triggered by user-reported false positive: a team-lead PM with `✢ Tomfoolering...` in the tail + 2 active teammates + bypass-permissions footer was rendering with the yellow-glow "Waiting for input" card despite zero actionable prompts. Root cause: `agent-status.service.ts` ran the generic `WAITING_INDICATORS` loop (`/waiting for input/i`) before any active-in-tail check; chat-content phrases like "waiting for input from coder-14" elsewhere in the 25-line capture flipped status to `'waiting'`.
+
+**Fix:**
+1. New `hasActiveInTail(text, n=8)` in `agent-status.service.ts` checks last 8 lines for spinner glyphs OR ACTIVE_INDICATORS matches. Hoisted in `detectStatus` between the strong-prompt checks (`hasNumberedChoiceInTail` / block) and the generic-waiting loop. Active turns now always win over scrollback false positives. Real prompts (numbered choice / Allow-Deny / hard `(y/N)`) still take precedence — those checks run first.
+2. ContextBar derives `activeTeammateCount` from `useSessions` (mirrors TopCommandBar's bot-badge keying — Commander UUID + claudeSessionId both count). When `sessionStatus='waiting'` AND `!hasPrompt` AND children are running → label becomes `"Monitoring N teammates"` with a teal accent dot. Yellow-glow "Waiting for input" reserved for genuine no-prompt-no-teammates idle.
+
+**Design choice:** went with option (b) — keep the binary working/waiting/idle status enum, no new `'monitoring'` state. The fix lives entirely in the label layer + the active-tail hoist. Smaller surface, no client-status-coercion gymnastics.
+
+Commits `68ce81a` (server) + `976603d` (client).
+
 ---
 
 All three typechecks PASS (shared, client, server). Verification:
