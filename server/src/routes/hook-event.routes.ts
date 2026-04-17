@@ -43,6 +43,40 @@ export const hookMatchStats: Record<MatchStrategy, number> = {
   skipped: 0,
 };
 
+// Phase U Patch 1 — strategies whose match identity is load-bearing
+// enough to permanently backfill a row's claude_session_id. The two
+// rotation-heuristic strategies are deliberately excluded: their match
+// is "exactly one plausible candidate in this cwd/team" which a future
+// hook could reveal as wrong (e.g. a sibling session spawns one second
+// later in the same cwd). Writing the wrong UUID into claude_session_id
+// would then permanently mis-route that sibling's hooks. The four
+// allowed strategies all establish identity via content that ALREADY
+// originates on the owning row: the transcript path itself, the UUID
+// stored as either claude_session_id or id. Keep this set narrow.
+export const DETERMINISTIC_STRATEGIES: ReadonlySet<Exclude<MatchStrategy, 'skipped'>> =
+  new Set(['claudeSessionId', 'transcriptUUID', 'sessionId-as-row', 'cwd-exclusive']);
+
+// Exported for unit tests so the conditional UPDATE contract can be
+// pinned without standing up the full hook pipeline. Returns true when
+// the row was backfilled, false otherwise (already populated, wrong
+// strategy, no UUID, or no such row). The UPDATE is guarded by
+// `AND claude_session_id IS NULL` so concurrent hooks racing on the
+// same row can never overwrite a value already written.
+export const maybeAutoLearnClaudeSessionId = (
+  matchId: string,
+  strategy: Exclude<MatchStrategy, 'skipped'>,
+  transcriptPath: string,
+): boolean => {
+  if (!DETERMINISTIC_STRATEGIES.has(strategy)) return false;
+  const uuid = uuidFromTranscriptPath(transcriptPath);
+  if (!uuid) return false;
+  const db = getDb();
+  const result = db.prepare(
+    'UPDATE sessions SET claude_session_id = ? WHERE id = ? AND claude_session_id IS NULL',
+  ).run(uuid, matchId);
+  return result.changes > 0;
+};
+
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // SQLite GLOB pattern — eight hex, four, four, four, twelve with hyphens.
 // Used to narrow "PM/lead sessions" (their id is a Claude UUID) vs
@@ -392,6 +426,21 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   }
 
   hookMatchStats[match.strategy] += 1;
+  // Phase U Patch 1 — retroactive claude_session_id backfill. When a
+  // deterministic strategy resolves an owner whose row has no
+  // claude_session_id yet, write the transcript's UUID to the row so
+  // the next hook hits the O(1) `claudeSessionId` primary strategy
+  // directly. Closes the "PM-spawned teammate never binds" gap by
+  // learning identity from the first hook that arrives with a usable
+  // UUID, rather than requiring the spawn path to have captured it.
+  if (maybeAutoLearnClaudeSessionId(match.id, match.strategy, transcriptPath)) {
+    const uuid = uuidFromTranscriptPath(transcriptPath);
+    console.log(
+      `[hook-event] auto-learned claude_session_id=${uuid} on ${match.id.slice(0, 30)} via ${match.strategy}`,
+    );
+    const learned = sessionService.getSession(match.id);
+    if (learned) eventBus.emitSessionUpdated(learned);
+  }
   // Phase N.0 Patch 3 — every successful hook match counts as proof of
   // life. Bump BEFORE appendTranscriptPath so the heartbeat timestamp is
   // visible even on dedup'd hooks where no new path is stored.
