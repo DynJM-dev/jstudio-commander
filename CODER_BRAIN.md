@@ -195,9 +195,9 @@ If a future refactor touches `createSession`, the bootstrap block and `waitForCl
 - ~~Unit tests plans.ts~~ → SHIPPED (#199, 6 tests)
 - **jstudio-init-project helper** — spec from PM: scaffold STATE.md / PM_HANDOFF.md with one prompt.
 - **Memory/skill inventory view** — surface `~/.claude/skills/` and memory files as a browsable panel.
-- **Token-audit follow-ups** — #216 (useChat tail-delta), #217 (TopCommandBar double-poll), #218 (modal cache), #219 (pane-poll batch), #221 (session-tree hook), #223 (dead WS sub). All low-priority.
+- **Token-audit follow-ups** — #216 (useChat tail-delta), #219 (pane-poll batch). #217/#218/#221/#223 shipped in Phase A (coder-11, 2026-04-16).
 - **#230** — Project tech-stack pills + git commits. Needs coder-10 server endpoint.
-- **#191** — Stale-transcript warning pill. Likely obsolete post-#204 deterministic model.
+- ~~**#191** — Stale-transcript warning pill~~ → CLOSED 2026-04-16 (obsolete post-#204 deterministic transcript_paths model; zero code references).
 
 ### Verify-before-compact checklist (if you need to reproduce any of the above)
 

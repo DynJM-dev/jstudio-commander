@@ -72,10 +72,9 @@
 
 1. **Token-audit follow-ups** — #216 (useChat tail-delta), #217 (TopCommandBar double-poll), #218-#223. Low priority.
 2. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint)
-3. **#191** — Stale-transcript warning pill (likely obsolete post-#204)
-4. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
-5. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
-6. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
+3. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
+4. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
+5. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
 
 ## Critical rules for future coders
 
