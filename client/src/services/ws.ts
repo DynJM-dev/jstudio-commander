@@ -44,7 +44,10 @@ const connect = (): void => {
   }
 
   socket.onopen = () => {
-    console.log('[ws] Connected');
+    // Phase P.3 L1 — DEV-only noise. `[ws] Connected` fires on every
+    // reconnect after hot-reload + tab switch; shipping it in prod
+    // clutters the console for no diagnostic benefit.
+    if (import.meta.env.DEV) console.log('[ws] Connected');
     reconnectDelay = INITIAL_RECONNECT_DELAY;
     notifyStatus(true);
   };
