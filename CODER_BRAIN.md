@@ -1939,6 +1939,74 @@ clean across shared + server + client.
 
 ---
 
+## Coder-16 Session — Phase U.1 IN PROGRESS (oscillation fix + investigation, 2026-04-17)
+
+HEAD `2629143` (no U.1 commits yet — investigation only). Paused at 87% context after Fix 2 root-cause identified; implementation for all three fixes deferred to next rotation.
+
+**Dispatch scope (team-lead).** After Phase U deployed: oscillation observed on `coder@ovagas-r2` — Patch 2 force-idle fires, classifier returns "active-indicator in tail" on next 5s poll, row flips back to working, force-idle fires again. Three fixes bundled upfront: (1) 60s cooldown after force-idle via `sessions.force_idled_at INTEGER NOT NULL DEFAULT 0` column + poller gate ordered BEFORE Phase T's `last_hook_at` yield, (2) targeted pane-classifier fix for the specific false-positive regex (team-lead's preference: exclusion-list over broad regex tightening), (3) oscillation-suspicion telemetry.
+
+**Investigation done.** Captured pane `%59` to `audits/PHASE_U1_PANE_59_CAPTURE.txt`. Full trace in `audits/PHASE_U1_INVESTIGATION.md`. Root cause: Claude Code's Commander-installed statusline renders two chrome lines permanently (`  Opus 4.7 │ ctx 33% │ 5h 46% │ 7d 35% │ $26.54` and `  ⏵⏵ bypass permissions on · 1 shell`). The first matches `/\d+%/` in `ACTIVE_INDICATORS` three times (33/46/35). `hasActiveInTail(text, 8)` short-circuits on first match, returns true. Branch flow then enters verb-aware override block but `detectActivity` returns null (no spinner-glyph+Verb in 12-line tail; `✻ Cooked for 2m 51s` sits at line 56, outside window). All three verb-aware exits (IDLE_VERBS, COMPLETION_VERBS, stale-elapsed) require non-null activity and don't fire. Falls through to `return { status: 'working', evidence: 'active-indicator in tail' }`. `hasIdleFooter` doesn't save us for two reasons: (a) this pane shows `⏵⏵ bypass permissions on` whereas the only matching marker is `⏵⏵ accept edits on`, and (b) branch order puts `hasIdleFooter` AFTER `hasActiveInTail` in `classifyStatusFromPane` anyway.
+
+**Proposed Fix 2 (implementation deferred).**
+
+```ts
+// In server/src/services/agent-status.service.ts
+const STATUSLINE_CHROME_MARKERS = [
+  /ctx\s*\d+%/i,
+  /\b\d+h\s+\d+%/i,
+  /⏵⏵\s+bypass permissions on/i,
+  /⏵⏵\s+accept edits on/i,
+];
+const isStatuslineChrome = (line: string): boolean =>
+  STATUSLINE_CHROME_MARKERS.some((re) => re.test(line));
+
+const hasActiveInTail = (text: string, n = 8): boolean => {
+  const lines = text.split('\n').slice(-n);
+  for (const line of lines) {
+    if (isStatuslineChrome(line)) continue;  // Phase U.1 Fix 2
+    if ([...line].some((ch) => SPINNER_CHARS.includes(ch))) return true;
+    for (const pattern of ACTIVE_INDICATORS) if (pattern.test(line)) return true;
+  }
+  return false;
+};
+```
+
+Test fixture: read `audits/PHASE_U1_PANE_59_CAPTURE.txt` → assert `classifyStatusFromPane(fixture).status === 'idle'`.
+
+**Proposed Fix 1 (implementation deferred).**
+
+- Schema: idempotent `ALTER TABLE sessions ADD COLUMN force_idled_at INTEGER NOT NULL DEFAULT 0` in `db/connection.ts` using the `PRAGMA table_info` guard (mirror Phase T's `last_hook_at` migration).
+- Write: in Phase U Patch 2's force-idle branch in `status-poller.service.ts`, change the UPDATE to `SET status = 'idle', updated_at = datetime('now'), force_idled_at = ?` in a single statement (bind `Date.now()`).
+- Read: poller SELECT adds `force_idled_at`. New gate BEFORE the `last_hook_at` 60s yield and BEFORE stale-activity force-idle:
+  ```ts
+  const FORCE_IDLE_COOLDOWN_MS = 60_000;
+  const msSinceForceIdle = Date.now() - Number(session.force_idled_at ?? 0);
+  if (msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS) continue;
+  ```
+- Final ordering: (1) cooldown, (2) `last_hook_at` yield, (3) stale-activity force-idle, (4) classifier.
+- Tests: 59s cooldown yields, 60s exact expires (strict `<`), 61s classifier runs, hook arrives during cooldown → `last_hook_at` bump wins on next cycle (Phase T behavior intact), activity bump during cooldown doesn't suppress future classification.
+
+**Proposed Fix 3 (implementation deferred).**
+
+- In-memory `Map<sessionId, Array<{ status, at }>>` module-level in `status-poller.service.ts`.
+- Push `{ status, at: Date.now() }` on every UPDATE call site (force-idle + classifier flip).
+- Trim entries older than 15s on every write.
+- If array has 3+ entries AND contains at least one `idle→working→idle` (or inverse) toggle AND `lastLogAt.get(sessionId) ?? 0` is >60s ago → `console.warn('[poller] oscillation suspected: session=<id> flips=<n> in <Ns>')` and stamp `lastLogAt.set(sessionId, now)`.
+- Tests: 2-flip window no log; 3-flip in 14s → log fires once; 3-flip spread over 16s → no log; persisting oscillation 60s → second log; different sessions → independent dedup; trim after 20 flips in 60s → only last-15s retained.
+
+**Commit plan (per team-lead: test-first, 3-4 commits).**
+
+1. `test(phase-u1): cooldown + oscillation + pane-fixture (red)` — bundles Fix 1 cooldown predicate tests, Fix 3 oscillation detection, and the pane-fixture test for Fix 2. Red because the column doesn't exist / the statusline chrome markers haven't been added / oscillation telemetry isn't implemented.
+2. `feat(status): 60s cooldown after force-idle prevents classifier flip-back` — migration + UPDATE + cooldown gate. Fix 1 tests go green.
+3. `feat(status): oscillation suspicion telemetry (deduped per session per 60s)` — the Map + trim + warn. Fix 3 tests go green.
+4. `fix(status): statusline chrome excluded from hasActiveInTail (Phase U.1 Fix 2)` — STATUSLINE_CHROME_MARKERS + isStatuslineChrome gate. Pane-fixture test goes green.
+
+Plus integration E2E-light covering the full flow (force-idle → cooldown → hook arrives → takeover). Server restart + capture `coder@ovagas-r2` post-restart behavior for PHASE_REPORT verification (zero oscillation logs within 60s).
+
+**Invariants carried forward from team-lead's dispatch.** Do NOT blanket-tighten `ACTIVE_INDICATORS` — investigation already showed the fix belongs at the `hasActiveInTail` level via exclusion list, not regex mutation. Do NOT touch Phase U Patch 2's narrow scope (working→idle only). The single-UPDATE invariant for force-idle must be preserved in Fix 1 (extend the existing UPDATE, don't add a second statement). `⏵⏵ accept edits on` already lives in `IDLE_FOOTER_MARKERS`; mirroring it in STATUSLINE_CHROME_MARKERS is intentional because the two lists serve different branches (idle-footer detection vs active-indicator exclusion).
+
+---
+
 ## Coder-16 Session — Phase U (auto-learn + stale force-idle + visibility chip, 2026-04-17)
 
 HEAD `f81f87f` (pre-U was `684706e` — team-lead's analytics snapshot on top of Phase T). Four commits this rotation:

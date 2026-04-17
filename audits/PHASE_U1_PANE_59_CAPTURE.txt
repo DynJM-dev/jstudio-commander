@@ -1,0 +1,123 @@
+       4  > Last updated: 2026-04-17
+       5
+       6 +## Pre-Demo Remediation Round 3 VERIFY
+         +— COMPLETE 2026-04-17
+       7 +
+       8 +Final pre-demo gate passed. Demo with M
+         +ichael Ovalle: **2026-04-18**.
+       9 +
+      10 +- Clean rebuild: `rm -rf node_modules/.
+         +vite dist` → `npx tsc --noEmit` = 0 err
+         +ors → `npx vite build` = ✓ built in **7
+         +34ms** (main bundle 298.97 kB gzip 95 k
+         +B; `react-pdf.browser` 1.54 MB lazy-loa
+         +ded chunk unchanged).
+      11 +- Regression greps (in `src/modules/` u
+         +nless noted):
+      12 +  - `.single()`: **0** hits ✓
+      13 +  - `console.log` anywhere in `src/`: *
+         +*0** hits ✓
+      14 +  - `from '@jstudio/database/services/p
+         +roposals'`: **0** hits ✓
+      15 +  - `bg-(green|red|amber)-600` in modul
+         +es: **0** hits ✓
+      16 +  - `text-(violet|blue|emerald|amber|pi
+         +nk)-[0-9]` in modules: **4** hits — all
+         + in `settings/` (TenantSettings tier ba
+         +dge + Contabilidad/Nómina module tiles
+         ++ AuditLogTab proposals row). PM deferr
+         +ed these post-demo; demo-surface unaffe
+         +cted.
+      17 +- `DEMO_SCRIPT.md` authored at repo roo
+         +t (~1,400 words): Setup prechecks · 8-m
+         +inute narrative arc (Dashboard → Cuadre
+         +s → Contabilidad → Inventario → Nómina
+         +→ Clientes → Reportes) · 5 anticipated
+         +Q&A · Recovery cues table · Post-demo n
+         +ext steps.
+      18 +
+      19 +No code touched in Round 3 except STATE
+         +.md and `DEMO_SCRIPT.md`. Browser smoke
+         + walkthrough deferred to Jose.
+      20 +
+      21  ## Pre-Demo Remediation Round 2 — COMPL
+          ETE 2026-04-17
+      22
+      23  BRAND pass 1 and POLISH pass 2 shipped.
+           Build + typecheck green (604–606 ms).
+
+⏺ Round 3 VERIFY shipped green. Clean rebuild (tsc 0 /
+  vite 734ms), all 5 regression greps returned 0
+  demo-surface hits, DEMO_SCRIPT.md authored (~1,400
+  words, 8-section arc + Q&A + recovery), STATE.md
+  updated. PHASE_REPORT delivered to team-lead. Task #3
+  closed.
+
+✻ Cooked for 2m 51s
+
+❯ Turn on the apge so I can check it out, you also need
+   to compact soon
+
+⏺ Bash(npx vite --port 5175)
+  ⎿  Running in the background (↓ to manage)
+
+⏺ Bash(sleep 3 && cat
+      /private/tmp/claude-501/-Users-josemiguelbonilla-D
+      esktop-Projects-OvaGas-ERP-apps-jstudio-base/4dd9e
+      ab7-654f-4101-87db-556d6c38ccab/tasks/bnny974…)
+  ⎿    VITE v8.0.2  ready in 188 ms
+
+       ➜  Local:   http://localhost:5175/
+       ➜  Network: use --host to expose
+
+⏺ Dev server live at http://localhost:5175/ — Vite ready
+   in 188ms. Login with Michael.ovalles98@gmail.com or
+  super-admin jm.bonilla@hotmail.com. Ready for you to
+  walk the DEMO_SCRIPT flow. I'll compact now.
+
+❯ PM must compact
+
+⏺ Understood — compact is the PM's call, not mine. Dev
+  server is live at http://localhost:5175/ running in
+  the background. I'll stand by for your next
+  instruction.
+
+❯ /compact
+
+· Running SessionStart hooks…… (1m 28s)
+  ⎿  Tip: Use /btw to ask a quick side question without
+     interrupting Claude's current work
+
+────────────────────────────────────────────── @coder ──
+❯ 
+────────────────────────────────────────────────────────
+  Opus 4.7 │ ctx 33% │ 5h 46% │ 7d 35% │ $26.54
+  ⏵⏵ bypass permissions on · 1 shell
+ ▐▛███▜▌   Claude Code v2.1.112
+▝▜█████▛▘  Opus 4.7 with xhigh effort · Claude Max
+  ▘▘ ▝▝    ~/…/Projects/OvaGas-ERP/apps/jstudio-base
+
+✻ Conversation compacted (ctrl+o for history)
+
+
+⏺ Understood — compact is the PM's call, not mine. Dev
+  server is live at http://localhost:5175/ running in
+  the background. I'll stand by for your next
+  instruction.
+
+❯ /compact
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Referenced file ../../STATE.md
+  ⎿  Read ../../DEMO_SCRIPT.md (242 lines)
+  ⎿  Read
+     ../../packages/database/src/services/clients.ts
+     (113 lines)
+  ⎿  Read src/main.tsx (70 lines)
+  ⎿  Read src/firebase.ts (64 lines)
+
+────────────────────────────────────────────── @coder ──
+❯ 
+────────────────────────────────────────────────────────
+  Opus 4.7 │ ctx 33% │ 5h 46% │ 7d 35% │ $26.54
+  ⏵⏵ bypass permissions on · 1 shell
+
