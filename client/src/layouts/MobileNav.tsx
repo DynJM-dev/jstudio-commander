@@ -3,17 +3,21 @@ import {
   Monitor,
   MessageSquare,
   FolderKanban,
-  TerminalSquare,
+  BarChart3,
   MoreHorizontal,
 } from 'lucide-react';
 
 const M = 'Montserrat, sans-serif';
 
+// Phase P.3 H4 — Terminal tab replaced by Analytics. Terminal page is
+// gone pending a future xterm.js/node-pty rebuild; Analytics was
+// previously behind the "More" overflow and surfaces account-level
+// numbers the user actually reaches for.
 const TABS = [
   { path: '/sessions', icon: Monitor, label: 'Sessions' },
   { path: '/chat', icon: MessageSquare, label: 'Chat' },
   { path: '/projects', icon: FolderKanban, label: 'Projects' },
-  { path: '/terminal', icon: TerminalSquare, label: 'Terminal' },
+  { path: '/analytics', icon: BarChart3, label: 'Analytics' },
 ];
 
 interface MobileNavProps {

@@ -106,11 +106,12 @@ describe('P.2 C3 — SessionCostTable degrades to card stack on mobile', () => {
 });
 
 describe('P.2 C4 — touch targets bumped to ≥ 44×44', () => {
+  // Phase P.3 H4 — TerminalTabs was removed alongside the half-built
+  // Terminal page; its 44×44 bump is no longer a live contract.
   const targets: Array<{ label: string; path: string }> = [
     { label: 'SessionCard split-view button', path: 'src/components/sessions/SessionCard.tsx' },
     { label: 'ContextBar refresh button', path: 'src/components/chat/ContextBar.tsx' },
     { label: 'CreateSessionModal close X', path: 'src/components/sessions/CreateSessionModal.tsx' },
-    { label: 'TerminalTabs new-session button', path: 'src/components/terminal/TerminalTabs.tsx' },
     { label: 'MobileOverflowDrawer close X', path: 'src/layouts/MobileOverflowDrawer.tsx' },
   ];
 
@@ -129,19 +130,9 @@ describe('P.2 C4 — touch targets bumped to ≥ 44×44', () => {
 });
 
 describe('P.2 H2 — tabs wrap instead of horizontal scroll', () => {
-  test('TerminalTabs strip uses flex-wrap, not overflow-x-auto', () => {
-    const src = read('src/components/terminal/TerminalTabs.tsx');
-    const outerTabStrip = src.split('export const TerminalTabs')[1] ?? '';
-    assert.match(outerTabStrip, /flex-wrap/);
-    // The strip itself should NOT scroll horizontally.
-    // (A descendant scroll would be fine; this asserts the outer row.)
-    const firstDivClassName = outerTabStrip.match(/<div\s+[^>]*className="([^"]+)"/);
-    assert.ok(firstDivClassName, 'could not locate outer tab-strip div in TerminalTabs');
-    assert.ok(
-      !firstDivClassName[1]!.includes('overflow-x-auto'),
-      'outer tab strip must not use overflow-x-auto',
-    );
-  });
+  // TerminalTabs was removed in Phase P.3 H4; its flex-wrap contract
+  // no longer applies. The SplitChatLayout teammate tab row is the
+  // remaining surface the rule governs.
 
   test('SplitChatLayout teammate tab row uses flex-wrap', () => {
     const src = read('src/pages/SplitChatLayout.tsx');

@@ -14,9 +14,6 @@
   },
   "dependencies": {
     "@commander/shared": "workspace:*",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-webgl": "^0.19.0",
-    "@xterm/xterm": "^6.0.0",
     "framer-motion": "^12.7.3",
     "lucide-react": "^0.477.0",
     "qrcode.react": "4",

@@ -4,7 +4,6 @@ import {
   Monitor,
   MessageSquare,
   FolderKanban,
-  TerminalSquare,
   BarChart3,
   Building2,
   ChevronsRight,
@@ -25,7 +24,6 @@ const NAV_ITEMS = [
   { path: '/sessions', icon: Monitor, label: 'Sessions' },
   { path: '/chat', icon: MessageSquare, label: 'Chat' },
   { path: '/projects', icon: FolderKanban, label: 'Projects' },
-  { path: '/terminal', icon: TerminalSquare, label: 'Terminal' },
   { path: '/analytics', icon: BarChart3, label: 'Analytics' },
   { path: '/city', icon: Building2, label: 'City' },
 ];

@@ -12,7 +12,10 @@ const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.C
 const SplitChatLayout = lazy(() => import('./pages/SplitChatLayout').then(m => ({ default: m.SplitChatLayout })));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ default: m.ProjectsPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));
-const TerminalPage = lazy(() => import('./pages/TerminalPage').then(m => ({ default: m.TerminalPage })));
+// Phase P.3 H4 — TerminalPage removed. The half-built xterm preview
+// was dropping more than it rendered (partial cursor sync, no resize
+// stability). Full xterm.js + node-pty rebuild is a future phase; for
+// now the page + its deps are gone.
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const CityPage = lazy(() => import('./pages/CityPage').then(m => ({ default: m.CityPage })));
 
@@ -43,7 +46,6 @@ const AnimatedRoutes = () => {
               <Route path="/chat/:sessionId" element={<SplitChatLayout />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
-              <Route path="/terminal" element={<TerminalPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/city" element={<CityPage />} />
               <Route path="*" element={<Navigate to="/sessions" replace />} />

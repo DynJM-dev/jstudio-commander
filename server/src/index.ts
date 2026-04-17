@@ -13,7 +13,9 @@ import { systemRoutes } from './routes/system.routes.js';
 import { chatRoutes } from './routes/chat.routes.js';
 import { projectRoutes } from './routes/project.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
-import { terminalRoutes } from './routes/terminal.routes.js';
+// Phase P.3 H4 — Terminal stack removed. Future xterm.js/node-pty
+// rebuild is a separate phase; the half-built PTY preview is gone
+// along with its deps (@xterm/*, node-pty).
 import { tunnelRoutes } from './routes/tunnel.routes.js';
 import { authRoutes } from './routes/auth.routes.js';
 import { hookEventRoutes } from './routes/hook-event.routes.js';
@@ -24,7 +26,6 @@ import { preferencesRoutes } from './routes/preferences.routes.js';
 import { cityRoutes } from './routes/city.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
 import { sessionService } from './services/session.service.js';
-import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
 import { pinAuthMiddleware } from './middleware/pin-auth.js';
 import { securityHeadersMiddleware } from './middleware/security-headers.js';
@@ -130,7 +131,6 @@ await app.register(sessionRoutes);
 await app.register(chatRoutes);
 await app.register(projectRoutes);
 await app.register(analyticsRoutes);
-await app.register(terminalRoutes);
 await app.register(tunnelRoutes);
 await app.register(authRoutes);
 await app.register(hookEventRoutes);
@@ -281,7 +281,6 @@ const shutdown = async () => {
   teamConfigService.stop();
   stopWebSocketTimers();
   fileWatcherService.stop();
-  terminalService.cleanup();
   tunnelService.cleanup();
   closeDb();
   releaseInstanceLock();
