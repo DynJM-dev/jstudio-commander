@@ -19,6 +19,10 @@ const STALE_MS = 10 * 60_000;
 
 const createSchema = (db: Database.Database) => {
   db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'idle'
+    );
     CREATE TABLE session_ticks (
       session_id TEXT PRIMARY KEY,
       updated_at INTEGER NOT NULL,
@@ -30,15 +34,25 @@ const createSchema = (db: Database.Database) => {
   `);
 };
 
+// Seed a sessions row with a given status. Mirror tests must create
+// one per tick they insert — the JOIN in the prod query requires a
+// matching sessions row to consider the tick.
+const seedSession = (db: Database.Database, id: string, status = 'working') => {
+  db.prepare('INSERT INTO sessions (id, status) VALUES (?, ?)').run(id, status);
+};
+
 // Mirrors getAggregateRateLimits() against the given DB + nowMs.
+// Phase R M4 — JOIN sessions + filter stopped.
 const getAggregate = (db: Database.Database, nowMs: number) => {
   const row = db.prepare(
-    `SELECT session_id, updated_at,
-            five_hour_pct, five_hour_resets_at,
-            seven_day_pct, seven_day_resets_at
-     FROM session_ticks
-     WHERE five_hour_pct IS NOT NULL OR seven_day_pct IS NOT NULL
-     ORDER BY updated_at DESC
+    `SELECT t.session_id AS session_id, t.updated_at AS updated_at,
+            t.five_hour_pct AS five_hour_pct, t.five_hour_resets_at AS five_hour_resets_at,
+            t.seven_day_pct AS seven_day_pct, t.seven_day_resets_at AS seven_day_resets_at
+     FROM session_ticks t
+     INNER JOIN sessions s ON s.id = t.session_id
+     WHERE (t.five_hour_pct IS NOT NULL OR t.seven_day_pct IS NOT NULL)
+       AND s.status != 'stopped'
+     ORDER BY t.updated_at DESC
      LIMIT 1`
   ).get() as
     | {
@@ -90,10 +104,12 @@ describe('getAggregateRateLimits — Phase O', () => {
     const db = new Database(':memory:');
     createSchema(db);
     // Older session has 80% → should NOT win.
+    seedSession(db, 'old');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run('old', 1_699_999_999_000, 80, '2026-04-17T15:00:00Z', 50, '2026-04-24T00:00:00Z');
     // Newer session has 30% → SHOULD win.
+    seedSession(db, 'fresh');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run('fresh', 1_700_000_000_000, 30, '2026-04-17T16:00:00Z', 25, '2026-04-24T01:00:00Z');
@@ -112,6 +128,7 @@ describe('getAggregateRateLimits — Phase O', () => {
     createSchema(db);
     const now = 1_700_000_000_000;
     const tickAt = now - (11 * 60_000); // 11 min old
+    seedSession(db, 'stale');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run('stale', tickAt, 77, '2026-04-17T15:00:00Z', 40, '2026-04-24T00:00:00Z');
@@ -128,6 +145,7 @@ describe('getAggregateRateLimits — Phase O', () => {
   test('seven-day-only row (five-hour pct null) still qualifies as freshest', () => {
     const db = new Database(':memory:');
     createSchema(db);
+    seedSession(db, 'seven-only');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, NULL, NULL, ?, ?)"
     ).run('seven-only', 1_700_000_000_000, 12, '2026-04-24T00:00:00Z');
@@ -140,14 +158,56 @@ describe('getAggregateRateLimits — Phase O', () => {
     db.close();
   });
 
+  test('Phase R M4 — ticks from stopped sessions are excluded even when freshest', () => {
+    const db = new Database(':memory:');
+    createSchema(db);
+    // Stopped session ticked LAST with distinctive 91%. The pre-M4
+    // query would pick this row; post-M4 it's filtered out.
+    seedSession(db, 'dead', 'stopped');
+    seedSession(db, 'live', 'working');
+    db.prepare(
+      "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run('live', 1_700_000_000_000, 42, '2026-04-17T15:00:00Z', 20, '2026-04-24T00:00:00Z');
+    db.prepare(
+      "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run('dead', 1_700_000_000_500, 91, '2026-04-17T16:00:00Z', 88, '2026-04-24T01:00:00Z');
+
+    const agg = getAggregate(db, 1_700_000_000_600);
+    assert.equal(agg.sourceSessionId, 'live');
+    assert.equal(agg.fiveHour.pct, 42);
+    db.close();
+  });
+
+  test('Phase R M4 — when every tick belongs to a stopped session, null source', () => {
+    const db = new Database(':memory:');
+    createSchema(db);
+    seedSession(db, 'dead-1', 'stopped');
+    seedSession(db, 'dead-2', 'stopped');
+    db.prepare(
+      "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run('dead-1', 1_700_000_000_000, 60, '2026-04-17T15:00:00Z', 30, '2026-04-24T00:00:00Z');
+    db.prepare(
+      "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run('dead-2', 1_700_000_000_500, 70, '2026-04-17T16:00:00Z', 40, '2026-04-24T01:00:00Z');
+
+    const agg = getAggregate(db, 1_700_000_000_600);
+    assert.equal(agg.sourceSessionId, null);
+    assert.equal(agg.fiveHour.pct, null);
+    assert.equal(agg.sevenDay.pct, null);
+    assert.equal(agg.sampleAgeMs, Number.POSITIVE_INFINITY);
+    db.close();
+  });
+
   test('rows where BOTH pcts are NULL are skipped — never picked as source', () => {
     const db = new Database(':memory:');
     createSchema(db);
     // This row has no rate-limit fields at all — shouldn't win over
     // the older one that does.
+    seedSession(db, 'empty-fresh');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, NULL, NULL, NULL, NULL)"
     ).run('empty-fresh', 1_700_000_000_500);
+    seedSession(db, 'has-fields');
     db.prepare(
       "INSERT INTO session_ticks (session_id, updated_at, five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at) VALUES (?, ?, ?, ?, ?, ?)"
     ).run('has-fields', 1_700_000_000_000, 45, '2026-04-17T15:00:00Z', 22, '2026-04-24T00:00:00Z');

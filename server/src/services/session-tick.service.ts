@@ -215,13 +215,21 @@ export const sessionTickService = {
   // limits are account-wide so any live session is authoritative.
   getAggregateRateLimits(nowMs: number = Date.now()): AggregateRateLimitsPayload {
     const db = getDb();
+    // Phase R M4 — JOIN sessions + filter stopped rows. Without this,
+    // a tick from a long-dead session still showed up as the freshest
+    // row when no live session had ticked recently, freezing the
+    // HeaderStatsWidget at last-seen-values. Cheaper than a session_ticks
+    // FK rebuild (SQLite DELETE CASCADE would require table-copy) and
+    // same effective behavior from the client's perspective.
     const row = db.prepare(
-      `SELECT session_id, updated_at,
-              five_hour_pct, five_hour_resets_at,
-              seven_day_pct, seven_day_resets_at
-       FROM session_ticks
-       WHERE five_hour_pct IS NOT NULL OR seven_day_pct IS NOT NULL
-       ORDER BY updated_at DESC
+      `SELECT t.session_id AS session_id, t.updated_at AS updated_at,
+              t.five_hour_pct AS five_hour_pct, t.five_hour_resets_at AS five_hour_resets_at,
+              t.seven_day_pct AS seven_day_pct, t.seven_day_resets_at AS seven_day_resets_at
+       FROM session_ticks t
+       INNER JOIN sessions s ON s.id = t.session_id
+       WHERE (t.five_hour_pct IS NOT NULL OR t.seven_day_pct IS NOT NULL)
+         AND s.status != 'stopped'
+       ORDER BY t.updated_at DESC
        LIMIT 1`
     ).get() as
       | {
