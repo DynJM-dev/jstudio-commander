@@ -4,6 +4,7 @@ import { Wifi, WifiOff, ChevronDown, MoreHorizontal, Bot } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { TunnelBadge } from '../components/shared/TunnelBadge';
+import { HeaderStatsWidget } from '../components/layout/HeaderStatsWidget';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useSessions } from '../hooks/useSessions';
 import { useAnalytics } from '../hooks/useAnalytics';
@@ -263,8 +264,9 @@ export const TopCommandBar = () => {
           )}
         </div>
 
-        {/* Right: stats + connection */}
+        {/* Right: stats widget + tokens + connection */}
         <div className="flex items-center gap-3 shrink-0 pl-4">
+          <HeaderStatsWidget />
           <TunnelBadge />
           <div className="flex items-center gap-3 font-mono-stats text-xs">
             <span style={{ color: 'var(--color-accent-light)' }}>{formatTokens(totalTokens)}</span>
