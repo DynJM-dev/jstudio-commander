@@ -269,12 +269,24 @@ teamConfigService.start();
         );
         continue;
       }
+      // Phase S.1 hotfix: a real session row may already own this pane id
+      // (e.g. the PM row for OvaGas at `04bb12d7-…` already has tmux_session=%58;
+      // the orphan-adoption path previously stored `jsc-04bb12d7` so it never
+      // collided — after the pane-id normalization in Patch 1 we must skip
+      // adoption when the pane is already claimed, or UNIQUE crashes boot.
+      if (knownTmuxNames.has(paneId)) {
+        console.log(
+          `[startup] orphan tmux ${tmuxSession.name} → pane ${paneId} already claimed by another session row; skipping adoption.`,
+        );
+        continue;
+      }
       sessionService.upsertSession({
         id,
         name: `recovered-${tmuxSession.name}`,
         tmuxSession: paneId,
         status: liveStatus,
       });
+      knownTmuxNames.add(paneId);
       console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} (${paneId}) → added as ${liveStatus}`);
     }
   }
