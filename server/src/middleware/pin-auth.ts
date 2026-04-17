@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { isLoopbackIp } from '../config.js';
 
 const CONFIG_DIR = join(homedir(), '.jstudio-commander');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
@@ -38,9 +39,15 @@ export const loadConfig = (): AppConfig => {
   }
 };
 
+// Phase P.1 C1 — IP-based local check. The previous implementation
+// trusted `request.hostname` (derived from the client-controlled Host
+// header), allowing a LAN attacker to bypass PIN auth via:
+//   curl -H "Host: localhost" http://<lan-ip>:11002/api/sessions
+// We now consult `request.ip`, which Fastify resolves from the raw
+// socket peer when `trustProxy` is false (the default we keep). No Host
+// header can fake this.
 const isLocalRequest = (request: FastifyRequest): boolean => {
-  const host = request.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host.startsWith('localhost:');
+  return isLoopbackIp(request.ip);
 };
 
 const extractPin = (request: FastifyRequest, allowQueryParam: boolean): string | null => {

@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { config } from './config.js';
+import { config, refuseBindWithoutPin, CORS_ORIGINS } from './config.js';
 import { getDb, closeDb } from './db/connection.js';
 import { acquireInstanceLock, releaseInstanceLock } from './db/instance-lock.js';
 import { detectExistingCommander, printDuplicateBanner } from './preflight.js';
@@ -54,18 +54,24 @@ const app = Fastify({
   },
 });
 
+// Phase P.1 C1 — refuse to bind a non-loopback host without a PIN. The
+// tunnel service already enforces this for Cloudflare exposure; mirror
+// the same guard at server boot so the `bindHost`/`COMMANDER_HOST`
+// opt-in requires the operator to have consciously configured a PIN.
+if (refuseBindWithoutPin(config.host, config.pin)) {
+  console.error(
+    `[startup] Refusing to bind ${config.host}: non-loopback exposure requires a PIN.\n` +
+    `Set a numeric PIN in ~/.jstudio-commander/config.json (field: "pin") or unset ` +
+    `COMMANDER_HOST / bindHost to stay on 127.0.0.1.`,
+  );
+  process.exit(1);
+}
+
 // CORS for dev — Commander's Vite runs on :11573 (unique port to
 // avoid collisions with default :5173 when other projects are also
 // in dev). Keep the legacy :5173 entry too so pre-Phase-E.2 local
 // bookmarks / tabs still authorize during the migration window.
-await app.register(cors, {
-  origin: [
-    'http://localhost:11573',
-    'http://127.0.0.1:11573',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-  ],
-});
+await app.register(cors, { origin: CORS_ORIGINS });
 
 // Serve client dist — production only. In dev, Vite serves the UI
 // from :11573 with HMR; letting fastify-static win there silently
