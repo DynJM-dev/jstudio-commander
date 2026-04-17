@@ -274,8 +274,14 @@ const reconcile = (path: string): void => {
 
   for (const member of config.members) {
     if (member.agentId === config.leadAgentId) continue;
-    if (member.isActive === false) continue;
+    // Record the member as still part of the config BEFORE the isActive gate.
+    // isActive flips to false every time the Agent goes idle — per
+    // feedback_isactive_flag_unreliable memory, that does NOT mean the
+    // teammate is dismissed. Skipping next.add here caused the seen\next
+    // diff below to dismiss healthy teammates every time they idled, then
+    // re-ingest them on the next hook event (user-visible flicker).
     next.add(member.agentId);
+    if (member.isActive === false) continue;
 
     const isFresh = !seen.has(member.agentId);
     // Orchestrators sometimes write the member row before the tmux pane
