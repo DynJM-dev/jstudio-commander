@@ -31,7 +31,7 @@ const STUCK_WORKING_WARN_MS = 3 * 60_000;
 // that exact status=idle window. 60s covers 1-2 active turns of
 // realistic Claude pacing; outside that window the poller resumes
 // normal pane-regex classification.
-const HOOK_YIELD_MS = 60_000;
+export const HOOK_YIELD_MS = 60_000;
 // Phase U Patch 2 — stale-activity force-idle threshold. A row that
 // has been in 'working' for this long WITHOUT any bumpLastActivity
 // (hook OR poller-derived flip) is treated as stuck regardless of
@@ -39,7 +39,7 @@ const HOOK_YIELD_MS = 60_000;
 // hook-yield window: any real active turn refreshes last_activity_at
 // on nearly every tool-use hook, so anything crossing 90s of silence
 // is overwhelmingly a routing/classifier gap rather than a long turn.
-const STALE_ACTIVITY_MS = 90_000;
+export const STALE_ACTIVITY_MS = 90_000;
 
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
