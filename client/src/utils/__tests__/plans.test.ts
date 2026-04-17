@@ -205,3 +205,147 @@ describe('buildPlanFromMessages', () => {
     assert.equal(result.firstCreateMessageId, null);
   });
 });
+
+// ============================================================================
+// Phase L — plan staleness age gate.
+// ============================================================================
+
+describe('getActivePlan — Phase L age gate', () => {
+  const mkCreate = (id: string, taskUuId: string, subject: string, timestamp: string) =>
+    ({
+      id, role: 'assistant' as const, parentId: null, timestamp, isSidechain: false,
+      content: [{ type: 'tool_use' as const, id: taskUuId, name: 'TaskCreate', input: { subject } }],
+    });
+
+  const mkUser = (id: string, timestamp: string, text = 'noop') => ({
+    id, role: 'user' as const, parentId: null, timestamp, isSidechain: false,
+    content: [{ type: 'text' as const, text }],
+  });
+
+  const mkResults = (pairs: Array<[string, string]>) => {
+    const m = new Map<string, { content: string; isError?: boolean }>();
+    for (const [toolUseId, content] of pairs) m.set(toolUseId, { content });
+    return m;
+  };
+
+  // Drop `buildToolResultMap` in favor of inline results so the test doesn't
+  // silently build an empty map for synthetic messages without tool_result
+  // blocks. `getActivePlan` internally calls buildToolResultMap so we need
+  // the synthetic TaskCreates to have matching tool_result messages.
+  const addToolResultsForCreates = (msgs: ChatMessage[], resultTextById: Record<string, string>) => {
+    const withResults: ChatMessage[] = [];
+    for (const msg of msgs) {
+      withResults.push(msg);
+      if (msg.role !== 'assistant') continue;
+      for (const block of msg.content) {
+        if (block.type === 'tool_use' && block.name === 'TaskCreate' && resultTextById[block.id]) {
+          withResults.push({
+            id: `${msg.id}-tr-${block.id}`,
+            role: 'user',
+            parentId: null,
+            timestamp: msg.timestamp,
+            isSidechain: false,
+            content: [{ type: 'tool_result', toolUseId: block.id, content: resultTextById[block.id]! }],
+          });
+        }
+      }
+    }
+    return withResults;
+  };
+
+  test('fresh plan (activity within window) → returned', () => {
+    // Plan touched 10 minutes ago, chat also 10 minutes ago → well under
+    // the 2h window. Widget should surface the plan normally.
+    const now = Date.parse('2026-04-17T04:00:00.000Z');
+    const tenMinAgo = new Date(now - 10 * 60 * 1000).toISOString();
+    const msgs = addToolResultsForCreates(
+      [mkCreate('m1', 'u1', 'Phase K work', tenMinAgo)],
+      { u1: 'Task #101 created successfully: Phase K work' },
+    );
+    const plan = getActivePlan(msgs, now);
+    assert.ok(plan, 'fresh plan should be returned');
+    assert.equal(plan!.plan.length, 1);
+  });
+
+  test('stale plan (activity > 2h ago with no newer chat activity) → null', () => {
+    // Plan touched 3 hours ago, no newer chat. Historical — hide.
+    const now = Date.parse('2026-04-17T04:00:00.000Z');
+    const threeHoursAgo = new Date(now - 3 * 60 * 60 * 1000).toISOString();
+    const msgs = addToolResultsForCreates(
+      [mkCreate('m1', 'u1', 'Phase E — stale work', threeHoursAgo)],
+      { u1: 'Task #42 created successfully: Phase E stuff' },
+    );
+    const plan = getActivePlan(msgs, now);
+    assert.equal(plan, null, 'stale plan should be hidden');
+  });
+
+  test('chat has moved past the plan by >2h → null (even if plan is not wall-clock stale)', () => {
+    // Plan touched at T-3h, chat has fresh activity right up to T. The
+    // GAP between latest-chat and plan-activity exceeds 2h → the session
+    // has moved on to other work; hide the plan.
+    const now = Date.parse('2026-04-17T04:00:00.000Z');
+    const planTime = new Date(now - 3 * 60 * 60 * 1000).toISOString();
+    const fiveSecAgo = new Date(now - 5000).toISOString();
+    const msgs = addToolResultsForCreates(
+      [
+        mkCreate('m1', 'u1', 'Phase E — old plan', planTime),
+        mkUser('m2', fiveSecAgo, 'doing other work now'),
+      ],
+      { u1: 'Task #42 created successfully: old' },
+    );
+    const plan = getActivePlan(msgs, now);
+    assert.equal(plan, null);
+  });
+
+  test('chat moved on by <2h → plan still returned', () => {
+    // Gap is 45 minutes — well under the window. Plan still active.
+    const now = Date.parse('2026-04-17T04:00:00.000Z');
+    const planTime = new Date(now - 45 * 60 * 1000).toISOString();
+    const msgs = addToolResultsForCreates(
+      [
+        mkCreate('m1', 'u1', 'Phase K', planTime),
+        mkUser('m2', new Date(now).toISOString(), 'status check'),
+      ],
+      { u1: 'Task #99 created successfully: Phase K' },
+    );
+    const plan = getActivePlan(msgs, now);
+    assert.ok(plan);
+  });
+
+  test('missing timestamps on all messages → gate does not fire (plan returned)', () => {
+    // buildPlanFromMessages returns lastPlanActivityMs = null when no
+    // timestamps parse. getActivePlan then skips the age check — the
+    // gate never blocks on missing data.
+    const msgs = addToolResultsForCreates(
+      [mkCreate('m1', 'u1', 'No-timestamp plan', '')],
+      { u1: 'Task #1 created successfully: no ts' },
+    );
+    const plan = getActivePlan(msgs, Date.parse('2026-04-17T04:00:00.000Z'));
+    assert.ok(plan);
+  });
+
+  test('lastPlanActivityMs reflects most recent TaskUpdate, not initial TaskCreate', () => {
+    const createTs = '2026-04-17T01:00:00.000Z';
+    const updateTs = '2026-04-17T03:00:00.000Z';
+    const msgs: ChatMessage[] = [
+      {
+        id: 'm1', role: 'assistant', parentId: null, timestamp: createTs, isSidechain: false,
+        content: [
+          { type: 'tool_use', id: 'u1', name: 'TaskCreate', input: { subject: 'Task A' } },
+        ],
+      },
+      {
+        id: 'm1-tr', role: 'user', parentId: null, timestamp: createTs, isSidechain: false,
+        content: [{ type: 'tool_result', toolUseId: 'u1', content: 'Task #7 created successfully: Task A' }],
+      },
+      {
+        id: 'm2', role: 'assistant', parentId: null, timestamp: updateTs, isSidechain: false,
+        content: [
+          { type: 'tool_use', id: 'u2', name: 'TaskUpdate', input: { taskId: '7', status: 'completed' } },
+        ],
+      },
+    ];
+    const result = buildPlanFromMessages(msgs, buildToolResultMap(msgs));
+    assert.equal(result.lastPlanActivityMs, Date.parse(updateTs));
+  });
+});

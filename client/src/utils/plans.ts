@@ -33,7 +33,7 @@ const TASK_ID_FROM_RESULT = /Task #(\d+) created/;
 export const buildPlanFromMessages = (
   messages: ChatMessage[],
   toolResults: Map<string, { content: string; isError?: boolean }>,
-): { plan: PlanTask[]; firstCreateMessageId: string | null; allDone: boolean } => {
+): { plan: PlanTask[]; firstCreateMessageId: string | null; allDone: boolean; lastPlanActivityMs: number | null } => {
   const groups = groupMessages(messages);
 
   let latestGroupIdx = -1;
@@ -52,11 +52,22 @@ export const buildPlanFromMessages = (
   }
 
   if (latestGroupIdx === -1) {
-    return { plan: [], firstCreateMessageId: null, allDone: false };
+    return { plan: [], firstCreateMessageId: null, allDone: false, lastPlanActivityMs: null };
   }
 
   const tasks = new Map<string, PlanTask>();
   let firstCreateMessageId: string | null = null;
+  // Phase L — tracks the newest message that meaningfully touched the plan
+  // (TaskCreate or TaskUpdate). getActivePlan compares this to the latest
+  // message in the session; if the plan hasn't seen activity within
+  // MAX_PLAN_AGE_MS, the widget auto-hides so historical plans don't
+  // linger for phases after the work has moved on.
+  let lastPlanActivityMs: number | null = null;
+  const touch = (msg: ChatMessage) => {
+    const ms = Date.parse(msg.timestamp);
+    if (!Number.isFinite(ms)) return;
+    if (lastPlanActivityMs === null || ms > lastPlanActivityMs) lastPlanActivityMs = ms;
+  };
 
   for (let i = latestGroupIdx; i < groups.length; i++) {
     const g = groups[i]!;
@@ -82,6 +93,7 @@ export const buildPlanFromMessages = (
             description: input.description,
             status: 'pending',
           });
+          touch(msg);
         }
 
         if (block.name === 'TaskUpdate') {
@@ -93,11 +105,13 @@ export const buildPlanFromMessages = (
           // knows about the PlanTask['status'] union).
           if (input.status === 'deleted') {
             tasks.delete(taskId);
+            touch(msg);
             continue;
           }
           const task = tasks.get(taskId)!;
           if (input.status) task.status = input.status as PlanTask['status'];
           if (input.subject) task.title = input.subject;
+          touch(msg);
         }
       }
     }
@@ -105,7 +119,7 @@ export const buildPlanFromMessages = (
 
   const plan = Array.from(tasks.values());
   const allDone = plan.length > 0 && plan.every((t) => t.status === 'completed');
-  return { plan, firstCreateMessageId, allDone };
+  return { plan, firstCreateMessageId, allDone, lastPlanActivityMs };
 };
 
 // Group consecutive messages by role. tool_result-only user messages fold into
@@ -184,13 +198,48 @@ export interface ActivePlan {
   allDone: boolean;
 }
 
+// Phase L — age gate for the widget. If the plan hasn't seen any
+// TaskCreate/TaskUpdate activity within this window AND the chat has
+// moved on to fresher turns, the plan is considered historical and
+// getActivePlan returns null so the widget hides instead of anchoring
+// to a stale phase. 2 hours balances:
+//   - long enough to not vanish mid-session during a quiet debugging
+//     stretch where no new TaskCreates fire for a while,
+//   - short enough to drop after a natural phase transition (typical
+//     phase work takes 20-60 minutes, so 2h covers ~3-4 phases).
+export const MAX_PLAN_AGE_MS = 2 * 60 * 60 * 1000;
+
 // Returns the currently-active plan (or most-recently-completed one so the
 // widget can run its fade-out). The key is the id of the message that
 // contained the plan's first TaskCreate — inline anchor for the sticky
 // IntersectionObserver and identity for "same plan vs new plan" decisions.
-export const getActivePlan = (messages: ChatMessage[]): ActivePlan | null => {
+//
+// `nowMs` is injectable for unit tests so we can pin the recency check
+// to a deterministic clock.
+export const getActivePlan = (messages: ChatMessage[], nowMs: number = Date.now()): ActivePlan | null => {
   const toolResults = buildToolResultMap(messages);
-  const { plan, firstCreateMessageId, allDone } = buildPlanFromMessages(messages, toolResults);
+  const { plan, firstCreateMessageId, allDone, lastPlanActivityMs } =
+    buildPlanFromMessages(messages, toolResults);
   if (plan.length === 0 || !firstCreateMessageId) return null;
+
+  // Phase L staleness — compare the plan's last activity to the freshest
+  // chat message timestamp. If that message is far newer than the plan's
+  // last touch, the session has moved on and the widget should retire.
+  // Missing timestamps on either side skip the gate (never block).
+  if (lastPlanActivityMs !== null) {
+    let latestChatMs = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const ts = Date.parse(messages[i]!.timestamp);
+      if (Number.isFinite(ts)) { latestChatMs = ts; break; }
+    }
+    if (latestChatMs > 0) {
+      const gap = latestChatMs - lastPlanActivityMs;
+      const clockGap = nowMs - lastPlanActivityMs;
+      // Either the chat has moved WAY past the plan OR wall-clock time
+      // passed without any activity — both mean the plan is historical.
+      if (gap > MAX_PLAN_AGE_MS || clockGap > MAX_PLAN_AGE_MS) return null;
+    }
+  }
+
   return { plan, key: firstCreateMessageId, allDone };
 };
