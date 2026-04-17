@@ -83,33 +83,45 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const attachments = useAttachments();
 
   const sendCommand = useCallback(() => {
-    if (!sessionId || !command.trim() || sending) return;
+    if (!sessionId || sending) return;
     const cmdText = command.trim();
+    const hasFiles = attachments.stagedFiles.length > 0;
+    if (!cmdText && !hasFiles) return;
 
-    // Show the message IMMEDIATELY — synchronous state updates
-    const localMsg: ChatMessage = {
-      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      parentId: null,
-      role: 'user',
-      timestamp: new Date().toISOString(),
-      content: [{ type: 'text', text: cmdText }],
-      isSidechain: false,
-    };
-    setLocalCommands((prev) => [...prev, localMsg]);
-    setCommand('');
-    setShowSlashMenu(false);
-    setSent(true);
-    setUserJustSent(true);
-    msgCountAtSendRef.current = messages.length;
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    setTimeout(() => setSent(false), 2000);
-
-    // Send to server in background — NOT awaited, so state updates flush immediately
+    // Phase S send flow: upload any staged files first so the tmux
+    // inject carries real `@<absolute-path>` references Claude Code
+    // resolves via its normal @file lookup. If upload fails we leave
+    // the typed text + staged files in place so the user can retry —
+    // no ghost message ever appears for an unsuccessful send.
     setSending(true);
-    api.post(`/sessions/${sessionId}/command`, { command: cmdText })
-      .catch(() => {})
+    attachments
+      .uploadAndBuildPayload(sessionId, cmdText)
+      .then((payload) => {
+        if (!payload) return;
+
+        const localMsg: ChatMessage = {
+          id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          parentId: null,
+          role: 'user',
+          timestamp: new Date().toISOString(),
+          content: [{ type: 'text', text: payload }],
+          isSidechain: false,
+        };
+        setLocalCommands((prev) => [...prev, localMsg]);
+        setCommand('');
+        setShowSlashMenu(false);
+        setSent(true);
+        setUserJustSent(true);
+        msgCountAtSendRef.current = messages.length;
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        setTimeout(() => setSent(false), 2000);
+        attachments.clearAll();
+
+        return api.post(`/sessions/${sessionId}/command`, { command: payload });
+      })
+      .catch(() => { /* upload or send error — leave files staged for retry */ })
       .finally(() => setSending(false));
-  }, [sessionId, command, sending]);
+  }, [sessionId, command, sending, attachments, messages.length]);
 
   // Clear local commands when switching sessions
   useEffect(() => {
@@ -687,23 +699,29 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
               </span>
             )}
 
-            {/* Send button */}
+            {/* Send button — enabled when there's text OR at least one staged file. */}
             <button
               onClick={sendCommand}
-              disabled={!command.trim() || sending}
+              disabled={(!command.trim() && attachments.stagedFiles.length === 0) || sending || attachments.isUploading}
               className="shrink-0 flex items-center justify-center rounded-lg transition-all mb-0.5"
               style={{
                 width: 36,
                 height: 36,
                 minWidth: 36,
                 minHeight: 36,
-                background: command.trim() ? 'var(--color-accent)' : 'transparent',
-                color: command.trim() ? '#fff' : 'var(--color-text-tertiary)',
-                cursor: command.trim() ? 'pointer' : 'default',
-                boxShadow: command.trim() ? '0 0 12px rgba(14, 124, 123, 0.3)' : 'none',
+                background: (command.trim() || attachments.stagedFiles.length > 0)
+                  ? 'var(--color-accent)' : 'transparent',
+                color: (command.trim() || attachments.stagedFiles.length > 0)
+                  ? '#fff' : 'var(--color-text-tertiary)',
+                cursor: (command.trim() || attachments.stagedFiles.length > 0)
+                  ? 'pointer' : 'default',
+                boxShadow: (command.trim() || attachments.stagedFiles.length > 0)
+                  ? '0 0 12px rgba(14, 124, 123, 0.3)' : 'none',
               }}
             >
-              {sent ? <Check size={16} /> : <SendHorizontal size={16} />}
+              {attachments.isUploading
+                ? <Loader2 size={16} className="animate-spin" />
+                : sent ? <Check size={16} /> : <SendHorizontal size={16} />}
             </button>
           </div>
 
