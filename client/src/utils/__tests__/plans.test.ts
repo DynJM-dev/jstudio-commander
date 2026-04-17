@@ -75,10 +75,10 @@ describe('buildPlanFromMessages', () => {
     assert.doesNotThrow(() => getActivePlan(parseFixture(fixture('plan-with-deleted.jsonl'))));
   });
 
-  test('new plan after allDone resets the running Map', () => {
-    // Synthetic — two TaskCreates + their completions, then a NEW TaskCreate.
-    // The third create should start a fresh plan (firstCreateMessageId
-    // shifts to the new message).
+  test('new plan in a later group supersedes the earlier one', () => {
+    // Synthetic — two TaskCreates + their completions in assistant group A,
+    // then a user message, then a NEW TaskCreate in assistant group B. The
+    // later group defines the current plan (Phase H recency rule).
     const tr = new Map<string, { content: string; isError?: boolean }>();
     tr.set('u1', { content: 'Task #1 created successfully: alpha' });
     tr.set('u2', { content: 'Task #2 created successfully: beta' });
@@ -95,6 +95,10 @@ describe('buildPlanFromMessages', () => {
         ],
       },
       {
+        id: 'u-proceed', role: 'user', parentId: null, timestamp: '', isSidechain: false,
+        content: [{ type: 'text', text: 'next phase' }],
+      },
+      {
         id: 'm2', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
         content: [
           { type: 'tool_use', id: 'u3', name: 'TaskCreate', input: { subject: 'gamma' } },
@@ -108,6 +112,83 @@ describe('buildPlanFromMessages', () => {
     assert.equal(result.plan[0]!.title, 'gamma');
     assert.equal(result.firstCreateMessageId, 'm2');
     assert.equal(result.allDone, false);
+  });
+
+  test('multiple TaskCreates in the same group merge into one plan', () => {
+    // Per Phase H spec: "Multiple TaskCreate bundles in the SAME assistant
+    // group → treat as one plan (build from all of them)".
+    const tr = new Map<string, { content: string; isError?: boolean }>();
+    tr.set('u1', { content: 'Task #1 created successfully: alpha' });
+    tr.set('u2', { content: 'Task #2 created successfully: beta' });
+
+    const msgs: ChatMessage[] = [
+      {
+        id: 'm1', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
+        content: [{ type: 'tool_use', id: 'u1', name: 'TaskCreate', input: { subject: 'alpha' } }],
+      },
+      {
+        id: 'm2', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
+        content: [{ type: 'tool_use', id: 'u2', name: 'TaskCreate', input: { subject: 'beta' } }],
+      },
+    ];
+
+    const result = buildPlanFromMessages(msgs, tr);
+    assert.equal(result.plan.length, 2, 'consecutive assistant msgs = same group = merged plan');
+    assert.deepEqual(result.plan.map((t) => t.title).sort(), ['alpha', 'beta']);
+    assert.equal(result.firstCreateMessageId, 'm1');
+  });
+
+  test('latest plan with all tasks completed still returns (widget can fade)', () => {
+    // Per Phase H spec: "Latest plan has all tasks completed → still returns
+    // it (so widget can show+fade correctly)".
+    const tr = new Map<string, { content: string; isError?: boolean }>();
+    tr.set('u1', { content: 'Task #1 created successfully: alpha' });
+
+    const msgs: ChatMessage[] = [
+      {
+        id: 'm1', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
+        content: [
+          { type: 'tool_use', id: 'u1', name: 'TaskCreate', input: { subject: 'alpha' } },
+          { type: 'tool_use', id: 'x1', name: 'TaskUpdate', input: { taskId: '1', status: 'completed' } },
+        ],
+      },
+    ];
+
+    const result = buildPlanFromMessages(msgs, tr);
+    assert.equal(result.plan.length, 1);
+    assert.equal(result.plan[0]!.status, 'completed');
+    assert.equal(result.allDone, true);
+    assert.equal(result.firstCreateMessageId, 'm1');
+  });
+
+  test('TaskUpdates in groups AFTER the latest-create group still apply', () => {
+    // Recency is set by the TaskCreate group; later groups' TaskUpdates on
+    // those ids continue to resolve. Mirrors the real cross-group flow where
+    // Claude completes tasks over several "Proceed" cycles.
+    const tr = new Map<string, { content: string; isError?: boolean }>();
+    tr.set('u1', { content: 'Task #1 created successfully: alpha' });
+
+    const msgs: ChatMessage[] = [
+      {
+        id: 'm1', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
+        content: [{ type: 'tool_use', id: 'u1', name: 'TaskCreate', input: { subject: 'alpha' } }],
+      },
+      {
+        id: 'u-proceed', role: 'user', parentId: null, timestamp: '', isSidechain: false,
+        content: [{ type: 'text', text: 'continue' }],
+      },
+      {
+        id: 'm2', role: 'assistant', parentId: null, timestamp: '', isSidechain: false,
+        content: [
+          { type: 'tool_use', id: 'x1', name: 'TaskUpdate', input: { taskId: '1', status: 'completed' } },
+        ],
+      },
+    ];
+
+    const result = buildPlanFromMessages(msgs, tr);
+    assert.equal(result.plan.length, 1);
+    assert.equal(result.plan[0]!.status, 'completed');
+    assert.equal(result.firstCreateMessageId, 'm1', 'anchor stays at the TaskCreate group');
   });
 
   test('TaskCreate without tool_result is skipped (unresolved id)', () => {

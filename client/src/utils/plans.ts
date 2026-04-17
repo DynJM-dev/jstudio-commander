@@ -14,67 +14,91 @@ export interface MessageGroup {
 // Matches Claude Code's TaskCreate tool_result: "Task #<N> created successfully: ..."
 const TASK_ID_FROM_RESULT = /Task #(\d+) created/;
 
-// Walks the full message stream and builds the session's active plan.
-// Per-group walking (old impl) breaks the moment an approval/"Proceed" message
-// splits the assistant turn: TaskCreates end up in one group and subsequent
-// TaskUpdates in later groups, so the per-group plan for each is incomplete.
-// A session-wide walk keeps one running Map of tasks keyed by real ID, and
-// resets it only when a NEW TaskCreate appears after all existing tasks are
-// completed — that's how we distinguish "next phase" from "update to the
-// current plan".
+// Builds the session's CURRENT plan — the plan whose TaskCreate bundles live
+// in the most recent assistant group. Earlier plans are historical; once
+// Claude has moved on to a new assistant turn with fresh TaskCreates, the
+// prior plan is no longer "active" regardless of its completion state.
+// Rationale: the old "reset when everything completes" heuristic mis-fires
+// on plans that were abandoned mid-phase (some incomplete tasks leftover)
+// and got merged into the next plan, making the widget report stale phases
+// long after Claude moved on (Phase H bug).
+//
+// Rules:
+// 1. Latest assistant group containing at least one TaskCreate defines the
+//    plan's identity (firstCreateMessageId) and its task set.
+// 2. Multiple TaskCreate bundles inside the same group merge into one plan.
+// 3. TaskUpdates from that group and any subsequent groups apply to those
+//    task IDs — completed tasks still belong to this plan, which lets the
+//    widget run its allDone auto-fade without a lie about recency.
 export const buildPlanFromMessages = (
   messages: ChatMessage[],
   toolResults: Map<string, { content: string; isError?: boolean }>,
 ): { plan: PlanTask[]; firstCreateMessageId: string | null; allDone: boolean } => {
-  let tasks = new Map<string, PlanTask>();
+  const groups = groupMessages(messages);
+
+  let latestGroupIdx = -1;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const g = groups[i];
+    if (!g || g.role !== 'assistant') continue;
+    const hasCreate = g.messages.some(
+      (m) =>
+        m.role === 'assistant' &&
+        m.content.some((b) => b.type === 'tool_use' && b.name === 'TaskCreate'),
+    );
+    if (hasCreate) {
+      latestGroupIdx = i;
+      break;
+    }
+  }
+
+  if (latestGroupIdx === -1) {
+    return { plan: [], firstCreateMessageId: null, allDone: false };
+  }
+
+  const tasks = new Map<string, PlanTask>();
   let firstCreateMessageId: string | null = null;
 
-  for (const msg of messages) {
-    if (msg.role !== 'assistant') continue;
-    for (const block of msg.content) {
-      if (block.type !== 'tool_use') continue;
+  for (let i = latestGroupIdx; i < groups.length; i++) {
+    const g = groups[i]!;
+    for (const msg of g.messages) {
+      if (msg.role !== 'assistant') continue;
+      for (const block of msg.content) {
+        if (block.type !== 'tool_use') continue;
 
-      if (block.name === 'TaskCreate') {
-        const input = block.input as { subject?: string; description?: string };
-        const result = toolResults.get(block.id);
-        const match = result?.content.match(TASK_ID_FROM_RESULT);
-        if (!match) continue;
-        const id = match[1]!;
+        // TaskCreate is only accepted from the latest group. Older groups'
+        // TaskCreates are historical — they belong to prior plans that are
+        // no longer current.
+        if (block.name === 'TaskCreate' && i === latestGroupIdx) {
+          const input = block.input as { subject?: string; description?: string };
+          const result = toolResults.get(block.id);
+          const match = result?.content.match(TASK_ID_FROM_RESULT);
+          if (!match) continue;
+          const id = match[1]!;
 
-        // New-plan detection: if everything in the running plan is already
-        // completed, the next TaskCreate starts a fresh plan. Without this,
-        // two sequential plans would visually merge into one growing list.
-        if (tasks.size > 0) {
-          const allComplete = Array.from(tasks.values()).every((t) => t.status === 'completed');
-          if (allComplete) {
-            tasks = new Map();
-            firstCreateMessageId = null;
+          if (!firstCreateMessageId) firstCreateMessageId = msg.id;
+          tasks.set(id, {
+            id,
+            title: input.subject ?? 'Task',
+            description: input.description,
+            status: 'pending',
+          });
+        }
+
+        if (block.name === 'TaskUpdate') {
+          const input = block.input as { taskId?: string; status?: string; subject?: string };
+          const taskId = input.taskId;
+          if (!taskId || !tasks.has(taskId)) continue;
+          // Claude Code emits 'deleted' when a task is permanently removed —
+          // drop it from the plan so it never hits the renderer (which only
+          // knows about the PlanTask['status'] union).
+          if (input.status === 'deleted') {
+            tasks.delete(taskId);
+            continue;
           }
+          const task = tasks.get(taskId)!;
+          if (input.status) task.status = input.status as PlanTask['status'];
+          if (input.subject) task.title = input.subject;
         }
-
-        if (!firstCreateMessageId) firstCreateMessageId = msg.id;
-        tasks.set(id, {
-          id,
-          title: input.subject ?? 'Task',
-          description: input.description,
-          status: 'pending',
-        });
-      }
-
-      if (block.name === 'TaskUpdate') {
-        const input = block.input as { taskId?: string; status?: string; subject?: string };
-        const taskId = input.taskId;
-        if (!taskId || !tasks.has(taskId)) continue;
-        // Claude Code emits 'deleted' when a task is permanently removed —
-        // drop it from the plan so it never hits the renderer (which only
-        // knows about the PlanTask['status'] union).
-        if (input.status === 'deleted') {
-          tasks.delete(taskId);
-          continue;
-        }
-        const task = tasks.get(taskId)!;
-        if (input.status) task.status = input.status as PlanTask['status'];
-        if (input.subject) task.title = input.subject;
       }
     }
   }
