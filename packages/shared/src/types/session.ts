@@ -57,6 +57,12 @@ export interface Session {
   // switches, or any other rotation produces additional entries here
   // rather than replacing the previous transcript.
   transcriptPaths: string[];
+  // Phase N.0 — true when Commander inferred a /compact just happened
+  // (transcript rotation detected while the last tick was ≥90%) AND no
+  // fresh tick has arrived since. Clients use this to suppress the
+  // stale context-% figure until the next statusline tick overwrites
+  // it. Flipped back to false the moment any tick ingests.
+  postCompactUntilNextTick: boolean;
   // Live pane activity — populated on route boundaries (GET /sessions/:id
   // and the teammates list) by re-capturing the tmux pane tail. Null when
   // nothing parses, when the session is stopped, or when the list endpoint

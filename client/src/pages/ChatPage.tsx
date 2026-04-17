@@ -14,7 +14,7 @@ import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { useSessionTick } from '../hooks/useSessionTick';
 import { ContextLowToast } from '../components/shared/ContextLowToast';
-import { bandForPercentage, bandColor } from '../utils/contextBands';
+import { bandForPercentage, bandColor, resolveVisibleCtxPct } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 
@@ -42,8 +42,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // Phase M — live session telemetry from the statusline forwarder.
   // Drives both the context-band color strip (when present) and the
   // context-low toast that fires on upward band crossings.
-  const tick = useSessionTick(sessionId);
-  const ctxPct = tick?.contextWindow.usedPercentage ?? null;
+  // Phase N.0 — postCompact suppresses the ctx% figure when Commander
+  // has inferred a /compact rotation but no fresh tick has arrived yet;
+  // trusting the stale pre-compact tick would show "100% full" on an
+  // empty context.
+  const { tick, postCompact } = useSessionTick(sessionId);
+  const ctxPct = resolveVisibleCtxPct(tick?.contextWindow.usedPercentage, postCompact);
   const ctxBand = bandForPercentage(ctxPct);
 
   // Force re-sync — clears any lingering local-command bubbles, refetches
@@ -391,6 +395,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           shimmerState={shimmerState}
           sessionActivity={session?.activity ?? null}
           sessionTick={tick}
+          postCompact={postCompact}
         />
       )}
 
@@ -436,7 +441,13 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
             opacity: ctxBand === 'unknown' ? 0.25 : 0.85,
             transition: 'background 200ms ease-out',
           }}
-          title={ctxPct !== null ? `Context ${Math.round(ctxPct)}% — band ${ctxBand}` : 'Context: no tick yet'}
+          title={
+            ctxPct !== null
+              ? `Context ${Math.round(ctxPct)}% — band ${ctxBand}`
+              : postCompact
+                ? 'Context: post-compact — awaiting next tick'
+                : 'Context: no tick yet'
+          }
         />
       )}
 

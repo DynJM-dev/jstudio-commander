@@ -114,6 +114,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   teamName: (row.team_name as string | null) ?? null,
   sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
   transcriptPaths: parseTranscriptPaths(row.transcript_paths),
+  postCompactUntilNextTick: ((row.post_compact_until_next_tick as number | null) ?? 0) === 1,
 });
 
 // Column mapping kept in one place so every write surface applies the same
@@ -141,6 +142,7 @@ interface UpsertSessionInput {
   transcriptPath?: string | null;
   transcriptPaths?: string[];
   stationId?: string | null;
+  postCompactUntilNextTick?: boolean;
 }
 
 // Columns whose values aren't primitive strings/numbers — SQLite doesn't
@@ -148,6 +150,7 @@ interface UpsertSessionInput {
 // read (rowToSession handles the parse side).
 const serializeCol = (col: string, value: unknown): unknown => {
   if (col === 'transcript_paths' && Array.isArray(value)) return JSON.stringify(value);
+  if (col === 'post_compact_until_next_tick' && typeof value === 'boolean') return value ? 1 : 0;
   return value;
 };
 
@@ -169,6 +172,7 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
   { col: 'parent_session_id', key: 'parentSessionId' },
   { col: 'team_name',         key: 'teamName' },
   { col: 'session_type',      key: 'sessionType' },
+  { col: 'post_compact_until_next_tick', key: 'postCompactUntilNextTick' },
 ];
 
 export const sessionService = {
@@ -360,9 +364,58 @@ export const sessionService = {
     const existing = parseTranscriptPaths(row.transcript_paths);
     if (existing.includes(path)) return false;
     const next = [...existing, path];
+
+    // Phase N.0 — post-compact inference. A transcript ROTATION (existing
+    // list already has ≥1 path when a new one is being appended) combined
+    // with a prior tick at ≥90% context is a strong signal that /compact
+    // just ran. The statusline won't re-tick until the NEXT user turn, so
+    // Commander must carry the inference forward via a sticky flag that
+    // clients read to suppress the stale 100% figure.
+    //
+    // The 90% threshold is deliberately generous: /compact typically
+    // fires around 95-100%, but a user running at ~90% who manually
+    // /clears is close enough that the "trust the stale tick" failure
+    // mode is the same, and the false-positive cost is low — one UI
+    // refresh cycle where ctx reads as "fresh".
+    const isRotation = existing.length > 0;
+    if (isRotation) {
+      const priorTick = db.prepare(
+        'SELECT context_used_pct FROM session_ticks WHERE session_id = ?',
+      ).get(sessionId) as { context_used_pct: number | null } | undefined;
+      const priorPct = priorTick?.context_used_pct;
+      if (priorPct !== undefined && priorPct !== null && priorPct >= 90) {
+        db.prepare(
+          "UPDATE sessions SET transcript_paths = ?, post_compact_until_next_tick = 1, updated_at = datetime('now') WHERE id = ?",
+        ).run(JSON.stringify(next), sessionId);
+        console.log(
+          `[post-compact] session ${sessionId.slice(0, 30)} flagged — prior tick ${priorPct.toFixed(1)}% + transcript rotation`,
+        );
+        return true;
+      }
+    }
+
     db.prepare(
       "UPDATE sessions SET transcript_paths = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(JSON.stringify(next), sessionId);
+    return true;
+  },
+
+  // Phase N.0 — called by session-tick.service.ingest on every real tick
+  // arrival. Returns true when a flag was actually cleared (caller should
+  // emit a session:updated WS event); false when the row already had the
+  // flag off (no-op so we don't spam events). Separate from the generic
+  // upsertSession path to keep the hot tick path fast — no sparse UPDATE
+  // assembly, just a targeted write.
+  clearPostCompactFlag(sessionId: string): boolean {
+    const db = getDb();
+    const row = db.prepare(
+      'SELECT post_compact_until_next_tick FROM sessions WHERE id = ?',
+    ).get(sessionId) as { post_compact_until_next_tick: number | null } | undefined;
+    if (!row) return false;
+    if ((row.post_compact_until_next_tick ?? 0) === 0) return false;
+    db.prepare(
+      "UPDATE sessions SET post_compact_until_next_tick = 0, updated_at = datetime('now') WHERE id = ?",
+    ).run(sessionId);
     return true;
   },
 

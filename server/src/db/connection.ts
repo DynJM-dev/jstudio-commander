@@ -50,6 +50,15 @@ export const getDb = (): Database.Database => {
     db.exec("ALTER TABLE sessions ADD COLUMN transcript_paths TEXT NOT NULL DEFAULT '[]'");
     console.log('[db] Migration: added transcript_paths column to sessions');
   }
+  // Phase N.0 — post-compact inference flag. Set when a transcript
+  // rotation is detected while the last tick was ≥90% (strong signal
+  // of /compact). Cleared by the next statusline tick ingest. Clients
+  // read it to suppress the stale context-% + LiveActivityRow until
+  // real telemetry arrives.
+  if (!cols.some((c) => c.name === 'post_compact_until_next_tick')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN post_compact_until_next_tick INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] Migration: added post_compact_until_next_tick column to sessions');
+  }
 
   // #230 — project tech-stack pills + recent commits persistence.
   const projCols = db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;

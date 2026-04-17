@@ -2,6 +2,7 @@ import type { SessionTick, StatuslineRawPayload } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
 import { eventBus } from '../ws/event-bus.js';
+import { sessionService } from './session.service.js';
 
 // Phase M — in-memory dedup of rapid-fire ticks. Claude Code throttles
 // at 300ms so we're primarily guarding against a misbehaving forwarder
@@ -168,6 +169,18 @@ export const sessionTickService = {
     });
 
     eventBus.emitSessionTick(tick.commanderSessionId, tick);
+
+    // Phase N.0 — real tick arrival invalidates any outstanding
+    // post-compact inference. Clear the flag and broadcast session:updated
+    // so every client that reads postCompactUntilNextTick (useSessionTick,
+    // session list reducers) can drop the "fresh" placeholder and trust
+    // the new telemetry immediately.
+    const cleared = sessionService.clearPostCompactFlag(tick.commanderSessionId);
+    if (cleared) {
+      const updatedSession = sessionService.getSession(tick.commanderSessionId);
+      if (updatedSession) eventBus.emitSessionUpdated(updatedSession);
+    }
+
     return tick;
   },
 
