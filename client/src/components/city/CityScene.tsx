@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Session, WSEvent } from '@commander/shared';
 import { Building } from './Building';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { useSessionTree } from '../../hooks/useSessionTree';
 
 interface CitySceneProps {
   sessions: Session[];
@@ -71,31 +72,13 @@ export const CityScene = ({ sessions }: CitySceneProps) => {
   // city skyline reflects currently-running work, so stopped sessions
   // are excluded rather than rendered as dark buildings. Per-user
   // request on #214 follow-up: dead dupes from rotations shouldn't
-  // clutter the view.
-  const { topLevel, teammatesByParent } = useMemo(() => {
-    const live = sessions.filter((s) => s.status !== 'stopped' && !s.stoppedAt);
-    const byId = new Map<string, Session>();
-    const byClaude = new Map<string, Session>();
-    for (const s of live) {
-      byId.set(s.id, s);
-      if (s.claudeSessionId) byClaude.set(s.claudeSessionId, s);
-    }
-    const childIds = new Set<string>();
-    const childrenOf = new Map<string, Session[]>();
-    for (const s of live) {
-      if (!s.parentSessionId) continue;
-      const parent = byId.get(s.parentSessionId) ?? byClaude.get(s.parentSessionId);
-      if (!parent) continue;
-      childIds.add(s.id);
-      const bucket = childrenOf.get(parent.id) ?? [];
-      bucket.push(s);
-      childrenOf.set(parent.id, bucket);
-    }
-    const top = live
-      .filter((s) => !childIds.has(s.id))
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    return { topLevel: top, teammatesByParent: childrenOf };
-  }, [sessions]);
+  // clutter the view. Tree derivation is shared with SessionsPage via
+  // useSessionTree (#221).
+  const liveSessions = useMemo(
+    () => sessions.filter((s) => s.status !== 'stopped' && !s.stoppedAt),
+    [sessions],
+  );
+  const { topLevel, teammatesByParent } = useSessionTree(liveSessions);
 
   const sceneCls = ['city-scene', visible ? 'city-running' : ''].filter(Boolean).join(' ');
 

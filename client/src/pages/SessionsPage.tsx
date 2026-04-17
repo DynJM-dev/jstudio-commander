@@ -1,11 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 import { Monitor, Plus, ChevronDown, ChevronRight } from 'lucide-react';
-import type { Session } from '@commander/shared';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
 import { SessionCard } from '../components/sessions/SessionCard';
 import { CreateSessionModal } from '../components/sessions/CreateSessionModal';
 import { useSessions } from '../hooks/useSessions';
+import { useSessionTree } from '../hooks/useSessionTree';
 import { buildDisplayNameMap } from '../utils/sessionDisplay';
 
 const M = 'Montserrat, sans-serif';
@@ -25,42 +25,9 @@ export const SessionsPage = () => {
   // dead namesake both render with the · <id> suffix.
   const displayNames = useMemo(() => buildDisplayNameMap(sessions), [sessions]);
 
-  // Build a parent → teammates map, then a top-level list excluding teammates.
-  // Sessions link to parents by either Commander UUID (parentSessionId matches
-  // another session.id) or by Claude's leadSessionId (matches claudeSessionId
-  // on a Commander row) — match both forms so the tree holds either way.
-  const { topLevel, teammatesByParent } = useMemo(() => {
-    const byCommanderId = new Map<string, Session>();
-    const byClaudeId = new Map<string, Session>();
-    for (const s of activeSessions) {
-      byCommanderId.set(s.id, s);
-      if (s.claudeSessionId) byClaudeId.set(s.claudeSessionId, s);
-    }
-
-    const childIds = new Set<string>();
-    const childrenOf = new Map<string, Session[]>();
-
-    for (const s of activeSessions) {
-      if (!s.parentSessionId) continue;
-      const parent = byCommanderId.get(s.parentSessionId) ?? byClaudeId.get(s.parentSessionId);
-      if (!parent) continue;
-      childIds.add(s.id);
-      const bucket = childrenOf.get(parent.id) ?? [];
-      bucket.push(s);
-      childrenOf.set(parent.id, bucket);
-    }
-
-    const top = activeSessions
-      .filter((s) => !childIds.has(s.id))
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-    // Sort each bucket by role then name for stable rendering.
-    for (const bucket of childrenOf.values()) {
-      bucket.sort((a, b) => (a.agentRole ?? '').localeCompare(b.agentRole ?? '') || a.name.localeCompare(b.name));
-    }
-
-    return { topLevel: top, teammatesByParent: childrenOf };
-  }, [activeSessions]);
+  // Parent → teammates derivation lives in useSessionTree (#221) so
+  // SessionsPage and CityScene share one memoization per session list.
+  const { topLevel, teammatesByParent } = useSessionTree(activeSessions);
 
   const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => {
     await createSession(opts);
