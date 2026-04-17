@@ -13,6 +13,7 @@ import { StickyPlanWidget } from '../components/chat/StickyPlanWidget';
 import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { useSessionTick } from '../hooks/useSessionTick';
+import { useHeartbeat } from '../hooks/useHeartbeat';
 import { ContextLowToast } from '../components/shared/ContextLowToast';
 import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
@@ -45,6 +46,11 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const tick = useSessionTick(sessionId);
   const ctxPct = tick?.contextWindow.usedPercentage ?? null;
   const ctxBand = bandForPercentage(ctxPct);
+  // Phase N.0 Patch 3 — if no heartbeat in 30s, we suppress the
+  // LiveActivityRow so the UI doesn't keep claiming a mid-turn on a
+  // quiescent session. Seeded from session.lastActivityAt so the gate
+  // survives across remounts without re-watching the WS stream.
+  const { isStale: heartbeatStale } = useHeartbeat(sessionId, session?.lastActivityAt);
 
   // Force re-sync — clears any lingering local-command bubbles, refetches
   // chat + stats, and fire-and-forget POSTs /sessions/:id/rescan so the
@@ -391,6 +397,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           shimmerState={shimmerState}
           sessionActivity={session?.activity ?? null}
           sessionTick={tick}
+          heartbeatStale={heartbeatStale}
         />
       )}
 

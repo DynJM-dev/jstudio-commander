@@ -5,10 +5,23 @@ import { AnimatePresence } from 'framer-motion';
 import type { Session } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 import { StatusBadge } from '../shared/StatusBadge';
+import { HeartbeatDot } from '../shared/HeartbeatDot';
 import { CommandInput } from './CommandInput';
 import { SessionActions } from './SessionActions';
 import { TeammateRow } from './TeammateRow';
 import { getDisplayStatus } from '../../utils/sessionDisplay';
+import { useHeartbeat } from '../../hooks/useHeartbeat';
+
+// Phase N.0 Patch 3 — when a session hasn't heartbeated in >30s, force
+// the visual badge to `idle` regardless of stored status. DOES NOT
+// mutate the DB; the server remains authoritative. Guards against the
+// case where the pane-regex classifier is wedged on `working` /
+// `waiting` for a session that is actually quiescent.
+const applyStaleOverride = (rawStatus: Session['status'], isStale: boolean): Session['status'] => {
+  if (!isStale) return rawStatus;
+  if (rawStatus === 'working' || rawStatus === 'waiting') return 'idle';
+  return rawStatus;
+};
 
 const M = 'Montserrat, sans-serif';
 
@@ -90,14 +103,23 @@ export const SessionCard = ({
   const label = displayName ?? session.name;
   const navigate = useNavigate();
   const isStopped = session.status === 'stopped';
+  // Phase N.0 Patch 3 — apply stale-override BEFORE computing any
+  // status-derived visual state. If no heartbeat in 30s, we pretend
+  // working/waiting are idle for ALL downstream derivations (status
+  // badge, halos, activity row).
+  const { isStale: heartbeatStale } = useHeartbeat(session.id, session.lastActivityAt);
+  const effectiveStatus = applyStaleOverride(session.status, heartbeatStale);
   // Glow the parent card yellow when its teammate needs attention — makes
   // the "someone is waiting on you" signal bubble up to the top of the list.
   const anyTeammateWaiting = teammates?.some((t) => t.status === 'waiting') ?? false;
-  const isWaiting = session.status === 'waiting' || anyTeammateWaiting;
+  const isWaiting = effectiveStatus === 'waiting' || anyTeammateWaiting;
   // Light-blue "teammate-active" halo when the PM pane is idle but a
   // teammate is actively working. Only renders when NOT already glowing
   // yellow for waiting — waiting is higher priority (user must act).
-  const displayStatus = getDisplayStatus(session, teammates ?? null);
+  const displayStatus = getDisplayStatus(
+    { ...session, status: effectiveStatus },
+    teammates ?? null,
+  );
   const isTeammateActive = !isWaiting && displayStatus === 'teammate-active';
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.name);
@@ -143,7 +165,10 @@ export const SessionCard = ({
           className="flex items-center justify-between mb-2 cursor-pointer"
           onClick={handleCardClick}
         >
-          <StatusBadge status={session.status} showLabel size="sm" />
+          <div className="flex items-center gap-2 min-w-0">
+            <StatusBadge status={effectiveStatus} showLabel size="sm" />
+            <HeartbeatDot sessionId={session.id} initialTs={session.lastActivityAt} />
+          </div>
           <span
             className="font-mono-stats text-xs"
             style={{ color: 'var(--color-text-tertiary)' }}
@@ -267,7 +292,7 @@ export const SessionCard = ({
             (e.g. "✽ Ruminating 1m 49s · 430 tokens"). Hidden when nothing
             parses; falls back to the lastMessagePreview path below when
             activity is absent so quiet sessions still get a preview line. */}
-        {session.activity && session.status === 'working' && (
+        {session.activity && effectiveStatus === 'working' && (
           <p
             className="text-xs mt-2 line-clamp-1"
             style={{ color: 'var(--color-accent-light)', fontFamily: M }}
@@ -281,7 +306,7 @@ export const SessionCard = ({
         )}
 
         {/* Last message preview — caller-supplied; muted single line. */}
-        {lastMessagePreview && !(session.activity && session.status === 'working') && (
+        {lastMessagePreview && !(session.activity && effectiveStatus === 'working') && (
           <p
             className="text-xs mt-2 line-clamp-1 italic"
             style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}

@@ -257,6 +257,11 @@ interface ChatThreadProps {
   // statusline-derived tokens + context %. Either can be absent.
   sessionActivity?: SessionActivity | null;
   sessionTick?: SessionTick | null;
+  // Phase N.0 Patch 3 — suppress LiveActivityRow entirely when the
+  // session hasn't heartbeated in >30s. Regardless of what the stored
+  // status says, a session with no inbound signals for that long is
+  // not actually working.
+  heartbeatStale?: boolean;
 }
 
 export const ChatThread = ({
@@ -271,6 +276,7 @@ export const ChatThread = ({
   shimmerState = 'thinking',
   sessionActivity,
   sessionTick,
+  heartbeatStale = false,
 }: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -574,7 +580,7 @@ export const ChatThread = ({
                   <LiveActivityRow
                     activity={sessionActivity}
                     tick={sessionTick ?? null}
-                    visible={isWorking}
+                    visible={isWorking && !heartbeatStale}
                   />
 
                   <div
