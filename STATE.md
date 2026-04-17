@@ -19,7 +19,7 @@
 > outside the repo) to match, otherwise Claude Code hook events will
 > be POSTed at the wrong port.
 
-- HEAD: `2f04086` (Phase G.5: larger sidebar teammate icons). Phase G commits: `0b0d632` (Bundle 3 dismiss button), `3ba49a9` (Bundles 1+2+4 cross-session guard + widened adoption + startup heal), `2f04086` (Bundle 5 icons). Phase F commits: `457d9e5` `d357f03` `b9e7bc4` `654cb05` (Bundle 1 structured chat), `2c0e063` (Bundle 2 auto-split), `467adce` (Bundle 3 pane adoption), `a1aa074` (Bundle 6 bypass-perm kill-switch), `ad163ba` (Bundle 5 team-lead adoption + coder naming). Phase E.2: `58434d9` (Vite → 11573 strictPort). Phase E.1: `f5da3ba` (dev-mode redirect). Phase E: `9cf67af` `02ae1ef` `23ea243` `6fda3c3` + `f956fcc` `15fe784` `ab72eec` `05ebbcd` `24f21f9` `26cfe2b` `603b398` `3d0de45` `eb9f85f` `4a040b8` `8089542`. Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
+- HEAD: `a3ea2fa` (Phase G.6: top-bar filter + teammate count badge). Phase G commits: `0b0d632` (Bundle 3 dismiss button), `3ba49a9` (Bundles 1+2+4 cross-session guard + widened adoption + startup heal), `2f04086` (Bundle 5 icons), `a3ea2fa` (Bundle 6 top-bar filter + bot count badge). Phase F commits: `457d9e5` `d357f03` `b9e7bc4` `654cb05` (Bundle 1 structured chat), `2c0e063` (Bundle 2 auto-split), `467adce` (Bundle 3 pane adoption), `a1aa074` (Bundle 6 bypass-perm kill-switch), `ad163ba` (Bundle 5 team-lead adoption + coder naming). Phase E.2: `58434d9` (Vite → 11573 strictPort). Phase E.1: `f5da3ba` (dev-mode redirect). Phase E: `9cf67af` `02ae1ef` `23ea243` `6fda3c3` + `f956fcc` `15fe784` `ab72eec` `05ebbcd` `24f21f9` `26cfe2b` `603b398` `3d0de45` `eb9f85f` `4a040b8` `8089542`. Phase C: `0970950` `dae794f`. Phase B: `6177fe2` `ad3d7fe`. Phase A: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **11002** (new default as of Phase D, migrated from 3002). Override via `~/.jstudio-commander/config.json` still honored. · Vite: **5173**
 - Blockers: none
@@ -37,7 +37,7 @@
 - [x] **Phase D — Launch UX hardening (signed health + preflight + macOS .app + port 11002) — Coder-12 (4 commits, 2026-04-17)**
 - [x] **Phase E — Finish 4.7 migration + NODE_ENV gate + Command Center rebrand — Coder-12 (11 commits, 2026-04-17)**
 - [x] **Phase F — Structured chat messages + auto-split + pane adoption + prompt-detection kill-switch + team-lead adoption + coder naming — Coder-14 (9 commits, 2026-04-17)**
-- [x] **Phase G — Dismiss button + cross-session pane rejection + widened adoption cwd + startup heal + larger teammate icons — Coder-14 (3 commits, 2026-04-17)**
+- [x] **Phase G — Dismiss button + cross-session pane rejection + widened adoption cwd + startup heal + larger teammate icons + top-bar filter + bot count badge — Coder-14 (4 commits, 2026-04-17)**
 
 ## Feature Wave 2 Highlights
 

@@ -692,9 +692,22 @@ Plus a polish ask: make the minimized teammate icons on the right strip more vis
 - **Adoption doesn't handle renames.** If a PM is at `/A/apps/jstudio-base` and later moves to `/B/apps/jstudio-base`, the adoption query keys on project_path and won't find the old row. Acceptable because rename is rare; heal manually.
 - **Descendant-match can adopt across projects only if user's workspace layout is unusual.** The trailing-slash boundary is the safeguard. Document the rule in STATE.md if users report cross-adoption.
 
+### Bundle 6 — top-bar filter + teammate count badge (2026-04-17 follow-on)
+
+User asked: "Only have main PMs or Raw sessions on the top, not coders or spawned teammates. Add a small robot icon next to the session button that represents how many teammates that session has."
+
+- `client/src/layouts/TopCommandBar.tsx` — new `topBarSessions` derived list filters on `!parentSessionId && (sessionType === 'pm' || 'raw')`. Belt-and-suspenders against a misclassified row.
+- `teammateCountByParent` Map keyed by parent session id, derived from the same WS-driven `useSessions` stream — count drops as soon as a teammate stops, increments without a refetch when one spawns. Lookup mirrors `listTeammates`' UNION-style parent matching: surfaces both Commander UUID AND `claudeSessionId` keys so configs that recorded either still resolve.
+- `<Bot size={13}/>` + tight `font-semibold` count rendered on each tab when the count > 0. Color: tertiary on inactive tabs, secondary on active. Tooltip: "N active teammate(s)". Inactive tabs get the badge too (so users can see at a glance which idle PM has live coders).
+- Same badge applied in OverflowMenu items + mobile dropdown items so the affordance is consistent across all three render paths.
+- `MobileOverflowDrawer` "Active" stat now uses the same filter so both surfaces show the same count.
+
+Commit `a3ea2fa`.
+
 ### HEAD (post-Phase-G)
 
 ```
+a3ea2fa feat(top-bar): filter teammates from session tabs + teammate count badge
 2f04086 style(sidebar): larger teammate icons in minimized strip
 3ba49a9 fix(sessions): cross-session pane guard + widened adoption cwd
 0b0d632 fix(split): dismiss button ends relationship + closes pane reliably
@@ -703,7 +716,7 @@ ad163ba feat(sessions): team-lead adoption + coder naming inherits parent PM
 a1aa074 fix(status): bypass-permissions kill-switch + tighten prompt fallback
 ```
 
-All three typechecks PASS. 19/19 unit tests pass. Server restart required for Bundles 1, 2, 3, 4 (all server-touching). Bundle 5 is client-only (Vite HMR picks up).
+All three typechecks PASS. 19/19 unit tests pass. Server restart required for Bundles 1, 2, 3, 4 (all server-touching). Bundles 5 + 6 are client-only (Vite HMR picks up).
 
 ---
 
