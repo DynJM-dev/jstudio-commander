@@ -4,6 +4,7 @@ import { BarChart3, Globe, X } from 'lucide-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useSessions } from '../hooks/useSessions';
 import { useAnalytics } from '../hooks/useAnalytics';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 const M = 'Montserrat, sans-serif';
 
@@ -22,11 +23,16 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
   const navigate = useNavigate();
   const { connected } = useWebSocket();
   const backdropRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
   // Sessions + today's stats arrive via WS-driven hooks (#217). The earlier
   // per-open re-fetch duplicated work already performed by useSessions /
   // useAnalytics elsewhere in the tree.
   const { sessions } = useSessions();
   const { today: stats } = useAnalytics();
+
+  // Phase P.2 C2 — ESC to close + keyboard focus trap. Same hook
+  // CreateSessionModal uses so the behavior is uniform.
+  useModalA11y({ open, containerRef: drawerRef, onClose });
 
   useEffect(() => {
     if (open) {
@@ -69,6 +75,10 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
 
       {/* Drawer */}
       <div
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobile-overflow-title"
         className="absolute bottom-0 left-0 right-0"
         style={{
           fontFamily: M,
@@ -81,6 +91,8 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
           animation: 'slideUp 0.25s ease-out',
         }}
       >
+        {/* Visually-hidden title provides the aria-labelledby target. */}
+        <h2 id="mobile-overflow-title" className="sr-only">More options</h2>
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-2">
           <div
@@ -97,8 +109,9 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
         <div className="flex justify-end px-4">
           <button
             onClick={onClose}
-            className="p-2 rounded-lg transition-colors"
-            style={{ color: 'var(--color-text-tertiary)' }}
+            aria-label="Close menu"
+            className="flex items-center justify-center rounded-lg transition-colors"
+            style={{ minWidth: 44, minHeight: 44, color: 'var(--color-text-tertiary)' }}
           >
             <X size={18} />
           </button>

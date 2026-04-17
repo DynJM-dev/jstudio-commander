@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal } from 'lucide-react';
 import type { Project } from '@commander/shared';
 import { MODEL_PRICING, MODEL_CONTEXT_LIMITS } from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
+import { useModalA11y } from '../../hooks/useModalA11y';
 
 const M = 'Montserrat, sans-serif';
 
@@ -40,6 +41,10 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Phase P.2 C2 — focus trap + ESC + focus restore. Replaces the
+  // ad-hoc ESC handler below.
+  useModalA11y({ open, containerRef: dialogRef, onClose });
 
   // Fetch project list for autocomplete (#218 — TTL-cached in
   // services/projectsCache).
@@ -70,15 +75,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
     }
   }, [open]);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
+  // ESC is now handled by useModalA11y above.
 
   const filteredProjects = projects.filter((p) =>
     p.path.toLowerCase().includes(projectPath.toLowerCase()) ||
@@ -127,6 +124,10 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
 
           {/* Modal */}
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-session-title"
             className="glass-modal relative w-full max-w-md p-6"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -136,6 +137,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <h2
+                id="create-session-title"
                 className="text-lg font-semibold"
                 style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
               >
@@ -143,8 +145,13 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
               </h2>
               <button
                 onClick={onClose}
+                aria-label="Close dialog"
                 className="flex items-center justify-center rounded-lg transition-colors"
-                style={{ width: 32, height: 32, color: 'var(--color-text-tertiary)' }}
+                style={{
+                  minWidth: 44,
+                  minHeight: 44,
+                  color: 'var(--color-text-tertiary)',
+                }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
                 }}

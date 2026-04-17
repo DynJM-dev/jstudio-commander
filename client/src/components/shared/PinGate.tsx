@@ -88,7 +88,12 @@ export const PinGate = ({ children }: PinGateProps) => {
       className="fixed inset-0 flex items-center justify-center p-4"
       style={{ background: 'var(--color-bg-deep)' }}
     >
-      <div className="glass-modal p-8 w-full max-w-sm text-center">
+      <div
+        className="glass-modal p-8 w-full max-w-sm text-center"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pin-gate-title"
+      >
         <Lock
           size={32}
           strokeWidth={1.5}
@@ -96,6 +101,7 @@ export const PinGate = ({ children }: PinGateProps) => {
           className="mx-auto mb-4"
         />
         <h2
+          id="pin-gate-title"
           className="text-lg font-semibold mb-1"
           style={{ fontFamily: M, color: 'var(--color-text-primary)' }}
         >

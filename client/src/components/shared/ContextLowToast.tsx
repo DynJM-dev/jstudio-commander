@@ -74,6 +74,14 @@ export const ContextLowToast = ({ band, percentage }: ContextLowToastProps) => {
             textAlign: 'left',
           }}
           aria-label="Dismiss context warning"
+          // Phase P.2 C2 — this is a non-blocking toast. role=status
+          // + aria-live=polite has screen readers announce the band
+          // change without interrupting whatever the user is doing;
+          // a dialog role would be wrong because this widget doesn't
+          // trap focus or block the page.
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >
           <AlertTriangle size={18} style={{ color, flexShrink: 0 }} />
           <div>
