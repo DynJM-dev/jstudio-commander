@@ -1,0 +1,14 @@
+{
+  "name": "@commander/statusline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./statusline.mjs",
+  "bin": {
+    "jsc-statusline": "./statusline.mjs"
+  },
+  "description": "Claude Code statusline forwarder — pipes the 300ms JSON tick to Commander and prints the terminal footer.",
+  "scripts": {
+    "test": "node --import tsx --test tests/*.test.mjs"
+  }
+}

@@ -77,6 +77,14 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('sessions', { type: 'teammate:dismissed', sessionId });
   });
 
+  // Phase M — session ticks broadcast on BOTH the session-scoped chat
+  // topic (so a chat view gets context %) AND the global sessions topic
+  // (so SessionCard grids update without explicit per-session subscribe).
+  eventBus.on('session:tick', (sessionId, tick) => {
+    rooms.broadcast('sessions', { type: 'session:tick', sessionId, tick });
+    rooms.broadcast(`chat:${sessionId}`, { type: 'session:tick', sessionId, tick });
+  });
+
   // Health beacon: a separate cadence from the per-socket protocol
   // heartbeat in handler.ts. Clients use the absence of these for ~10s
   // as a signal that the server is restarting (typical during dev hot

@@ -90,6 +90,42 @@ export const getDb = (): Database.Database => {
     )
   `);
 
+  // Phase M — per-session telemetry ticks from Claude Code's statusline.
+  // One row per Commander session id (upsert-latest-wins); raw_json is
+  // retained so forward-compat fields can be surfaced without a schema
+  // migration. `session_id` is the Commander session.id (joined from the
+  // claude_session_id via the resolveOwner cascade before insert), NOT
+  // the raw Claude UUID.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_ticks (
+      session_id TEXT PRIMARY KEY,
+      updated_at INTEGER NOT NULL,
+      claude_session_id TEXT,
+      context_used_pct REAL,
+      context_window_size INTEGER,
+      remaining_pct REAL,
+      cost_usd REAL,
+      total_duration_ms INTEGER,
+      total_api_duration_ms INTEGER,
+      total_lines_added INTEGER,
+      total_lines_removed INTEGER,
+      total_input_tokens INTEGER,
+      total_output_tokens INTEGER,
+      model_id TEXT,
+      model_display_name TEXT,
+      worktree TEXT,
+      cwd TEXT,
+      five_hour_pct REAL,
+      five_hour_resets_at TEXT,
+      seven_day_pct REAL,
+      seven_day_resets_at TEXT,
+      exceeds_200k INTEGER,
+      version TEXT,
+      raw_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_ticks_updated_at ON session_ticks(updated_at);
+  `);
+
   console.log(`[db] SQLite database ready at ${config.dbPath}`);
   return db;
 };

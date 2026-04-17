@@ -2,6 +2,7 @@ import type { Session, SessionStatus, SessionActivity, Teammate } from './sessio
 import type { ChatMessage } from './chat.js';
 import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
+import type { SessionTick } from './session-tick.js';
 
 export type WSEvent =
   | { type: 'session:created'; session: Session }
@@ -39,7 +40,8 @@ export type WSEvent =
   | { type: 'system:health'; timestamp: string }
   | { type: 'preference:changed'; key: string; value: unknown }
   | { type: 'teammate:spawned'; teammate: Teammate }
-  | { type: 'teammate:dismissed'; sessionId: string };
+  | { type: 'teammate:dismissed'; sessionId: string }
+  | { type: 'session:tick'; sessionId: string; tick: SessionTick };
 
 export type WSCommand =
   | { type: 'terminal:input'; sessionId: string; data: string }

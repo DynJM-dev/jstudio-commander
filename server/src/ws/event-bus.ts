@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate } from '@commander/shared';
+import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick } from '@commander/shared';
 
 export interface StatusEmitExtras {
   from?: SessionStatus;
@@ -66,6 +66,11 @@ class CommanderEventBus extends EventEmitter {
 
   emitTeammateDismissed(sessionId: string): void {
     this.emit('teammate:dismissed', sessionId);
+  }
+
+  // Session tick (Phase M — statusline forwarder).
+  emitSessionTick(sessionId: string, tick: SessionTick): void {
+    this.emit('session:tick', sessionId, tick);
   }
 
   // System events
