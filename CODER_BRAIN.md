@@ -1,7 +1,7 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-17 — Coder-16 post-Phase-K refresh
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + I + J + J.1, 11 commits + 1 Phase-I.0 team-lead emergency patch) → Coder-16 (Phase K, 3 commits)
+> Last updated: 2026-04-17 — Coder-16 post-Phase-L refresh
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + I + J + J.1, 11 commits + 1 Phase-I.0 team-lead emergency patch) → Coder-16 (Phase K + L, 8 commits)
 >
 > **Coder-16 rotation — read this first if you are the incoming coder:**
 > The "Coder-15 Cold Start Guide" section near the end of this doc collects
@@ -1069,6 +1069,47 @@ Three commits on top of `18f42f3`:
 | `0c6210f` | `test(chat): Phase K parser + collapse coverage (+24 tests)` | Parser tests for each new detector, array-mode scenarios (multi-wrapper same-kind, mixed kinds, prose-between-wrappers, unparseable, unknown-type both inside and outside a wrapper), collapse tests (burst, non-adjacent, non-idle passthrough). 37 → 61 client tests. |
 | `f40ad04` | `feat(chat): sender-preamble + JSON (zero-whitespace) routing` | Phase K addendum. `SENDER_JSON_PREAMBLE_RE` tolerates zero whitespace between a sender slug and its `{...}` body (the unwrapped `team-lead{"type":"shutdown_request",...}` shape the messaging layer emits in the wild). Preamble sender overwrites the JSON's `from` field on disagreement (wire-level sender wins). `UnrecognizedProtocolFragment` gains `senderOverride`; UnrecognizedProtocolCard renders "from <sender>" for unknown JSON types. +5 tests, 61 → 66 client. |
 
+## Coder-16 Session — Phase L (Three drift fixes: status + chat sync + plan widget, 2026-04-17)
+
+### What shipped
+
+Three targeted fixes after a live-testing bug report (OvaGas / JLFamily):
+
+| Commit | Bundle | Scope |
+|---|---|---|
+| `5d22eb2` | B1 | `server/src/services/agent-status.service.ts` — `COMPLETION_VERBS` allowlist + `/ed$/` fallback + `STALE_ELAPSED_SECONDS = 600` gate + multi-line footer elapsed extraction. `parseElapsedSeconds` exported. Tests +15 on existing `activity-detector.test.ts`. |
+| `da96818` | B2 | `server/src/routes/hook-event.routes.ts` — new `pm-cwd-rotation` match strategy (step 4) + `resolveOwner` / `UUID_RE` exported. `server/src/services/watcher-bridge.ts` — matcher cascade aligned with resolveOwner + auto-appends the discovered transcript via `sessionService.appendTranscriptPath`. New `server/src/services/__tests__/hook-event-resolver.test.ts` — 6 tests covering UUID_RE shape + the SQL cascade (PM-only match, two-PM ambiguity, stopped exclusion, coder-only no-match). |
+| `0b52078` | B3 | `client/src/utils/plans.ts` — `buildPlanFromMessages` now returns `lastPlanActivityMs`; `getActivePlan` gains an optional `nowMs` + returns null when either the chat-gap OR the wall-clock-gap vs the plan's last touch exceeds `MAX_PLAN_AGE_MS` (2 hours). Tests +6 in `plans.test.ts`. |
+
+### Root-cause diagnosis (for next-you reading this retroactively)
+
+- **B1** — Phase J.1 IDLE_VERBS covered `Idle / Waiting / Paused / Standing` but Claude Code's post-turn footer lingers on past-tense verbs (`✻ Cooked`, `✻ Crunched`, `✻ Brewed`, `✻ Finished`). These fell through the IDLE_VERBS gate and the spinner-glyph hoist flagged them as working. User's JLFamily coder ran at "working" for 5.9 hours because of this. Fix layers three gates: `COMPLETION_VERBS` explicit set, `/ed$/` regex fallback for future past-tense additions, and `STALE_ELAPSED_SECONDS = 600` as a final safety net. Multi-line elapsed extraction was also needed — the canonical footer split `✻ Cooked` onto one line and `21261s` two lines below separated by `·`, so the verb-line paren was empty.
+- **B2** — PM/lead sessions store the original Claude session UUID as `sessions.id`. When Claude rotates the transcript (new UUID = new JSONL filename), the hook's `resolveOwner` fails ALL three existing strategies: the new path isn't in any `transcript_paths` yet, the new UUID doesn't match any row's `id` or `claude_session_id`, and `cwd-exclusive` requires `transcript_paths = '[]'` which excludes the PM row that already has the OLD path. Chokidar still streamed chat events via WS, but any REST fetch read the stale transcript. Fix adds `pm-cwd-rotation`: exactly one non-stopped session with a UUID-format id in this cwd → bind. Teammate-coder slug ids (e.g. `coder-11@team`) are ignored so the rule is unambiguous in mixed cwds.
+- **B3** — 90 % downstream of B2 in the user's report (frozen chat meant `getActivePlan` saw no newer TaskCreates) but the rule needed tightening anyway so plans don't linger indefinitely when TaskCreate just stops coming.
+
+### Invariants added in Phase L
+
+1. **Past-tense verb = completion**, even when the spinner glyph is still drawn. The `COMPLETION_VERBS` set + `/ed$/` + `length >= 4` fallback is the allowlist. Present-tense `✻ Ruminating` / `✽ Brewing` still count as working; past-tense `✻ Ruminated` / `✻ Brewed` don't.
+2. **`STALE_ELAPSED_SECONDS = 600` is belt-and-suspenders.** Real Claude Code turns don't exceed 10 minutes; anything past that is a frozen footer regardless of verb. Extend the window deliberately if we ever see legitimate longer turns.
+3. **`detectActivity` scans up to `MULTI_LINE_ELAPSED_SPAN = 4` lines below the verb line** for a bare elapsed token when the verb-line paren is empty. Scan stops at a `❯` prompt so we don't harvest elapsed from a later frame.
+4. **`resolveOwner` priority = `claudeSessionId → transcriptUUID → sessionId-as-row → cwd-exclusive → pm-cwd-rotation`.** Each step has a distinct failure semantic; preserve ordering when adding a new strategy. Teammate-coder rotations are NOT handled by `pm-cwd-rotation` because their ids are slugs — teammate sessions are short-lived and rarely rotate.
+5. **`watcher-bridge` calls `sessionService.appendTranscriptPath` on discovery.** Chokidar-discovered files must be persisted to `transcript_paths` so the REST chat endpoint serves the latest content on every fetch. Don't drop this step — WS-only delivery leaves any page-reload in the stale state.
+6. **Plan staleness has two signals**, and either triggers retirement: (a) chat-latest-message more than `MAX_PLAN_AGE_MS` ahead of the plan's last activity, (b) wall-clock more than `MAX_PLAN_AGE_MS` past the plan's last activity. Missing timestamps skip the gate — we never hide a plan because of parse failures.
+7. **`getActivePlan` accepts an optional `nowMs` parameter** — tests inject a deterministic clock. Don't remove that parameter or downstream tests break.
+
+### Known footguns for next-you
+
+- **`parseElapsedSeconds` is strict.** Only `"Ns"`, `"Nm"`, `"Nm Ns"` forms are recognized. If Claude Code ships `"Nh Nm"` for very long turns, extend the parser — today it returns null for unrecognized forms (the gate then doesn't fire on that signal, which is safe-default).
+- **`pm-cwd-rotation` multi-match = skip.** Two PM/lead sessions in the same cwd (both UUID-id, both active) → ambiguous, event dropped. That's rare but worth knowing: if a team ever spawns two PMs in the same project dir, one of them will rotate into the void.
+- **Plan age-gate is per-session-view.** The widget hides after 2h of no plan activity EVEN IF the user is still actively working in other ways. If the workflow genuinely revolves around a single long-running plan (e.g. 8-hour debugging sessions without new TaskCreates), the widget will vanish mid-session. Raise `MAX_PLAN_AGE_MS` or revise if this becomes a complaint.
+
+### SUGGESTIONS (deferred / minor)
+
+- **Handle teammate-coder rotation.** Today we only bridge PM/lead rotations. Teammate coders rarely rotate (they're short-lived), but when they do the hook drops the event silently. Add a `coder-cwd-rotation` strategy if we observe this in the wild.
+- **Configurable `MAX_PLAN_AGE_MS`.** Hard-coded at 2h. A preferences slider or per-session override would help if workflows diverge.
+- **Surface `hookMatchStats`** on `/api/system/health` or a debug endpoint so rotation-bridge misfires (`skipped` counter climbing) are visible without tailing logs.
+- **`STALE_ELAPSED_SECONDS` thresholding could emit a warning log** on trip — useful for catching legitimate long turns that SHOULD have been allowed through (so we can raise the cap deliberately).
+
 ### Why this phase existed
 
 In the shutdown sequence at the end of Phase J.1, Claude Code's messaging layer injected multiple back-to-back `<teammate-message>` wrappers whose BODIES were `idle_notification` JSON payloads. The Phase F/J parser handled one top-level wrapper with prose body and either ignored the rest or rendered raw JSON in a JB bubble. The team-lead saw repeated garbled chunks and the working session looked broken. Phase K makes the parser robust to:
@@ -1153,9 +1194,9 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 
 ### Start-of-session checklist
 
-1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-K-addendum should be `f40ad04` (or later if a docs commit followed).
+1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-L should be `0b52078` (or later if a docs commit followed).
 2. `pnpm -C client run typecheck && pnpm -C server run typecheck` — both exit 0.
-3. `pnpm -C client test && pnpm -C server test` — 66 client + 23 server pass.
+3. `pnpm -C client test && pnpm -C server test` — 72 client + 44 server pass.
 4. `curl -s localhost:<port>/api/system/health` — returns `{service:'jstudio-commander', version: ..., status:'ok', dbConnected:true}`.
 5. `ls -la ~/.claude/prompts/pm-session-bootstrap.md` — file exists, ~134 bytes.
 6. `grep -c "Cold Start" ~/.claude/skills/jstudio-pm/SKILL.md` — non-zero.
