@@ -53,6 +53,16 @@ const generateSlug = (): string => {
 
 const generateTmuxName = (id: string): string => `jsc-${id.slice(0, 8)}`;
 
+// Phase N.2 — positive check that a team's config file still exists on
+// disk. Used to gate sentinel resolution and boot-time orphan cleanup so
+// sessions whose team directory was removed from `~/.claude/teams/` don't
+// keep claiming tmux panes that live team members need. Exported (via
+// module closure) so tests can inject a substitute.
+const teamConfigExistsOnDisk = (teamName: string | null | undefined): boolean => {
+  if (!teamName) return false;
+  return existsSync(join(homedir(), '.claude', 'teams', teamName, 'config.json'));
+};
+
 interface CreateSessionOpts {
   name?: string;
   projectPath?: string;
@@ -678,16 +688,24 @@ export const sessionService = {
   // one candidate pane exists (and isn't already claimed by another session
   // row), adopt its pane id as the tmux target so send-keys starts working.
   // Runs on boot + after each team-config reconcile.
-  resolveSentinelTargets(): number {
+  //
+  // Phase N.2 collision guard: if the sentinel row carries a `team_name` and
+  // that team's config.json no longer exists in `~/.claude/teams/`, the row
+  // is an orphan from a deleted team — skip it. Resolving it would claim a
+  // pane that the LIVE team-config member needs, then the reconcile's
+  // upsertTeammateSession would hit UNIQUE(tmux_session) on insert and
+  // crash startup. The `exists` predicate is injectable for tests.
+  resolveSentinelTargets(opts?: { teamExists?: (teamName: string | null) => boolean }): number {
     const db = getDb();
+    const teamExists = opts?.teamExists ?? teamConfigExistsOnDisk;
     // Scan every sentinel row regardless of status — a 'stopped' sentinel is
     // the most common case (no live evidence at insert time), yet it's
     // exactly when we need to keep trying: if a pane with matching cwd
     // exists, that's fresh evidence. The poller's pane-target branch will
     // then un-stick status from 'stopped' on its next cycle.
     const sentinels = db.prepare(
-      "SELECT id, project_path FROM sessions WHERE tmux_session LIKE 'agent:%' AND project_path IS NOT NULL"
-    ).all() as Array<{ id: string; project_path: string }>;
+      "SELECT id, project_path, team_name FROM sessions WHERE tmux_session LIKE 'agent:%' AND project_path IS NOT NULL"
+    ).all() as Array<{ id: string; project_path: string; team_name: string | null }>;
     if (sentinels.length === 0) return 0;
 
     const claimed = new Set(
@@ -697,6 +715,9 @@ export const sessionService = {
     const panes = tmuxService.listAllPanes();
     let resolved = 0;
     for (const s of sentinels) {
+      // Skip orphan rows whose team config was removed from disk — their
+      // pane belongs to a live team member now, not to them.
+      if (s.team_name && !teamExists(s.team_name)) continue;
       const candidates = panes.filter((p) => p.cwd === s.project_path && !claimed.has(p.paneId));
       if (candidates.length !== 1) continue;
       const paneId = candidates[0]!.paneId;
@@ -709,6 +730,47 @@ export const sessionService = {
       if (fresh) eventBus.emitSessionUpdated(fresh);
     }
     return resolved;
+  },
+
+  // Phase N.2 boot-time self-heal: retire any session row whose `team_name`
+  // references a team directory that no longer exists on disk. Flips the
+  // row to a stopped, team-less historical record and frees its real-pane
+  // `tmux_session` (rewritten to `retired:<id>`) so the UNIQUE constraint
+  // doesn't block a live team member from claiming that pane on the next
+  // reconcile. Idempotent — re-runs skip already-stopped orphans whose
+  // pane has already been freed.
+  healOrphanedTeamSessions(opts?: { teamExists?: (teamName: string | null) => boolean }): number {
+    const db = getDb();
+    const teamExists = opts?.teamExists ?? teamConfigExistsOnDisk;
+    const rows = db.prepare(
+      "SELECT id, name, team_name, tmux_session, status FROM sessions WHERE team_name IS NOT NULL AND team_name != ''"
+    ).all() as Array<{ id: string; name: string; team_name: string; tmux_session: string; status: string }>;
+    if (rows.length === 0) return 0;
+
+    let healed = 0;
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      if (teamExists(r.team_name)) continue;
+      // Already retired (team_name NULL, stopped, pane freed) — nothing to do.
+      // (Re-checked here for belt-and-suspenders after predicate misses.)
+      if (r.status === 'stopped' && r.tmux_session.startsWith('retired:')) continue;
+      const freedPane = r.tmux_session.startsWith('%') ? `retired:${r.id}` : r.tmux_session;
+      db.prepare(
+        `UPDATE sessions
+         SET team_name = NULL,
+             status = 'stopped',
+             stopped_at = COALESCE(stopped_at, ?),
+             updated_at = ?,
+             tmux_session = ?
+         WHERE id = ?`
+      ).run(now, now, freedPane, r.id);
+      console.log(
+        `[startup-heal] retired orphan session ${r.name || r.id.slice(0, 20)} ` +
+        `(team=${r.team_name}, was ${r.tmux_session} → ${freedPane}, status ${r.status} → stopped)`
+      );
+      healed += 1;
+    }
+    return healed;
   },
 
   markTeammateDismissed(sessionId: string): void {

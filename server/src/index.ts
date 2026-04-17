@@ -143,6 +143,16 @@ setupWatcherBridge();
 // Start status poller
 statusPollerService.start();
 
+// Phase N.2 boot-time self-heal: retire session rows whose team_name
+// references a team directory that no longer exists on disk. Runs BEFORE
+// teamConfigService.start() so live reconciles can claim real panes
+// without hitting UNIQUE(tmux_session) from an orphan row that still
+// holds the pane id. See sessionService.healOrphanedTeamSessions.
+{
+  const retired = sessionService.healOrphanedTeamSessions();
+  if (retired > 0) console.log(`[startup-heal] retired ${retired} orphan team session row(s)`);
+}
+
 // Watch team config files and emit teammate:spawned / teammate:dismissed
 teamConfigService.start();
 
