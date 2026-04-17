@@ -6,3 +6,8 @@ dist/
 *.log
 .turbo/
 .vite/
+
+# macOS launcher build artifacts (scripts/macos-launcher/build.sh output)
+Commander.app/
+*.icns
+*.iconset/
