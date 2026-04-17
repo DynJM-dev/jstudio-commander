@@ -26,6 +26,7 @@ import { maintenanceRoutes } from './routes/maintenance.routes.js';
 import { preferencesRoutes } from './routes/preferences.routes.js';
 import { cityRoutes } from './routes/city.routes.js';
 import { uploadRoutes } from './routes/upload.routes.js';
+import { preCompactRoutes } from './routes/pre-compact.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
 import { sessionService } from './services/session.service.js';
 import { tunnelService } from './services/tunnel.service.js';
@@ -151,6 +152,7 @@ await app.register(maintenanceRoutes);
 await app.register(preferencesRoutes);
 await app.register(cityRoutes);
 await app.register(uploadRoutes);
+await app.register(preCompactRoutes);
 
 // Initial project scan
 await projectScannerService.runInitialScan();

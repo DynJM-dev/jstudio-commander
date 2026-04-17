@@ -33,6 +33,7 @@ import { chatRoutes } from '../../routes/chat.routes.js';
 import { hookEventRoutes } from '../../routes/hook-event.routes.js';
 import { sessionTickRoutes } from '../../routes/session-tick.routes.js';
 import { uploadRoutes } from '../../routes/upload.routes.js';
+import { preCompactRoutes } from '../../routes/pre-compact.routes.js';
 import { getDb, closeDb } from '../../db/connection.js';
 import { eventBus } from '../../ws/event-bus.js';
 
@@ -48,6 +49,7 @@ export const buildTestApp = async (): Promise<FastifyInstance> => {
   await app.register(hookEventRoutes);
   await app.register(sessionTickRoutes);
   await app.register(uploadRoutes);
+  await app.register(preCompactRoutes);
   // Force DB init up front so the test can assume a working schema.
   getDb();
   return app;

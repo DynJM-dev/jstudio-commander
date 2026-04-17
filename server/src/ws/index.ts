@@ -133,6 +133,13 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('system', { type: 'system:rate-limits', rateLimits });
   });
 
+  // Phase Q — pre-compact state transitions fan out on the `sessions`
+  // topic so every open SessionCard grid gets the indicator update
+  // without needing a per-session subscribe.
+  eventBus.on('pre-compact:state-changed', (evt) => {
+    rooms.broadcast('sessions', { type: 'pre-compact:state-changed', ...evt });
+  });
+
   // Health beacon: a separate cadence from the per-socket protocol
   // heartbeat in handler.ts. Clients use the absence of these for ~10s
   // as a signal that the server is restarting (typical during dev hot
