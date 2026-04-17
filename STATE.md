@@ -1,86 +1,87 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: **Post-v1 Polish wave complete** — coder-9 session shipped 17 commits + closed the PM initialization architecture gap
-- Last updated: 2026-04-15
-- HEAD: `587e508` (PM bootstrap auto-injection)
+- Phase: **Post-v1 Feature Wave 2 + UI Sprint + Opus 4.7 migration complete**
+- Last updated: 2026-04-16
+- HEAD: `6d69fb0` (Opus 4.7 migration)
+- Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **3002** (config.json override) · Vite: **5173**
-- Blockers: pre-existing `file-watcher.service.ts(90)` TS err (unchanged, unrelated)
-- Backlog: drained. Next-up list below is optional polish / new features.
+- Blockers: none
+- Backlog: token-audit follow-ups (#216-#223) + #230 project tech-stack pills (needs server endpoint). All low priority.
 
 ## Phases
 - [x] Phase 0-10: v1 Complete (see PM_HANDOFF.md)
 - [x] Post-v1 Polish Wave 1 — Coder-7 (42 commits)
 - [x] Post-v1 Polish Wave 2 — Coder-8 (plan-attach + verification)
-- [x] **Feature Wave 1 — Coder-9 (17 commits, 2026-04-14 → 2026-04-15)**
-- [ ] Feature Wave 2 — TBD (see "Next up" below)
+- [x] Feature Wave 1 — Coder-9 (17 commits, 2026-04-14 → 2026-04-15)
+- [x] **Feature Wave 2 + Stabilization — Coder-9 (25 commits, 2026-04-15 → 2026-04-16)**
+- [ ] Feature Wave 3 — TBD (see "Next up" below)
 
-## Coder-9 Commits (17, chronological)
+## Feature Wave 2 Highlights
 
-| SHA | Feature / Fix |
-|---|---|
-| `cec1bc9` | fix(chat): dock sticky plan widget at bottom above input |
-| `bfe82bb` | fix(chat): key plan tasks by real Claude task ID |
-| `5263bd7` | feat(chat): sticky plan widget v1 |
-| `7922156` | fix(chat): bump IntersectionObserver threshold 0.1→0.5 |
-| `6627d57` | feat(chat): always-visible sticky (later reverted) |
-| `c1c886f` | fix(chat): dock sticky at bottom, intersect-aware |
-| `8d2d981` | fix(chat): walk plan across groups + close button |
-| `9a2531b` | fix(chat): handle deleted task status |
-| `e9f651b` | feat(shared): Session gains parent/team fields + Teammate type |
-| `cf9b94f` | feat(chat): split-pane layout |
-| `5598bb8` | feat(chat): dual-ID teammate resolution |
-| `fdb2485` | feat(chat): compact_boundary parsing + context-scoped tokens |
-| `9929f8a` | feat(sessions): waiting yellow highlight |
-| `4f3b9c7` | fix(chat): bulletproof interrupt |
-| `a42a1b4` | feat(chat): activity chips + AgentSpawnCard |
-| `2150129` | feat(sessions): nested teammate tree |
-| `853e477` | feat(sessions): team name suffix |
-| `5f90cf8` | fix(sessions): teammates default to idle |
-| `35ef990` | fix(context): model normalization + stats isolation + hook matcher |
-| `53c32c5` | fix(sessions): liveness-gated boot heal + purge-with-archive delete |
-| `38023cb` | feat(chat): brighter tokens + live thinking preview |
-| `95aacef` | fix(sessions): sentinel → pane resolution + poller un-stick |
-| `043dc5f` | feat(chat): state-aware shimmer + live in-flight indicators |
-| `587e508` | feat(sessions): PM vs Raw toggle + bootstrap injection |
+### Architecture
+- Rotation-detector DELETED → deterministic `transcript_paths: string[]` column (#204)
+- Hook events serialized via promise chain (#209)
+- Session create/delete wrapped in DB transactions (#208)
+- Status detection: 25-line capture, idle-footer allowlist, numbered-choice block (#222, #236)
+
+### Design System (CSS class spine — DO NOT inline-duplicate)
+`.nav-btn` · `.session-tab` · `.cta-btn-primary` · `.filter-chip` · `.waiting-tab-alarm`
+
+### Features shipped
+- City view `/city` — pure CSS cyberpunk pixel art (#214)
+- Tunnel URL + QR badge in TopCommandBar (#231)
+- Manual refresh button in ContextBar (#237)
+- Button-style session tabs with state-aware glow (#225)
+- SessionCard: effort pill, model badge, time-since, quick-split (#226)
+- ProjectCard: linked-sessions cluster, last-scanned, compact indicators (#227)
+- Analytics: count-up animation, trend deltas (#212)
+- Mobile: safe-area fix (#232), split collapse to strip (#233)
+- Stopped fold on SessionsPage (#220)
+- Session name disambiguator (#220)
+
+### Fixes
+- Analytics null crash (#210)
+- useChat stale poll (#193)
+- pendingLocal duplicate render (#224)
+- Waiting false-positive on idle footer (#236)
+- Working→waiting transition lag (#222)
+
+### Audits
+- Edge-case audit: 14 scenarios, 0 FAIL (`AUDIT_2026-04-15.md`)
+- Token-efficiency audit: 12 surfaces (`AUDIT_TOKENS_2026-04-15.md`)
+- UI rundown audit: 2 Major fixed, 8 Nit (`UI_AUDIT_2026-04-15.md`)
+- Tunnel security audit: 9 fixes (coder-10, `TUNNEL_AUDIT_2026-04-15.md`)
 
 ## Known Issues
 
-- **Pre-existing TS err** — `server/src/services/file-watcher.service.ts(90)` chokidar callback err typing. Untouched.
-- **tsx watch does NOT hot-reload server changes reliably** — MUST manually restart: `lsof -ti:3002 | xargs kill -9; pnpm dev`
-- **node-pty broken** (`posix_spawnp`) — terminal uses capture-pane polling; don't try to fix
-- **Hooks only fire for sessions started AFTER hook configuration** — existing sessions need restart
-- **Claude Code reads settings.json hooks only on startup**
-- **Two `pnpm dev` processes can coexist on 5173/5174** and serve stale code — always verify `lsof -ti:5173 -ti:5174` before debugging "why didn't my fix apply"
+- **tsx watch does NOT hot-reload server changes reliably** — MUST manually restart
+- **node-pty broken** (`posix_spawnp`) — terminal uses capture-pane polling
+- **Hooks only fire for sessions started AFTER hook configuration**
+- **Agent-status heuristic is regex-based** — evolves with each Claude Code UI change. Consider `.claude/status.json` if exposed upstream.
 
-## Resolved decisions this wave
+## Resolved decisions (Wave 2 additions)
 
-- **Plan pipeline** — single `getActivePlan(messages)` + `buildPlanFromMessages` in `client/src/utils/plans.ts` is the source of truth for both inline AgentPlan and StickyPlanWidget; walks the whole session with running Map keyed by real Task ID; resets on new TaskCreate after allDone
-- **Compaction tokens** — `/stats` returns both `totalTokens` (all-time) and `contextTokens` (post-last-boundary); ContextBar leads with context, tooltips with total
-- **Teammate model** — `agent_relationships` table stores parent/child edges; sessions row per teammate keyed by `agentId` (not UUID); `tmux_session` stores pane ID if known OR `agent:<id>` sentinel otherwise
-- **Session liveness** — "member in team config" is NOT evidence of life; `upsertTeammateSession({ live })` gated on real tmux pane OR JSONL mtime <10min
-- **Hook-event linking** — 4-strategy matcher (`claude_session_id` → `id-as-UUID` → unclaimed cwd candidate → skip); backfills `claude_session_id` on match so the fast path takes over
-- **PM bootstrap** — `session_type='pm'` rows get `~/.claude/prompts/pm-session-bootstrap.md` sendKeys'd in once Claude's idle prompt appears; never blocks/fails session create
-- **ESC global** — `window.keydown` listener, `data-escape-owner` subtrees claim ESC first, double-tap 80ms for reliability
+- **Transcript ownership** — deterministic hook-bound `transcript_paths` list. No heuristics. Hooks append; chat concatenates in array order.
+- **Waiting detection** — strong signals first (numbered-choice, [y/N], "Do you want to"), idle-footer short-circuit, no bare `?` pattern. Capture 25 lines.
+- **Model default** — Opus 4.7, no `[1m]` suffix (4.7 gets 1M automatically). Commander-spawned sessions hardcode `xhigh` effort instead of reading settings.json.
+- **Mobile split** — below 768px, SplitChatLayout forces minimized strip. Teammate tap navigates to full single-pane route.
+- **Design system** — all interactive elements use one of 4 CSS class families. Drift is now confined to chat-internal components.
 
-## Next up (PM-confirmed backlog — none currently active)
+## Next up (pending backlog)
 
-1. **Multi-tab teammate pane (170.1)** — SplitChatLayout to tabs of ≤3 concurrent teammates
-2. **Direct Mode badge** — informational overlay on PM pane when the user is focused in coder pane
-3. **Playwright E2E harness** — no automated browser tests exist; needed for visual regression safety
-4. **DB-persist split state per-user** — currently localStorage-only
-5. **Memory/skill inventory view** inside Commander (browse `~/.claude/skills` + `~/.claude/projects/<slug>/memory`)
-6. **Audit stopped teammates >N days** — auto-archive sweep so Sessions page stays clean
-7. **Unit tests on `client/src/utils/plans.ts`** — logic has broken twice this session; fixtures from GG3 session exercise the multi-group bug
-8. **Agent-status via `.claude/status.json`** — replace regex heuristics with positive ID if Claude Code exposes it
-9. **jstudio-init-project helper** — one-prompt scaffold of STATE.md / PM_HANDOFF.md / initial dirs
-10. **pane-ID hook event** — upstream request; would remove the `list-panes -a` + cwd match dance
+1. **Token-audit follow-ups** — #216 (useChat tail-delta), #217 (TopCommandBar double-poll), #218-#223. Low priority.
+2. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint)
+3. **#191** — Stale-transcript warning pill (likely obsolete post-#204)
+4. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
+5. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
+6. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it
 
 ## Critical rules for future coders
 
-- **Skill ≠ Agent** — Skill tool loads a skill into context. Agent tool spawns a subagent (`subagent_type` ∈ general-purpose, statusline-setup, Explore, Plan, claude-code-guide). Never call `Agent({ subagent_type: "ui-ux-pro-max" })`.
-- **PM bootstrap is three pieces** (SKILL.md Cold Start + `~/.claude/prompts/pm-session-bootstrap.md` + `session_type='pm'` inject) — breaking any one re-opens the OvaGas failure
-- **Verify the served code** — curl the Vite endpoint and grep for symbols, not just `git log`
-- **Match `'agent:'` prefix** when branching on "real tmux target" — everywhere
-- **`WHERE status != 'stopped'`** is a trap for pane-backed rows; use `OR tmux_session LIKE '%'` in polling queries
-- **Always restart server** after server-side edits: `lsof -ti:3002 | xargs kill -9; pnpm dev`
+- **Skill ≠ Agent** — Skill loads into context. Agent spawns a subagent.
+- **PM bootstrap = 3 pieces** — SKILL.md Cold Start + bootstrap prompt + session_type='pm' inject
+- **Verify the served code** — curl the Vite endpoint and grep, not just git log
+- **`git add <specific-files>`** when coder-10 is active — NEVER `git add -A`
+- **`WHERE status != 'stopped'`** is a trap for pane-backed rows; use `OR tmux_session LIKE '%'`
+- **Always restart server** after edits: `lsof -ti:3002 | xargs kill -9; pnpm dev`

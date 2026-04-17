@@ -1,23 +1,32 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-15 — Coder-9 pre-compaction sweep
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17 feature commits this week)
+> Last updated: 2026-04-16 — Coder-9 pre-4.7-restart documentation sweep
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions)
+> Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
-## HEAD of main
+## HEAD of main (post-sprint)
 
 ```
-587e508 feat(sessions): PM vs Raw session toggle + /pm bootstrap auto-injection
-043dc5f feat(chat): brighter state-aware shimmer + live skill/agent/memory indicators
-95aacef fix(sessions): resolve sentinel tmux targets to real pane IDs + poller idle-vs-stopped
-38023cb feat(chat): brighten text tokens + show live thinking content during working indicator
-53c32c5 fix(sessions): only heal sessions with live tmux or recent activity + add session delete
-853e477 feat(sessions): display team name on PM cards to disambiguate multiple team-leads
-a42a1b4 feat(chat): surface skills, agent spawns, memory reads, and teammate messages as activity chips
-9a2531b fix(chat): handle deleted task status and add defensive lookup fallback
-8d2d981 fix(chat): walk plan across assistant groups + add close button
+6d69fb0 feat(sessions): migrate to Opus 4.7 + xhigh default effort
+4a22eca feat(chat): manual refresh button in ContextBar (#237)
+15232d1 fix(status-poller): tighten waiting detection (#236)
+ba226e3 style(projects): ProjectDetailPage polish pass (#235)
+6ea27d9 style(projects): filter pills + Rescan design system (#234)
+519fb4c fix(split-chat): mobile collapses to PM full-width + strip (#233)
+816c772 fix(mobile-nav): preserve 64px content area safe-area (#232)
+89f1ae2 feat(tunnel): TopCommandBar tunnel URL + QR (#231)
+2f99184 docs+style: UI rundown audit + fixes (#228)
+89dea5f feat(projects): linked-sessions cluster + polish (#227)
+d574177 feat(sessions): richer SessionCard + effort pill (#226)
+851025e style(sessions): button-style top-bar tabs (#225)
+15117b0 fix(chat): harden pendingLocal dedup (#224)
+1234f40 fix(status): broaden waiting detection (#222)
+4859e2a fix(sessions): disambiguate dup names + stopped fold (#220)
+72f14fe docs: token-efficiency audit (#215)
+415df99 feat(city): gamified cyberpunk city view (#214)
 ```
 
-See `CTO_BRIEF.md` (§5) for the full feature table `cec1bc9` → `587e508` (17 commits this session).
+See `CTO_BRIEF.md` (§5) for earlier feature table. Commits above are the post-compaction sprint.
 
 ---
 
@@ -119,20 +128,76 @@ If a future refactor touches `createSession`, the bootstrap block and `waitForCl
 10. **TeamCreate / TeamDelete chips rely on the caller using those tool names.** Real TeamCreate isn't a tool name I've observed in JSONL from PM sessions (the PM invokes it but Claude Code logs it differently). Verify once a real TeamCreate fires post-#184.
 11. **`hook-event.routes` backfills `claude_session_id` opportunistically.** The "claim unclaimed cwd match" strategy is best-effort. If the PM and a teammate both spin up in the exact same cwd within a race window, we might mis-claim. Acceptable for current use; revisit if it misfires.
 
-### SUGGESTIONS (deferred minor items — inventory for the next CTO brief)
+### Post-compaction sprint (2026-04-15 → 2026-04-16)
 
-- liveComposing preview vanishes abruptly (no fade) when tool_use appends immediately after text ends | impact: MINOR | recommend: defer — only visible on sub-1s turns where fade perception doesn't matter much
+#### Architecture changes
+- **Rotation detector DELETED.** `rotation-detector.service.ts` (~260 lines of heuristics) replaced by deterministic `transcript_paths: string[]` column. Hooks append paths; chat endpoint concatenates across all paths in array order. No cwd scans, no fingerprints. This killed the entire "Wild-puma battling" class of bugs.
+- **Hook events serialized.** Module-level promise chain in `hook-event.routes.ts` guarantees each hook's resolveOwner → appendTranscriptPath completes before the next starts. Closes the `cwd-exclusive` race window.
+- **Session create/delete transactional.** DB writes wrapped in `db.transaction()` with tmux cleanup on rollback.
+- **Status detection deepened.** Capture window 15→25 lines. Idle-footer short-circuit (`hasIdleFooter()`) prevents false-waiting on chrome text. Removed bare `/\?\s*$/m` pattern. Added `hasNumberedChoiceBlock()` for choice lists without `❯` marker.
 
-### Known-open (PM confirmed)
+#### Design system spine (CSS class system — DO NOT duplicate inline)
+- `.nav-btn` + `.nav-btn--active` + `.nav-btn--muted` + `.nav-btn--collapsed` — sidebar buttons
+- `.session-tab` + `.session-tab--active` + `.session-tab--working` + `.session-tab--stopped` + `.session-tab--stack` — TopCommandBar tabs
+- `.cta-btn-primary` — primary action buttons (modals, New Session, empty state CTAs)
+- `.filter-chip` + `.filter-chip--active` — filter toggle bars (ProjectsPage)
+- `.waiting-tab-alarm` — composes on any of the above for waiting-state yellow pulse
 
-- **Multi-tab teammate pane** (Task 170.1) — SplitChatLayout currently shows ONE teammate at a time. Multi-teammate flows want ≤3 tabs in the right pane.
-- **Direct Mode badge** on the PM pane when the user is focused in the coder pane — informational, no routing change.
-- **jstudio-init-project helper** — spec from PM: a slash command or skill that scaffolds `STATE.md` / `PM_HANDOFF.md` / initial directory with one prompt.
-- **Playwright E2E** — no browser-control tests have been written. CI-ready harness needed before the user can catch visual regressions automatically.
-- **Memory/skill inventory view** inside Commander — surface `~/.claude/skills/` and `~/.claude/projects/<slug>/memory/` as a browsable sidebar panel.
-- **Audit stopped teammates older than N days** — auto-archive to `.trash/` so the Sessions page doesn't accumulate zombies.
-- **Unit tests on `client/src/utils/plans.ts`** — the plan-building logic is the most logic-heavy util in the codebase and has been broken twice this session. Test `buildPlanFromMessages` against fixture JSONLs (GG3 session exercised the multi-group bug).
-- **`tmux_session` for rows without panes.** `agent:<id>` sentinel works for now; a Claude-Code-provided pane-ID hook event would make resolution immediate instead of via `list-panes -a` + cwd match.
+#### New features
+| Feature | Commit | Notes |
+|---|---|---|
+| City view `/city` | 415df99 | Pure CSS pixel art, no canvas. Role-palette characters, building-per-session, WS-driven speech bubbles, visibilitychange pause. |
+| Tunnel URL + QR | 89f1ae2 | `TunnelBadge` component in TopCommandBar. `qrcode.react@4` for phone-scan QR. |
+| Manual refresh button | 4a22eca | RotateCw in ContextBar. Clears pendingLocal + `useChat.refetch()` + fire-and-forget `/sessions/:id/rescan`. |
+| Button-style session tabs | 851025e | Replaced underline-bar look with rounded pills + state-aware glow. |
+| SessionCard richer info | d574177 | Effort pill, model short-form, time-since-activity, SplitSquareHorizontal quick-action. |
+| ProjectCard linked sessions | 89dea5f | Status-colored dots + count cluster, last-scanned timestamp, compact file indicators. |
+| Stopped fold | 4859e2a | Stopped sessions collapse behind a ChevronRight header on SessionsPage. |
+| Session name disambiguator | 4859e2a | `sessionDisplay.ts` — same-name sessions get ` · <first-6-of-id>` suffix. |
+| Analytics revamp | 7a24976 | Count-up animation, trend deltas (today vs yesterday, week vs prior-week), staggered reveal. |
+| Mobile split collapse | 519fb4c | `useIsNarrow()` forces minimized strip below 768px. Teammate icon tap navigates to full single-pane. |
+| MobileNav safe-area | 816c772 | `height: calc(64px + env(safe-area-inset-bottom))` so tap targets aren't squeezed. |
+
+#### Fixes
+| Fix | Commit | Root cause |
+|---|---|---|
+| Analytics null crash | 522fc7e | `row.sessionId.slice(0, 8)` when sessionId is null |
+| useChat stale poll (#193) | earlier | Content streaming into existing messages wasn't detected by id-only dedup. Fixed with tail-block JSON.stringify comparison. |
+| pendingLocal dup render | 15117b0 | Trim-only equality + no time fallback. Normalized + 10s+status safety valve. |
+| Waiting false-positive | 15232d1 | `\?\s*$/m` matched idle-footer "new task?". Removed + added hasIdleFooter() gate. |
+| Waiting over-match (#222) | 1234f40 | 15-line capture too shallow + missing patterns. Bumped to 25 + broadened. |
+
+#### Opus 4.7 migration (6d69fb0)
+- DEFAULT_MODEL → `claude-opus-4-7` (no `[1m]` suffix — 4.7 gets 1M automatically)
+- Commander-spawned sessions: `model: 'claude-opus-4-7'`, `effort_level: 'xhigh'`
+- Post-boot injection: `/effort xhigh` (was `/effort max`)
+- Team config normalizer: opus/claude-opus-4-6/claude-opus-4-6[1m] → claude-opus-4-7
+- On-disk `~/.claude/teams/*/config.json` migrated via sed
+- 4.6 entries kept in MODEL_CONTEXT_LIMITS + MODEL_PRICING for backward compat
+
+#### Audits completed
+- `AUDIT_2026-04-15.md` — 14-scenario edge-case audit (12 PASS, 2 CONCERN → #206/#207 filed+shipped by coder-10)
+- `AUDIT_TOKENS_2026-04-15.md` — 12-surface token audit (1 Wasteful #217, 5 Optimizable #216/#218/#219/#221/#223)
+- `UI_AUDIT_2026-04-15.md` — full UI rundown (2 Major #234/#235 shipped, 2 Minor fixed inline, 8 Nit)
+- `TUNNEL_AUDIT_2026-04-15.md` (coder-10) — 9 security fixes + hardened PIN auth
+
+### SUGGESTIONS (deferred minor items)
+
+- liveComposing preview vanishes abruptly (no fade) when tool_use appends | MINOR | defer
+- ContextBar CostChart x-axis crowds at 320px viewport | NIT | defer
+
+### Known-open
+
+- ~~Multi-tab teammate pane~~ → SHIPPED (#197)
+- ~~Direct Mode badge~~ → SHIPPED (#197)
+- ~~Playwright E2E~~ → SHIPPED (#201, 5 core tests)
+- ~~Stopped teammate cleanup~~ → SHIPPED (#202, 7-day cron)
+- ~~Unit tests plans.ts~~ → SHIPPED (#199, 6 tests)
+- **jstudio-init-project helper** — spec from PM: scaffold STATE.md / PM_HANDOFF.md with one prompt.
+- **Memory/skill inventory view** — surface `~/.claude/skills/` and memory files as a browsable panel.
+- **Token-audit follow-ups** — #216 (useChat tail-delta), #217 (TopCommandBar double-poll), #218 (modal cache), #219 (pane-poll batch), #221 (session-tree hook), #223 (dead WS sub). All low-priority.
+- **#230** — Project tech-stack pills + git commits. Needs coder-10 server endpoint.
+- **#191** — Stale-transcript warning pill. Likely obsolete post-#204 deterministic model.
 
 ### Verify-before-compact checklist (if you need to reproduce any of the above)
 
