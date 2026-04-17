@@ -31,7 +31,7 @@ export const getDb = (): Database.Database => {
     console.log('[db] Migration: added transcript_path column to sessions');
   }
   if (!cols.some((c) => c.name === 'effort_level')) {
-    db.exec("ALTER TABLE sessions ADD COLUMN effort_level TEXT DEFAULT 'medium'");
+    db.exec("ALTER TABLE sessions ADD COLUMN effort_level TEXT DEFAULT 'xhigh'");
     console.log('[db] Migration: added effort_level column to sessions');
   }
   if (!cols.some((c) => c.name === 'parent_session_id')) {

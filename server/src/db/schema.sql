@@ -10,14 +10,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   project_path TEXT,
   claude_session_id TEXT,
   status TEXT NOT NULL DEFAULT 'idle',
-  model TEXT DEFAULT 'claude-opus-4-6',
+  model TEXT DEFAULT 'claude-opus-4-7',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   stopped_at TEXT,
   station_id TEXT,
   agent_role TEXT,
   transcript_path TEXT,
-  effort_level TEXT DEFAULT 'medium'
+  effort_level TEXT DEFAULT 'xhigh'
 );
 
 -- Projects: discovered from filesystem, enriched with parsed STATE.md
