@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3, Globe, X } from 'lucide-react';
-import type { Session, DailyStats } from '@commander/shared';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { api } from '../services/api';
+import { useSessions } from '../hooks/useSessions';
+import { useAnalytics } from '../hooks/useAnalytics';
 
 const M = 'Montserrat, sans-serif';
 
@@ -22,14 +22,15 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
   const navigate = useNavigate();
   const { connected } = useWebSocket();
   const backdropRef = useRef<HTMLDivElement>(null);
-  const [stats, setStats] = useState<DailyStats | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  // Sessions + today's stats arrive via WS-driven hooks (#217). The earlier
+  // per-open re-fetch duplicated work already performed by useSessions /
+  // useAnalytics elsewhere in the tree.
+  const { sessions } = useSessions();
+  const { today: stats } = useAnalytics();
 
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
-      api.get<DailyStats>('/analytics/today').then(setStats).catch(() => {});
-      api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
     } else {
       document.body.style.overflow = '';
     }
@@ -46,7 +47,7 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
   };
 
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
-  const totalTokens = stats ? stats.totalInputTokens + stats.totalOutputTokens : 0;
+  const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
   const totalCost = stats?.totalCostUsd ?? 0;
 
   return (

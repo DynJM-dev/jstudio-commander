@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Wifi, WifiOff, ChevronDown, MoreHorizontal } from 'lucide-react';
-import type { Session, DailyStats } from '@commander/shared';
+import type { Session } from '@commander/shared';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { TunnelBadge } from '../components/shared/TunnelBadge';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { api } from '../services/api';
+import { useSessions } from '../hooks/useSessions';
+import { useAnalytics } from '../hooks/useAnalytics';
 import { formatTokens, formatCost } from '../utils/format';
 import { buildDisplayNameMap } from '../utils/sessionDisplay';
 
@@ -18,8 +19,11 @@ export const TopCommandBar = () => {
   const { connected } = useWebSocket();
   const navigate = useNavigate();
   const location = useLocation();
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [stats, setStats] = useState<DailyStats | null>(null);
+  // Sessions + today's stats arrive via WS-driven hooks (#217). The earlier
+  // 15s setInterval polling here duplicated work already performed by
+  // useSessions/useAnalytics elsewhere in the tree.
+  const { sessions } = useSessions();
+  const { today: stats } = useAnalytics();
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
@@ -28,18 +32,6 @@ export const TopCommandBar = () => {
   // Extract current sessionId from URL if on chat page
   const chatMatch = location.pathname.match(/^\/chat\/([^/]+)/);
   const currentSessionId = chatMatch ? chatMatch[1] : null;
-
-  useEffect(() => {
-    api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
-    api.get<DailyStats>('/analytics/today').then(setStats).catch(() => {});
-
-    const interval = setInterval(() => {
-      api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
-      api.get<DailyStats>('/analytics/today').then(setStats).catch(() => {});
-    }, 15_000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Close dropdowns on outside click
   useEffect(() => {
