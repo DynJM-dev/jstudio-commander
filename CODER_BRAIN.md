@@ -1191,6 +1191,85 @@ In the shutdown sequence at the end of Phase J.1, Claude Code's messaging layer 
 
 ---
 
+## Coder-16 Session — Phase N.0 (CTO's 4-patch prescription, 2026-04-17)
+
+Stuck-state closeout. CTO prescribed 4 minimum-fix patches in sequence. All shipped, all live.
+
+### Commit trail (in order)
+
+```
+a97ee1c   N.0 original (transcript-rotation inference) — shipped before pivot, then reverted
+b09c908   Revert of a97ee1c — team-lead pivot to simpler CTO-authored patches
+bc9b126   Patch 1 — Stop hook → idle
+cfd1e65   Patch 2 — poller yields to recent hook writes (10s window)
+6067c1d   Patch 3 server — last_activity_at column + bumpers + WS heartbeat
+a618121   Patch 3 client — HeartbeatDot + stale-override in SessionCard/LiveActivityRow
+a42cfb0   Patch 4 — SessionStart + SessionEnd hooks (install script + route handlers)
+```
+
+**HEAD: `a42cfb0`**. Test counts: server 64 → 92 (+28). Client 93 → 109 (+16). Typecheck clean across all 4 workspaces.
+
+### What each patch does
+
+| Patch | Commit | Scope |
+|---|---|---|
+| 1 | `bc9b126` | Added `Stop`-event branch at top of `processHook` in `hook-event.routes.ts` (before transcript_path handling). On Stop: `resolveOwner` → `UPDATE status='idle'` → `emitSessionStatus(id, 'idle', {evidence:'stop-hook', at})`. Fixes the stuck-`working` symptom for turns that end while the pane footer lingers on a past-tense verb. 5 tests. |
+| 2 | `cfd1e65` | Poller's SELECT now returns `ms_since_update` via `julianday('now') - julianday(updated_at)` (timezone-safe — SQLite emits naïve UTC). In the per-session loop: `if status==='idle' && ms_since_update < HOOK_YIELD_MS (10_000) → continue`. Idle-only gate so stale `working` rows can't be frozen. Yield branch also updates `lastKnownStatus` + clears `idleSince` / `workingSince` so next poll compares correctly. 5 tests. |
+| 3 server | `6067c1d` | New column `sessions.last_activity_at INTEGER NOT NULL DEFAULT 0` (epoch ms). `Session.lastActivityAt: number` on shared type. `sessionService.bumpLastActivity(id)` single write surface — UPDATE + emit `session:heartbeat` in lock-step. Bumpers wired into: hook-event (any event type after resolveOwner match + explicit on Stop branch), session-tick ingest, watcher-bridge JSONL appends, status-poller (ONLY on real flips, never on yields — gate sits above bumper call). WS broadcast on `sessions` topic. 6 tests. |
+| 3 client | `a618121` | `useHeartbeat(sessionId, initialTs?)` hook (WS subscribe + 1s ticker + 30s stale gate). `<HeartbeatDot />` inline chip (green pulsing + "Xs ago" / gray + "—" / gray + "stale"). SessionCard: HeartbeatDot next to StatusBadge; `applyStaleOverride` coerces working/waiting→idle for ALL visual state (badge, halos, activity preview). ChatPage/ChatThread: new `heartbeatStale` prop gates LiveActivityRow visibility. Constants `STALE_THRESHOLD_SECONDS=30`, `SECONDS_DISPLAY_CAP=999`. Pure `formatSecondsAgo` helper. 16 client tests. |
+| 4 | `a42cfb0` | `scripts/install-hooks.mjs` — idempotent merge into `~/.claude/settings.json`. Covers all 4 events (SessionStart/End/Stop/PostToolUse). Pure `mergeHookEvents` + `entryHasCommanderHook` exported for tests. Preserves user-added matchers (non-commander hooks coexist). Route: `SessionStart` → `status='working'` + emit; `SessionEnd` → `status='stopped'` + `stopped_at` + emit. Both bump heartbeat. Unknown owner on SessionStart = log+skip (no auto-create). Installed on Jose's machine — `~/.claude/settings.json` hooks now `['PostToolUse','SessionEnd','SessionStart','Stop']`. 11 tests. |
+
+### Invariants added in Phase N.0 (17–24)
+
+17. **Stop hook wins turn boundary.** A Stop event flips status to `idle` at the top of `processHook`, BEFORE the transcript_path check, so Stop events with or without a transcript path still trigger the flip. The poller must not clobber this for the yield window — see invariant 18.
+
+18. **Poller yields 10s to idle hook writes.** `HOOK_YIELD_MS = 10_000`. The gate is scoped to `status='idle'` ONLY — stale working rows are never frozen by the yield. The yield also runs `lastKnownStatus.set(id, 'idle')` + clears `idleSince`/`workingSince` so the next poll compares against truth. Never relax this to include non-idle statuses.
+
+19. **`ms_since_update` is computed in SQL via julianday.** Keep the math server-side. JS `new Date(naïveUTCString).getTime()` is environment-dependent (local vs UTC) and will silently skew the yield window across platforms.
+
+20. **`last_activity_at` is epoch ms, not ISO.** The column is `INTEGER NOT NULL DEFAULT 0`. Compare with `Date.now()`. `Number(row.last_activity_at ?? 0)` in `rowToSession`. Never mix formats with the other `updated_at` / `created_at` / `stopped_at` columns which are TEXT ISO.
+
+21. **`bumpLastActivity` is the SINGLE write surface for the column.** Every inbound signal goes through it. UPDATE + WS emit in lock-step so a subscriber never observes DB-updated-but-no-event (which would race client's "stale" gate). Fire-and-forget — don't await.
+
+22. **Poller yield does NOT bump heartbeat.** The gate sits ABOVE the `sessionService.bumpLastActivity(session.id)` call in the poll loop. Yielding is a no-op by design — we don't count our own silence as activity. If you move the bumper call, preserve that invariant or `isStale` can never become true on a wedged session.
+
+23. **Stale override is client-only + scoped to working/waiting.** When `useHeartbeat.isStale === true`, `applyStaleOverride` coerces `working|waiting → idle` for display. Stopped and error stay. **Never mutates the DB** — server remains authoritative; the client just disbelieves a stored active state after 30s of silence.
+
+24. **`install-hooks.mjs` merge is idempotent, preserving user matchers.** Pure helpers `mergeHookEvents(priorHooks)` + `entryHasCommanderHook(entries)` are exported. Scanner detects the commander-hook.sh substring in any existing hook entry → skip; otherwise append a `matcher='*'` entry alongside user-added matchers (e.g. custom Bash linter on Stop). Re-running is free. Do NOT replace the user's existing matcher array — only append.
+
+### ⚠️ Pre-existing bug surfaced during Patch 1 restart (FLAGGED, NOT FIXED)
+
+- **Symptom:** Server refused to boot on 3 consecutive restarts with `SqliteError: UNIQUE constraint failed: sessions.tmux_session` during `teamConfigService.start()` → `reconcile` → `upsertTeammateSession` (session.service.ts:478 → :204).
+- **Root cause:** `resolveSentinelTargets()` (session.service.ts:719+) scans all `agent:` sentinel rows on boot and claims any tmux pane whose `cwd` matches. Two orphaned rows from team `ovagas-ui` (config file no longer in `~/.claude/teams/`) had cwd = jstudio-base, same as the live team `ovagas-r2`'s coder. Orphans claimed pane `%59`, team-config reconcile for ovagas-r2 then tried to insert a SECOND row with tmux_session=%59 → UNIQUE violation.
+- **Temporary mitigation I performed:** `DELETE FROM sessions WHERE team_name = 'ovagas-ui'` via sqlite3 — removed 3 stopped orphan rows. Non-destructive (all were `stopped`, team config was already gone from disk). Server booted cleanly after.
+- **Real fix (deferred, out of Phase N.0 scope):** `resolveSentinelTargets` should (a) drop rows whose `team_name` has no matching config file on disk, OR (b) check incoming team-config `tmuxPaneId`s against already-claimed panes BEFORE the sentinel resolver runs. Either prevents the collision class.
+
+### Known footguns for next-you
+
+- **Breaking useSessionTick shape.** Patch 1 originally (a97ee1c, reverted) made `useSessionTick` return `{ tick, postCompact }`. After revert it's back to plain `tick: SessionTick | null`. If you re-introduce post-compact detection, rebuild both sides — it's not half there.
+- **Install script runs against real settings.json.** `node scripts/install-hooks.mjs` writes to `~/.claude/settings.json`. Backups are automatic (timestamped siblings) but destructive-to-user-state if they were mid-edit. For testing, use `mergeHookEvents(priorHooks)` directly — no disk I/O.
+- **`SessionStart` on unknown session = log+skip.** Never auto-create a row from a hook. Tmux + team-config own row lifecycle. Racing here produces orphans which collide with the sentinel resolver (see pre-existing bug above).
+- **Heartbeat WS traffic.** Every hook + every chokidar append + every tick fires a heartbeat. On a busy session: ~5-10 emits/second. No throttle in v1. If you see WS backpressure complaints, add a per-session 500ms dedup in `bumpLastActivity` (DB writes authoritative, WS emits dedup'd).
+- **Tests using installed .mjs.** `install-hooks-merge.test.ts` lives in `server/src/services/__tests__/` (not client — keeps tsconfig clean). Imports `../../../../scripts/install-hooks.mjs` with `@ts-expect-error` on the import line. Don't move it back to client-side without adding a .d.ts shim.
+
+### SUGGESTIONS (deferred — NOT this phase)
+
+- **Auto-create sessions on SessionStart.** Could close the "new Claude Code session outside Commander never shows up" gap. Risk: orphan collisions with team-config reconcile; needs coordinated lifecycle contract first.
+- **SessionEnd summarizer.** Fire a cheap Sonnet Agent to summarize the closed JSONL into the project's `PM_BRAIN.md`. Future F8 per CTO prescription.
+- **Heartbeat history ring buffer.** Today we only store the LATEST `last_activity_at`. A ring buffer would enable "show gaps > 60s in the last hour" diagnostics.
+- **Persist `status-flip` evidence to DB.** Currently in-memory ring in status-poller. Surviving a restart would help debug long-window misclassifications.
+- **Fix sentinel-collision root cause** (see pre-existing bug section above).
+
+### Post-compact reconstruction path (5-step cold start)
+
+1. `git log --oneline -10` — confirm HEAD is `a42cfb0` and you see the full Patch 1→4 trail above it.
+2. `pnpm -C server test && pnpm -C client test` — **server 92, client 109, both green**. Typecheck: `pnpm -r run typecheck` — clean.
+3. Read THIS section ("Coder-16 Session — Phase N.0") + the Phase K/L/M sections above (invariants 11-16 on statusline, 1-10 on chat parser + JSONL origin). You already did that pre-compact; after compact, re-read invariants 17-24 here.
+4. `sqlite3 ~/.jstudio-commander/commander.db "PRAGMA table_info(sessions);"` to confirm `post_compact_until_next_tick` (from reverted a97ee1c, column still exists — unused) AND `last_activity_at` (Patch 3) are both present. The post_compact column is harmless residue; don't remove without explicit direction.
+5. Expect Phase N.2 / Phase O (header widgets for CPU/Mem/5h/7d) / Phase P (full audit) dispatch from team-lead. CTO's 4-patch prescription is closed.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
