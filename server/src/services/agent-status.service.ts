@@ -189,11 +189,18 @@ export interface DetectedStatus {
   activity: SessionActivity | null;
 }
 
-// Internal classifier — same branches as the original detectStatus, but each
-// branch returns the `evidence` string alongside the status so the poller
-// can log WHY a flip happened. Evidence strings are short (<=40 chars) and
-// stable enough to grep server logs by.
-const classify = (paneContent: string): Omit<DetectedStatus, 'activity'> => {
+// Verbs that follow Claude Code's spinner glyph but ACTUALLY mean "not
+// working" — the spinner is present as visual continuity, but the pane
+// is parked (Phase J.1). Without this allowlist, the active-indicator
+// hoist below flips PMs that are monitoring teammates to status=working
+// every time their pane shows "✻ Idle · teammates running".
+const IDLE_VERBS = new Set(['Idle', 'Waiting', 'Paused', 'Standing']);
+
+// Exposed for unit tests — pure function, single-string input, no I/O.
+// `classifyStatusFromPane` is the same branch tree the poller uses, just
+// without the live tmux capture. Testing the branches in isolation is
+// the only sane way to pin invariants like Phase J.1's IDLE_VERBS gate.
+export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus, 'activity'> => {
   const lastLine = getLastMeaningfulLine(paneContent);
 
   for (const pattern of ERROR_PATTERNS) {
@@ -207,6 +214,17 @@ const classify = (paneContent: string): Omit<DetectedStatus, 'activity'> => {
   }
 
   if (hasActiveInTail(paneContent)) {
+    // Verb-aware override (Phase J.1): the spinner glyph alone is not
+    // enough to call this `working`. ✻ Idle / ✻ Waiting / ✻ Paused /
+    // ✻ Standing all carry a spinner for visual continuity but the verb
+    // says parked. detectActivity already extracts the verb; if it lands
+    // in IDLE_VERBS, short-circuit to `idle` rather than misfiring the
+    // hoist. A genuine `✻ Ruminating` / `✽ Doodling` / `⏺ Brewing` still
+    // wins the original branch.
+    const activity = detectActivity(paneContent);
+    if (activity && IDLE_VERBS.has(activity.verb)) {
+      return { status: 'idle', evidence: `verb=${activity.verb} overrides spinner hoist` };
+    }
     return { status: 'working', evidence: 'active-indicator in tail' };
   }
 
@@ -262,7 +280,7 @@ export const agentStatusService = {
       return { status: 'stopped', evidence: 'no tmux session', activity: null };
     }
     const paneContent = tmuxService.capturePane(tmuxSessionName, 25);
-    const core = classify(paneContent);
+    const core = classifyStatusFromPane(paneContent);
     const activity = detectActivity(paneContent);
     return { ...core, activity };
   },

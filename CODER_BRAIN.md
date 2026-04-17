@@ -1065,6 +1065,7 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 - **Phase I (2 commits).** Teammate palette variant on StatusBadge (muted idle so green-means-working pops). `sessionDisplay.ts` exports `getDisplayStatus` for the derived `teammate-active` light-blue state. Split-pane glass top bar. Force-close behind overflow + modal + server `system-notice` endpoint.
 - **Phase I.0 (1 commit — team-lead emergency patch).** `5a8ace2` moved `next.add(member.agentId)` in `team-config.service.ts reconcile()` ABOVE the `isActive=false` gate. Previously idle teammates were dismissed and re-ingested every cycle.
 - **Phase J (3 commits).** Activity parser + flip evidence + WS payload extension + protocol cards + sender-preamble detection + 22 new tests. This is the "trust the signals" phase.
+- **Phase J.1 (1 commit).** `IDLE_VERBS` allowlist (`Idle | Waiting | Paused | Standing`) suppresses the active-indicator hoist when the spinner glyph is present but the verb says parked. Fixes JLFamily PM showing `working` while pane reads `✻ Idle · teammates running`. `classifyStatusFromPane` exported for unit-testing the branch tree directly. 23/23 server tests pass.
 
 ### What you need to know that isn't obvious from the code
 
@@ -1079,6 +1080,7 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 9. **Commander's own DB is SQLite at `~/.jstudio-commander/commander.db`.** `db/connection.ts` owns schema migrations via `PRAGMA table_info` gates (SQLite doesn't support `ADD COLUMN IF NOT EXISTS`). Add columns by copying the pattern for `stack_json` / `recent_commits_json` from Phase C.
 10. **`session.activity` is NEVER in the DB.** Always attached at route boundaries from the poller's cache. If you ever write it to a column, you've broken the "derived, never persisted" invariant.
 11. **PhaseF parser + PhaseJ parsers live in `chatMessageParser.ts`.** One detector cascade, priority-ordered. Add new parsers at the priority point that matches their signal strength. Don't split into multiple files without thinking hard — a single cascade is the easier abstraction to reason about.
+12. **Spinner glyph alone does NOT mean `working` (Phase J.1).** `✻ Idle`, `✻ Waiting`, `✻ Paused`, `✻ Standing` all carry a spinner for visual continuity but mean parked. The `IDLE_VERBS` set in `agent-status.service.ts` is the allowlist; `classifyStatusFromPane`'s active-indicator branch consults it before returning `working`. If you add a new "spinner-but-parked" verb you see in the wild, extend `IDLE_VERBS` (and add a regression test in `activity-detector.test.ts`).
 
 ### What's in the backlog (Coder-15 file)
 

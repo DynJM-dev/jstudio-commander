@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectActivity } from '../agent-status.service.js';
+import { detectActivity, classifyStatusFromPane } from '../agent-status.service.js';
 
 describe('detectActivity — Phase J pane-footer parser', () => {
   test('full line → spinner + verb + elapsed + tokens + effort', () => {
@@ -68,5 +68,47 @@ describe('detectActivity — Phase J pane-footer parser', () => {
     assert.equal(activity!.verb, 'Brewing');
     assert.equal(activity!.elapsed, '4s');
     assert.equal(activity!.tokens, undefined);
+  });
+});
+
+describe('classifyStatusFromPane — Phase J.1 IDLE_VERBS override', () => {
+  test('✻ Idle in tail → idle, NOT working (spinner-glyph hoist suppressed)', () => {
+    const pane = [
+      '⏺ Standing by — coder mid-task.',
+      '✻ Idle · teammates running',
+      '⏵⏵ bypass permissions on · 1 teammate',
+    ].join('\n');
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /verb=Idle overrides spinner hoist/);
+  });
+
+  test('✻ Waiting verb → idle (PM monitoring teammates, not user input)', () => {
+    const pane = '✻ Waiting · 2 teammates working';
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'idle');
+    assert.match(result.evidence, /verb=Waiting/);
+  });
+
+  test('✻ Ruminating still classifies as working (regression guard)', () => {
+    const pane = '✻ Ruminating… (1m 49s · ↓ 430 tokens · thinking with xhigh effort)';
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'working');
+    assert.equal(result.evidence, 'active-indicator in tail');
+  });
+
+  test('numbered-choice prompt outranks IDLE_VERBS (waiting wins)', () => {
+    // A pane with both `✻ Idle` chrome and a numbered-choice prompt
+    // should still classify as waiting — numbered-choice runs above the
+    // active-indicator branch and is the strongest signal.
+    const pane = [
+      '✻ Idle · paused',
+      '❯ 1. Yes',
+      '  2. No',
+      '  3. Cancel',
+    ].join('\n');
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'waiting');
+    assert.equal(result.evidence, 'numbered-choice prompt');
   });
 });

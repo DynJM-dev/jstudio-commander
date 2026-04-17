@@ -43,7 +43,8 @@
 - [x] **Phase H — ContextBar timer reset on turn boundary + StickyPlanWidget dismissal persistence (localStorage) + getActivePlan recency (latest plan only) + 3 new plan tests — Coder-15 (3 commits, 2026-04-17)**
 - [x] **Phase I.0 — Emergency PM patch: team-config reconcile never dismisses on isActive=false — Team-lead (1 commit `5a8ace2`, 2026-04-17)**
 - [x] **Phase I — Teammate palette (muted idle) + teammate-active display state (light blue) + split-pane glass top bar + force-close overflow/modal + PM system-notice endpoint — Coder-15 (2 commits, 2026-04-17)**
-- [x] **Phase J — Live pane-activity parser + status-flip evidence log + `/status-history` endpoint + WS session:status payload extension + inter-session protocol cards (shutdown/plan-approval) + sender-preamble detection — Coder-15 (3 commits, 2026-04-17). Final Coder-15 rotation.**
+- [x] **Phase J — Live pane-activity parser + status-flip evidence log + `/status-history` endpoint + WS session:status payload extension + inter-session protocol cards (shutdown/plan-approval) + sender-preamble detection — Coder-15 (3 commits, 2026-04-17).**
+- [x] **Phase J.1 — `✻ Idle` verb override (IDLE_VERBS allowlist) so spinner-glyph hoist no longer flips parked PMs to `working` + classifyStatusFromPane exported for unit tests + 4 new tests — Coder-15 (1 commit, 2026-04-17). Final Coder-15 rotation.**
 
 ## Feature Wave 2 Highlights
 
