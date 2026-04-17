@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { getDb } from '../db/connection.js';
 import { hookMatchStats } from './hook-event.routes.js';
 import { SERVICE_ID, SERVICE_VERSION } from '../version.js';
+import { sessionTickService } from '../services/session-tick.service.js';
 
 const startTime = Date.now();
 
@@ -69,6 +70,13 @@ export const systemRoutes = async (app: FastifyInstance) => {
       effortLevel,
       version: SERVICE_VERSION,
     };
+  });
+
+  // Phase O — aggregate rate-limits for the HeaderStatsWidget. Picks
+  // the freshest session_ticks row with rate-limit fields; returns
+  // null pcts when no tick has arrived inside the freshness window.
+  app.get('/api/system/rate-limits', async () => {
+    return sessionTickService.getAggregateRateLimits();
   });
 
 };

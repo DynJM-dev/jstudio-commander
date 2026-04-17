@@ -1,8 +1,15 @@
-import type { SessionTick, StatuslineRawPayload } from '@commander/shared';
+import type { SessionTick, StatuslineRawPayload, AggregateRateLimitsPayload } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
+
+// Phase O — aggregate rate-limit freshness window. Claude Code's
+// statusline emits rate-limit fields on every tick, so "fresh" here
+// means "last meaningful tick was within the poll cadence the CLI
+// uses". 10 minutes is generous — if no session has ticked in that
+// long the account is effectively idle and we render a muted widget.
+export const RATE_LIMIT_STALE_MS = 10 * 60_000;
 
 // Phase M — in-memory dedup of rapid-fire ticks. Claude Code throttles
 // at 300ms so we're primarily guarding against a misbehaving forwarder
@@ -10,6 +17,12 @@ import { sessionService } from './session.service.js';
 // never prune explicitly (size is bounded by active-session count).
 const DEDUP_WINDOW_MS = 250;
 const lastTickAt = new Map<string, number>();
+
+// Phase O — in-memory cache of the last aggregate payload emitted on
+// WS. Used to dedupe `system:rate-limits` broadcasts: if the freshest
+// tick's pcts + reset timestamps + source id didn't change, we skip
+// the emit. Saves traffic when ticks arrive faster than values flip.
+let lastAggregateEmitKey: string | null = null;
 
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -173,7 +186,81 @@ export const sessionTickService = {
     // AFTER the tick upsert + emit so a client receiving both events
     // in-order never sees a heartbeat-then-stale-tick gap.
     sessionService.bumpLastActivity(tick.commanderSessionId);
+
+    // Phase O — recompute the aggregate rate-limit payload and emit on
+    // `system:rate-limits` when it changes. Piggybacks off the tick
+    // write path so we don't need a second trigger. Deduped via a
+    // signature of the visible fields.
+    this._maybeEmitAggregate();
     return tick;
+  },
+
+  // Phase O — read the freshest tick carrying rate-limit fields and
+  // return the aggregate shape. Source-of-truth pick: ORDER BY
+  // updated_at DESC, take the first non-null five_hour_pct row. Rate
+  // limits are account-wide so any live session is authoritative.
+  getAggregateRateLimits(nowMs: number = Date.now()): AggregateRateLimitsPayload {
+    const db = getDb();
+    const row = db.prepare(
+      `SELECT session_id, updated_at,
+              five_hour_pct, five_hour_resets_at,
+              seven_day_pct, seven_day_resets_at
+       FROM session_ticks
+       WHERE five_hour_pct IS NOT NULL OR seven_day_pct IS NOT NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    ).get() as
+      | {
+          session_id: string;
+          updated_at: number;
+          five_hour_pct: number | null;
+          five_hour_resets_at: string | null;
+          seven_day_pct: number | null;
+          seven_day_resets_at: string | null;
+        }
+      | undefined;
+
+    if (!row) {
+      return {
+        fiveHour: { pct: null, resetsAt: null },
+        sevenDay: { pct: null, resetsAt: null },
+        sourceSessionId: null,
+        sampleAgeMs: Number.POSITIVE_INFINITY,
+      };
+    }
+
+    const sampleAgeMs = Math.max(0, nowMs - row.updated_at);
+    const stale = sampleAgeMs > RATE_LIMIT_STALE_MS;
+    return {
+      fiveHour: {
+        pct: stale ? null : row.five_hour_pct,
+        resetsAt: stale ? null : row.five_hour_resets_at,
+      },
+      sevenDay: {
+        pct: stale ? null : row.seven_day_pct,
+        resetsAt: stale ? null : row.seven_day_resets_at,
+      },
+      sourceSessionId: row.session_id,
+      sampleAgeMs,
+    };
+  },
+
+  // Emit only when the payload signature differs from the last emit.
+  // Keeps traffic proportional to real state changes.
+  _maybeEmitAggregate(): void {
+    const agg = this.getAggregateRateLimits();
+    const key = JSON.stringify({
+      f: agg.fiveHour,
+      s: agg.sevenDay,
+      src: agg.sourceSessionId,
+    });
+    if (key === lastAggregateEmitKey) return;
+    lastAggregateEmitKey = key;
+    eventBus.emitSystemRateLimits(agg);
+  },
+
+  _clearAggregateCacheForTests(): void {
+    lastAggregateEmitKey = null;
   },
 
   getLatestForSession(sessionId: string): SessionTick | null {
