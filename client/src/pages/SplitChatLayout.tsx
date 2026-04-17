@@ -477,7 +477,7 @@ export const SplitChatLayout = () => {
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <StatusBadge status={activeTab.status} size="sm" variant="teammate" />
               <span
-                className="text-sm font-semibold truncate"
+                className="text-sm font-semibold truncate shrink-0"
                 style={{ color: 'var(--color-text-primary)' }}
                 title={activeTab.name}
               >
@@ -489,6 +489,20 @@ export const SplitChatLayout = () => {
                   style={{ color: 'var(--color-accent-light)', background: 'rgba(14, 124, 123, 0.08)' }}
                 >
                   {activeTab.agentRole}
+                </span>
+              )}
+              {/* Live activity verb for the single-tab variant — renders
+                  only while this teammate is actively working. */}
+              {activeTab.activity && activeTab.status === 'working' && (
+                <span
+                  className="text-xs truncate min-w-0"
+                  style={{ color: 'var(--color-accent-light)', fontFamily: M }}
+                  title={activeTab.activity.raw}
+                >
+                  · {activeTab.activity.spinner ? `${activeTab.activity.spinner} ` : ''}
+                  {activeTab.activity.verb}
+                  {activeTab.activity.elapsed ? ` ${activeTab.activity.elapsed}` : ''}
+                  {typeof activeTab.activity.tokens === 'number' ? ` · ${activeTab.activity.tokens.toLocaleString('en-US')} tokens` : ''}
                 </span>
               )}
             </div>

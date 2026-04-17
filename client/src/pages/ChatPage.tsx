@@ -417,6 +417,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         interrupting={interrupting}
         messages={allMessages}
         sessionStatus={session?.status}
+        activity={session?.activity ?? null}
         sessionId={sessionId}
         terminalHint={terminalHint}
         hasPrompt={!!prompt}

@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { ChatMessage } from '@commander/shared';
+import type { ChatMessage, SessionActivity } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
 import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
@@ -183,6 +183,10 @@ interface ContextBarProps {
   contextCost?: number;
   messages: ChatMessage[];
   sessionStatus?: string;
+  // Phase J — live pane-activity snapshot parsed from the Claude Code footer
+  // ("✽ Ruminating (1m 49s · 430 tokens · thinking with xhigh effort)"). Null
+  // when nothing parses; we then fall back to the existing generic labels.
+  activity?: SessionActivity | null;
   sessionId?: string;
   terminalHint?: string | null;
   hasPrompt?: boolean;
@@ -199,7 +203,7 @@ interface ContextBarProps {
   onRefresh?: () => Promise<void> | void;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -459,6 +463,26 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         >
           {status.label}
         </span>
+        {/* Live pane-activity verb + metadata — swaps in for the generic
+            status string when the footer parsed something, so the user
+            sees the same "✽ Ruminating 1m 49s · 430 tokens" that the pane
+            shows. Renders a dot separator between it and the status label
+            so they read as one line without a layout jump. */}
+        {isWorking && activity && (
+          <>
+            <span className="text-xs shrink-0" style={{ color: 'var(--color-text-tertiary)' }}>·</span>
+            <span
+              className="text-xs shrink-0 truncate max-w-[260px]"
+              style={{ color: 'var(--color-accent-light)', fontFamily: M }}
+              title={activity.raw}
+            >
+              {activity.spinner ? `${activity.spinner} ` : ''}
+              {activity.verb}
+              {activity.elapsed ? ` ${activity.elapsed}` : ''}
+              {typeof activity.tokens === 'number' ? ` · ${activity.tokens.toLocaleString('en-US')} tokens` : ''}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Elapsed timer — only once we've seen a working transition */}

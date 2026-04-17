@@ -263,8 +263,25 @@ export const SessionCard = ({
           )}
         </div>
 
+        {/* Phase J — live pane activity, Claude Code's own footer verb
+            (e.g. "✽ Ruminating 1m 49s · 430 tokens"). Hidden when nothing
+            parses; falls back to the lastMessagePreview path below when
+            activity is absent so quiet sessions still get a preview line. */}
+        {session.activity && session.status === 'working' && (
+          <p
+            className="text-xs mt-2 line-clamp-1"
+            style={{ color: 'var(--color-accent-light)', fontFamily: M }}
+            title={session.activity.raw}
+          >
+            {session.activity.spinner ? `${session.activity.spinner} ` : ''}
+            {session.activity.verb}
+            {session.activity.elapsed ? ` ${session.activity.elapsed}` : ''}
+            {typeof session.activity.tokens === 'number' ? ` · ${session.activity.tokens.toLocaleString('en-US')} tokens` : ''}
+          </p>
+        )}
+
         {/* Last message preview — caller-supplied; muted single line. */}
-        {lastMessagePreview && (
+        {lastMessagePreview && !(session.activity && session.status === 'working') && (
           <p
             className="text-xs mt-2 line-clamp-1 italic"
             style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}

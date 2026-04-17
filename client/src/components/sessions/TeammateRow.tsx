@@ -68,13 +68,29 @@ export const TeammateRow = ({ teammate, parentId, onOpen }: TeammateRowProps) =>
           {teammate.agentRole}
         </span>
       )}
-      <span
-        className="font-mono-stats text-xs flex-1 min-w-0 truncate"
-        style={{ color: 'var(--color-text-tertiary)' }}
-        title={teammate.projectPath ?? teammate.tmuxSession}
-      >
-        {teammate.projectPath ? shortenPath(teammate.projectPath) : teammate.tmuxSession}
-      </span>
+      {/* Live activity verb when the teammate is actively working; otherwise
+          the project path as before. Keeps the most useful signal in the
+          precious right-side column. */}
+      {teammate.activity && teammate.status === 'working' ? (
+        <span
+          className="text-xs flex-1 min-w-0 truncate"
+          style={{ color: 'var(--color-accent-light)', fontFamily: M }}
+          title={teammate.activity.raw}
+        >
+          {teammate.activity.spinner ? `${teammate.activity.spinner} ` : ''}
+          {teammate.activity.verb}
+          {teammate.activity.elapsed ? ` ${teammate.activity.elapsed}` : ''}
+          {typeof teammate.activity.tokens === 'number' ? ` · ${teammate.activity.tokens.toLocaleString('en-US')} tokens` : ''}
+        </span>
+      ) : (
+        <span
+          className="font-mono-stats text-xs flex-1 min-w-0 truncate"
+          style={{ color: 'var(--color-text-tertiary)' }}
+          title={teammate.projectPath ?? teammate.tmuxSession}
+        >
+          {teammate.projectPath ? shortenPath(teammate.projectPath) : teammate.tmuxSession}
+        </span>
+      )}
     </motion.button>
   );
 };
