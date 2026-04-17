@@ -5,6 +5,7 @@ import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
+import { readJsonlOrigin, isCoderJsonl, type JsonlOrigin } from '../services/jsonl-origin.service.js';
 
 interface HookEventBody {
   event: string;
@@ -23,11 +24,12 @@ interface HookEventBody {
 // row's transcript_paths list. No rotation heuristics, no cwd scans, no
 // id-as-uuid guesses. If we can't identify an owner we drop the event.
 export type MatchStrategy =
-  | 'claudeSessionId'   // hook's sessionId already present in a row's transcript_paths basename
-  | 'transcriptUUID'    // transcript_path's basename UUID already in a row's transcript_paths
-  | 'sessionId-as-row'  // hook's sessionId === sessions.id (PM/lead pattern)
-  | 'cwd-exclusive'     // exactly one session row has this cwd AND unclaimed
-  | 'pm-cwd-rotation'   // Phase L — PM/lead rotation, exactly one UUID-id session in this cwd
+  | 'claudeSessionId'    // hook's sessionId already present in a row's transcript_paths basename
+  | 'transcriptUUID'     // transcript_path's basename UUID already in a row's transcript_paths
+  | 'sessionId-as-row'   // hook's sessionId === sessions.id (PM/lead pattern)
+  | 'cwd-exclusive'      // exactly one session row has this cwd AND unclaimed
+  | 'pm-cwd-rotation'    // Phase L — PM/lead rotation, exactly one UUID-id session in this cwd
+  | 'coder-team-rotation'// Phase L B2 refinement — coder JSONL routes to its team's non-lead row
   | 'skipped';
 
 export const hookMatchStats: Record<MatchStrategy, number> = {
@@ -36,6 +38,7 @@ export const hookMatchStats: Record<MatchStrategy, number> = {
   'sessionId-as-row': 0,
   'cwd-exclusive': 0,
   'pm-cwd-rotation': 0,
+  'coder-team-rotation': 0,
   skipped: 0,
 };
 
@@ -102,6 +105,14 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
     }
   }
 
+  // Phase L B2 refinement — classify the JSONL before falling to the
+  // cwd-based strategies so coder events never bind to a PM and vice
+  // versa. Origin is best-effort; if the file isn't readable or lacks
+  // header fields, both branches below fall back to their existing
+  // ambiguity-safe behavior (single-match or skip).
+  const origin: JsonlOrigin | null = transcriptPath ? readJsonlOrigin(transcriptPath) : null;
+  const coderOrigin = isCoderJsonl(origin);
+
   // 4. Phase L — PM/lead rotation bridge. Claude Code rotates transcripts
   // (new JSONL filename = new claude session UUID) on compaction or after
   // a crash/restart. The hook fires with the NEW UUID, which matches no
@@ -116,7 +127,12 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   // slug like `coder-11@team-name`). Exactly-one UUID-id session in the
   // cwd → append the new transcript to that session. Multi-match (two
   // PMs in same cwd) drops to skip, preserving safety.
-  if (cwd) {
+  //
+  // B2 refinement: if origin marks this as a coder JSONL (agentName
+  // present), DON'T enter this branch — coder events must not
+  // false-attribute to a PM just because the PM is the only UUID-id
+  // session in the shared cwd.
+  if (cwd && !coderOrigin) {
     const pmRows = db.prepare(
       `SELECT id FROM sessions
        WHERE project_path = ?
@@ -125,6 +141,24 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
     ).all(cwd, UUID_ID_GLOB) as Array<{ id: string }>;
     if (pmRows.length === 1) {
       return { id: pmRows[0]!.id, strategy: 'pm-cwd-rotation' };
+    }
+  }
+
+  // 5. Phase L B2 refinement — coder-team-rotation. When the JSONL
+  // origin identifies this file as a coder (agentName present), match
+  // to the non-lead-pm session in the cwd whose team_name matches the
+  // JSONL's teamName. Exactly-one match binds; ambiguity (multiple
+  // coders in the team with the same project_path) skips.
+  if (cwd && coderOrigin && origin?.teamName) {
+    const coderRows = db.prepare(
+      `SELECT id FROM sessions
+       WHERE project_path = ?
+         AND status != 'stopped'
+         AND team_name = ?
+         AND (agent_role IS NULL OR agent_role != 'lead-pm')`,
+    ).all(cwd, origin.teamName) as Array<{ id: string }>;
+    if (coderRows.length === 1) {
+      return { id: coderRows[0]!.id, strategy: 'coder-team-rotation' };
     }
   }
 

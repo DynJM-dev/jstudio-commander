@@ -8,6 +8,7 @@ import { sessionService } from './session.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
 import { resolveOwner } from '../routes/hook-event.routes.js';
+import { readJsonlOrigin, isCoderJsonl } from './jsonl-origin.service.js';
 
 export const setupWatcherBridge = (): void => {
   // Wire JSONL file changes → parse new lines → emit chat messages
@@ -22,6 +23,8 @@ export const setupWatcherBridge = (): void => {
     // Phase L — matcher cascade aligned with hook-event.resolveOwner so
     // chokidar-discovered files survive PM/lead transcript rotation even
     // when the hook event was dropped or arrived before the row existed.
+    // B2 refinement: consults the JSONL origin so the cwd fallback never
+    // false-attributes a coder's events to a PM in the same cwd.
     const db = getDb();
 
     //   1. claude_session_id OR id matches the JSONL filename (covers
@@ -30,30 +33,46 @@ export const setupWatcherBridge = (): void => {
       'SELECT id FROM sessions WHERE claude_session_id = ? OR id = ?'
     ).get(jsonlFilename, jsonlFilename) as { id: string } | undefined;
 
-    //   2. Encoded-project-path match → fully resolved cwd. Reused below
-    //      for both the old "first row wins" behavior AND the new
-    //      PM-cwd-rotation check via resolveOwner.
+    // Read the JSONL origin once — used both to scope the cwd fallback
+    // below AND to enable resolveOwner's coder-team-rotation branch.
+    const origin = readJsonlOrigin(filePath);
+    const originIsCoder = isCoderJsonl(origin);
+
+    //   2. Encoded-project-path match → fully resolved cwd. The cwd
+    //      fallback scopes by the origin's role: coder JSONLs only match
+    //      non-lead-pm rows; PM JSONLs only match lead-pm rows. Rows whose
+    //      agent_role is NULL are eligible either way (legacy rows).
     let matchedCwd: string | null = null;
     if (!session) {
+      const rolePredicate = originIsCoder
+        ? "AND (agent_role IS NULL OR agent_role != 'lead-pm')"
+        : origin && origin.agentName === null
+          ? "AND (agent_role IS NULL OR agent_role = 'lead-pm')"
+          : '';
       const rows = db.prepare(
-        "SELECT id, project_path FROM sessions WHERE project_path IS NOT NULL AND status != 'stopped'"
+        `SELECT id, project_path FROM sessions
+         WHERE project_path IS NOT NULL
+           AND status != 'stopped'
+           ${rolePredicate}`
       ).all() as { id: string; project_path: string }[];
 
       for (const row of rows) {
         const encoded = jsonlDiscoveryService.encodeProjectPath(row.project_path);
         if (encoded === encodedProjectDir) {
           matchedCwd = row.project_path;
-          // Keep the FIRST match for bug-compat with pre-Phase-L code, but
-          // upgrade below if `resolveOwner` finds a better candidate (the
-          // rotated PM/lead session whose id is the original UUID).
+          // Keep the FIRST match (within the role-scoped subset) for
+          // bug-compat with pre-Phase-L code, then upgrade below via
+          // resolveOwner which disambiguates further (pm-cwd-rotation
+          // vs coder-team-rotation) now that it sees the origin too.
           if (!session) session = { id: row.id };
         }
       }
     }
 
     //   3. Phase L — hand off to hook-event.resolveOwner so the
-    //      pm-cwd-rotation + cwd-exclusive rules apply here too. Overrides
-    //      the first-row-wins fallback above when a better match exists.
+    //      pm-cwd-rotation + coder-team-rotation + cwd-exclusive rules
+    //      apply here too. resolveOwner reads the JSONL origin itself so
+    //      the coder-vs-PM discriminator is enforced a second time.
     if (matchedCwd) {
       const better = resolveOwner({
         event: 'jsonl-discovery',
