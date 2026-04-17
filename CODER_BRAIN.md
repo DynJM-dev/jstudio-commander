@@ -1939,6 +1939,35 @@ clean across shared + server + client.
 
 ---
 
+## Coder-16 Session — Phase T (CTO-revised spawn-bind + hook-authoritative poller yield, 2026-04-17)
+
+HEAD `3419d70` (pre-T was `bcb0917` + team-lead hotfix `bf8033a`). Three commits this rotation:
+
+- `4474756` feat(status): last_hook_at column + 60s hook-authoritative poller yield
+- `cc67146` feat(spawn): bind claude_session_id via JSONL watch on spawn
+- `3419d70` test(phase-t): 60s hook yield + spawn JSONL bind + integration E2E-light
+
+Problem (from CTO snapshot §7): `resolveOwner` drops hook events for Commander-spawned sessions because `sessions.claude_session_id` stays NULL for too long after spawn. Commander doesn't know the Claude UUID until Claude Code writes its first JSONL line; by then the 5-strategy cascade is guessing via cwd / transcript_path and missing. Compounded by the old 10s/status=idle poller yield (Phase N.0 Patch 2 at `cfd1e65`) being too narrow — append-only transcript writes never bumped `updated_at`, so active turns could slip outside the yield window and let the pane regex flip a just-stopped row back to working.
+
+**Patch 0 — JSONL-watch binding at spawn (file: `server/src/services/session.service.ts`).** Module-level `bindClaudeSessionFromJsonl(sessionId, cwd)` helper (lives above the `sessionService` object; calls `sessionService.*` at runtime, which is legal). Chokidar watch on `join(config.claudeProjectsDir, jsonlDiscoveryService.encodeProjectPath(cwd))`, options `{ depth: 0, ignoreInitial: true, persistent: false }`. Kicked off in `createSession` BEFORE the 500ms `setTimeout` that sends the `claude` keystroke, so the first add event cannot race past us. First UUID-named (`CLAUDE_JSONL_UUID_RE`) `.jsonl` add-event → `upsertSession({id, claudeSessionId: uuid})` + `appendTranscriptPath(sessionId, fullJsonlPath)` + emit `session:updated`. 30s safety timeout (`SPAWN_BIND_TIMEOUT_MS`) with warn-and-fall-through. No cwd → skip entirely (Claude writes to its own default dir we can't predict). **Do NOT reintroduce the `ignored` predicate** — chokidar v4 runs it against the watch dir itself, and a naïve `!p.endsWith('.jsonl')` filter ignores the whole directory. The add-handler filename-regex check is the filter.
+
+**Patch 2 REVISION — last_hook_at + 60s hook-authoritative yield.** New column `sessions.last_hook_at INTEGER NOT NULL DEFAULT 0` (epoch ms). Idempotent migration in `db/connection.ts`. New `sessionService.bumpLastHookAt(sessionId)` single write surface — called by every hook-event route branch that resolves an owner (Stop, SessionStart, SessionEnd, transcript-match fallback). Status-poller `SELECT` now includes `last_hook_at` and the `ms_since_update` strftime calc was dropped (no other consumer). Yield gate is now purely `Date.now() - last_hook_at < 60_000` — no status predicate, no `lastKnownStatus` cache dance inside the yield. Outside the window the poller resumes normal pane-regex classification so dead panes still stop. Chosen 60s because it covers 1-2 realistic active turns, and once the hook pipeline catches up (Patch 0 closes the bootstrap gap) it'll always fire well within that window.
+
+**Tests (Patch 5).** `poller-yield.test.ts` wholly replaced with the new 60s/last_hook_at contract (5 tests, including a 60s-edge off-by-one guard via strict `<`). New `spawn-jsonl-bind.test.ts` (5 tests). Key thing there — chokidar's `add` event on macOS is gated on `ready` firing (fsevents init cost), so `watchUntilReady(dir, timeoutMs)` splits into `{ ready, firstAdd }` promises and the test awaits `ready` before writing the file. Without that, even a 3s timeout wasn't enough. New `integration/phase-t-hook-yield.test.ts` (3 tests, E2E-light via Fastify inject, covers Stop → last_hook_at → poller-would-yield decision against the real DB). `phase-p3-hardening.test.ts` H2 had to be tightened: its split anchor `'appendTranscriptPath('` now matches the Patch 0 helper's call site FIRST (since the helper is above the method definition in file order), so I changed the anchor to `'appendTranscriptPath(sessionId: string, path: string)'` to find the definition specifically.
+
+**Verification.** Full suite: server 178/178 unit + 22/22 integration. Typecheck clean. No new external deps (chokidar already present for file-watcher service).
+
+**Post-reconstruction checklist.** If this rotation's context is lost, to resume:
+1. `git log --oneline 4474756^..HEAD` should show the 3 Phase T commits.
+2. `grep -n "last_hook_at" server/src/services/status-poller.service.ts server/src/routes/hook-event.routes.ts server/src/services/session.service.ts server/src/db/connection.ts` should show bumps in all 4 files.
+3. `grep -n "bindClaudeSessionFromJsonl" server/src/services/session.service.ts` — one definition + one call site in `createSession`.
+4. `pnpm --filter @commander/server test` → 178/178.
+5. `pnpm --filter @commander/server run test:integration` → 22/22.
+
+**Gotchas / invariants.** The spawn-bind helper references `sessionService.*` lexically — JS hoisting handles it at runtime. If anyone ever tries to move that helper inside the sessionService object literal, it needs to become a method (`this.foo(...)`). `bumpLastHookAt` writes ONLY `last_hook_at` (no `updated_at` change) by design — Phase P.3 H2 hardened appendTranscriptPath to leave `updated_at` alone so the old yield gate couldn't be tricked by transcript-stream writes. The new gate keys on `last_hook_at` so updated_at is back to status-flip semantics only. chokidar's `persistent: false` is deliberate — we don't want these watchers keeping the event loop alive if the process tries to shut down, and they self-close after 30s anyway.
+
+---
+
 ## Coder-16 Session — Phase S.1 (message routing + ctx single-source-of-truth, 2026-04-17)
 
 HEAD `b54fab6` (pre-S.1 was `1ad2aa1`). Four commits this rotation:
