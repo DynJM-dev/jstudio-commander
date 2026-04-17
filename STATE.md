@@ -1,13 +1,13 @@
 # JStudio Commander — State
 
 ## Current State
-- Phase: **Phase A — Token-audit cleanup sweep complete (Coder-11)**
+- Phase: **Phase A + Phase B complete (Coder-11). Awaiting Phase C handoff to Coder-12.**
 - Last updated: 2026-04-16
-- HEAD: `72d2fae` (close #191) — Phase A commits: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae`
+- HEAD: `ad3d7fe` (#219 offscreen pause) — Phase B commits: `6177fe2` `ad3d7fe`. Phase A commits: `b7886fb` `c21ab5b` `49f149a` `69a66f0` `72d2fae` `2787b2d`.
 - Model: **Opus 4.7** (migrated from 4.6). Default effort: **xhigh** for Commander-spawned sessions.
 - Server port: **3002** (config.json override) · Vite: **5173**
 - Blockers: none
-- Backlog: #216 (useChat tail-delta), #219 (SessionTerminalPreview pane-poll batch), #230 (project tech-stack pills). All low priority.
+- Backlog: #230 (project tech-stack pills, needs server endpoint) — Phase C target. Batch `/output` endpoint deferred (low marginal value post-#219). All other token-audit items shipped.
 
 ## Phases
 - [x] Phase 0-10: v1 Complete (see PM_HANDOFF.md)
@@ -15,9 +15,9 @@
 - [x] Post-v1 Polish Wave 2 — Coder-8 (plan-attach + verification)
 - [x] Feature Wave 1 — Coder-9 (17 commits, 2026-04-14 → 2026-04-15)
 - [x] Feature Wave 2 + Stabilization — Coder-9 (25 commits, 2026-04-15 → 2026-04-16)
-- [x] **Phase A — Token-audit cleanup sweep — Coder-11 (5 commits, 2026-04-16)**
-- [ ] Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause)
-- [ ] Phase C — #230 project tech-stack pills
+- [x] Phase A — Token-audit cleanup sweep — Coder-11 (6 commits, 2026-04-16)
+- [x] **Phase B — Polling protocol changes (#216 tail-delta, #219 preview pause) — Coder-11 (2 commits, 2026-04-16)**
+- [ ] Phase C — #230 project tech-stack pills (Coder-12, fresh respawn)
 
 ## Feature Wave 2 Highlights
 
@@ -72,8 +72,8 @@
 
 ## Next up (pending backlog)
 
-1. **Token-audit follow-ups (remaining)** — #216 (useChat tail-delta), #219 (SessionTerminalPreview pane-poll batch). Phase B candidates.
-2. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint). Phase C.
+1. **#230** — Project tech-stack pills + git commits (needs coder-10 server endpoint). Phase C target.
+2. **Batch `/output` endpoint** — deferred Phase B sub-item. Skip until multi-teammate views are measurably hot post-#219.
 3. **jstudio-init-project helper** — scaffold STATE.md / PM_HANDOFF.md with one prompt
 4. **Memory/skill inventory view** — browse `~/.claude/skills/` + memory files as panel
 5. **Agent-status via `.claude/status.json`** — replace regex heuristics if upstream exposes it

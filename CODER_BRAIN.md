@@ -1,7 +1,7 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-16 — Coder-9 pre-4.7-restart documentation sweep
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions)
+> Last updated: 2026-04-16 — Coder-11 post-Phase-B refresh (proactive, pre-Phase-C handoff)
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits)
 > Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
 ## HEAD of main (post-sprint)
@@ -195,9 +195,62 @@ If a future refactor touches `createSession`, the bootstrap block and `waitForCl
 - ~~Unit tests plans.ts~~ → SHIPPED (#199, 6 tests)
 - **jstudio-init-project helper** — spec from PM: scaffold STATE.md / PM_HANDOFF.md with one prompt.
 - **Memory/skill inventory view** — surface `~/.claude/skills/` and memory files as a browsable panel.
-- **Token-audit follow-ups** — #216 (useChat tail-delta), #219 (pane-poll batch). #217/#218/#221/#223 shipped in Phase A (coder-11, 2026-04-16).
-- **#230** — Project tech-stack pills + git commits. Needs coder-10 server endpoint.
+- ~~**Token-audit follow-ups #216 / #219 (preview offscreen pause)**~~ → SHIPPED in Phase B (coder-11, 2026-04-16). #217/#218/#221/#223 shipped in Phase A.
+- **#230** — Project tech-stack pills + git commits. Needs coder-10 server endpoint. Phase C target.
 - ~~**#191** — Stale-transcript warning pill~~ → CLOSED 2026-04-16 (obsolete post-#204 deterministic transcript_paths model; zero code references).
+- **Batch /output endpoint** — deferred Phase B sub-item. Server side is ~30 min; client-side coordination (each `SessionTerminalPreview` owns its own poll, batching needs a shared coordinator hook or context) was the cost driver. Marginal value drops once #219's offscreen-pause is in. Revisit if multi-teammate views measurably hot.
+
+---
+
+## Coder-11 Session (Phase A + Phase B, 2026-04-16)
+
+### Commits
+
+```
+ad3d7fe perf(chat): pause SessionTerminalPreview poll when offscreen (#219)
+6177fe2 perf(chat): tail-delta polling via ?since=<msgId> (#216)
+2787b2d docs: add Phase A completion to STATE.md
+72d2fae docs: close #191 stale-transcript pill as obsolete post-#204
+69a66f0 perf(sessions): extract useSessionTree shared hook (#221)
+49f149a fix(analytics): wire useAnalytics WS sub to analytics:token (#223)
+c21ab5b perf(sessions): module-level cache for CreateSessionModal projects (#218)
+b7886fb perf(layouts): consolidate TopCommandBar + MobileOverflowDrawer polls (#217)
+```
+
+### Patterns established
+
+- **Tail-delta polling protocol (#216)** — client cursor is the SECOND-to-last message id, not the actual last. The actual last is always re-fetched and merged so #193's in-place block growth (Claude streams new content blocks INTO an existing assistant message during composing) keeps working. Server `?since=<msgId>` is **strictly exclusive**; unknown id falls back to the tail-window default. Client merge fn (`mergeDelta`) replaces by id when content differs and appends new ids — returns `prev` ref unchanged when nothing differs so `useMemo([messages])` chains stay stable.
+- **Module-level service cache (#218)** — `client/src/services/projectsCache.ts` is the pattern. Hook (`useProjects`) invalidates on mutations + on relevant WS events; consumer (`CreateSessionModal`) reads via `getProjectsCache()` / `setProjectsCache()`. Avoid the temptation to put the cache inline in the component — a hook importing from a component creates a bad dependency direction.
+- **WS-driven hooks > setInterval polls in layouts (#217)** — `TopCommandBar` and `MobileOverflowDrawer` now subscribe to the WS-driven `useSessions()` + `useAnalytics()` instead of polling. Each `useSessions()` / `useAnalytics()` call adds its own initial mount fetch (multiplexed WS subscription via the WebSocketProvider context) but no recurring polls. Acceptable trade today; future `SessionsContext` would deduplicate the initial fetches if needed.
+- **Shared tree-derivation hook (#221)** — `useSessionTree(sessions)` + `buildSessionTree(sessions)`. Hook accepts a pre-filtered list so each consumer keeps its own filter (active vs live). `buildSessionTree` is exported for unit-test addressability. SessionsPage + CityScene consume; SplitChatLayout uses the server endpoint `/sessions/:id/teammates` and is correctly out of scope.
+- **IntersectionObserver via callback ref (#219)** — when a component has multiple return paths (loading / not-alive / normal), the wrapper element swaps under React. A `useRef` + `useEffect([],[])` would only observe the mount-time element. Use a `useCallback` ref that disconnects the prior observer + creates+observes the new one on every ref binding. `observerRef` holds the active observer for cleanup on unmount.
+- **Analytics WS event is `analytics:token`** (NOT `usage:updated`). Confirmed via `server/src/ws/event-bus.ts:42` and `packages/shared/src/types/ws-events.ts:17`. `useAnalytics` debounces refetch by 2s — a working session emits one usage entry per assistant message and a per-event refetch would re-amplify.
+
+### Critical lessons (read before touching nearby code)
+
+1. **`?since=<id>` cursor must be SECOND-to-last, not actual last.** If you point it at the actual last id, you lose Claude Code's in-place block growth detection (#193 invariant). The 1-message overhead per poll is what buys you the growth-detection guarantee.
+2. **Server `?since=` returns `total = full transcript length`, NOT delta length.** `hasMore = messages.length < total` only works because the client maintains the full append-only list locally; don't try to interpret `total` as a delta-response field.
+3. **`pre-existing file-watcher.service.ts:90` typecheck error is GONE.** Both `pnpm -C client typecheck` and `pnpm -C server typecheck` are clean as of HEAD `ad3d7fe`. If you see that error reappear, something regressed.
+4. **`projectsCache` invalidation flows through `useProjects`.** If you add another mutation path for projects (new endpoint, direct API call from a component), call `invalidateProjectsCache()` from `client/src/services/projectsCache.ts` after the mutation succeeds — otherwise `CreateSessionModal` will show stale autocomplete for up to 60s.
+5. **The `analytics:token` debounce ref (`refetchTimer`) needs `clearTimeout` on cleanup** to avoid setting state on an unmounted hook. Already wired in `useAnalytics.ts`; preserve it if you refactor.
+
+### Tech debt opened by Phase A+B
+
+- `useSessions()` and `useAnalytics()` are now mounted in 3+ places each (TopCommandBar, MobileOverflowDrawer, plus their original consumers). Each adds an initial mount fetch. Future `SessionsContext` / `AnalyticsContext` would deduplicate.
+- `SessionTerminalPreview`'s observer + ref attachment is fine but every preview now allocates an `IntersectionObserver`. If a future view ever mounts dozens of previews, consider sharing one observer at the parent level.
+- The `mergeDelta` JSON.stringify-based equality check in `useChat.ts` is O(content blocks) per cursor message per poll. Fine at typical block sizes; revisit if profiles show it.
+- Batch `/output` endpoint deferred (see backlog). Re-evaluate after #230 lands and the multi-teammate split-view is more heavily used.
+
+### HEAD (post-Phase-B)
+
+```
+ad3d7fe perf(chat): pause SessionTerminalPreview poll when offscreen (#219)
+6177fe2 perf(chat): tail-delta polling via ?since=<msgId> (#216)
+```
+
+Both typechecks PASS, server `/api/system/health` returns `{status:"ok",dbConnected:true,tmuxAvailable:true}`. Tail-delta verified end-to-end on a 370-msg session: cursor=2nd-to-last → 1 message returned; cursor=last → 0 returned; cursor=unknown → tail fallback.
+
+---
 
 ### Verify-before-compact checklist (if you need to reproduce any of the above)
 
