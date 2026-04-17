@@ -155,7 +155,7 @@ export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
        WHERE project_path = ?
          AND status != 'stopped'
          AND team_name = ?
-         AND (agent_role IS NULL OR agent_role != 'lead-pm')`,
+         AND (agent_role IS NULL OR agent_role NOT IN ('lead-pm', 'pm'))`,
     ).all(cwd, origin.teamName) as Array<{ id: string }>;
     if (coderRows.length === 1) {
       return { id: coderRows[0]!.id, strategy: 'coder-team-rotation' };

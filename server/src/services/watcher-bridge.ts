@@ -45,9 +45,9 @@ export const setupWatcherBridge = (): void => {
     let matchedCwd: string | null = null;
     if (!session) {
       const rolePredicate = originIsCoder
-        ? "AND (agent_role IS NULL OR agent_role != 'lead-pm')"
+        ? "AND (agent_role IS NULL OR agent_role NOT IN ('lead-pm', 'pm'))"
         : origin && origin.agentName === null
-          ? "AND (agent_role IS NULL OR agent_role = 'lead-pm')"
+          ? "AND (agent_role IS NULL OR agent_role IN ('lead-pm', 'pm'))"
           : '';
       const rows = db.prepare(
         `SELECT id, project_path FROM sessions

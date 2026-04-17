@@ -91,7 +91,7 @@ const CODER_TEAM_ROTATION_SQL = `SELECT id FROM sessions
  WHERE project_path = ?
    AND status != 'stopped'
    AND team_name = ?
-   AND (agent_role IS NULL OR agent_role != 'lead-pm')`;
+   AND (agent_role IS NULL OR agent_role NOT IN ('lead-pm', 'pm'))`;
 
 const createSchema = (db: Database.Database) => {
   db.exec(`
@@ -156,6 +156,26 @@ describe('coder-team-rotation SQL — Phase L B2 refinement', () => {
 
     const rows = db.prepare(CODER_TEAM_ROTATION_SQL).all(cwd, 'team-b') as Array<{ id: string }>;
     assert.equal(rows.length, 0);
+    db.close();
+  });
+
+  test("PM with agent_role='pm' (not 'lead-pm') is still excluded — JLFamily regression", () => {
+    // Regression guard (2026-04-17): actual DB values use agent_role='pm'
+    // for 4 rows vs 'lead-pm' for 1. The filter `agent_role != 'lead-pm'`
+    // let 'pm' rows pass, causing multi-match (coder + pm in same cwd) →
+    // coder-team-rotation skipped → JLFamily coder's JSONL stayed orphaned.
+    const db = new Database(':memory:');
+    createSchema(db);
+    const cwd = '/Users/test/codeman-cases/JLFamily';
+    const insert = db.prepare(
+      "INSERT INTO sessions (id, project_path, status, team_name, agent_role) VALUES (?, ?, 'idle', ?, ?)",
+    );
+    insert.run('03763f99-...', cwd, 'jlp-patrimonio', 'pm');
+    insert.run('coder@jlp-patrimonio', cwd, 'jlp-patrimonio', 'general-purpose');
+
+    const rows = db.prepare(CODER_TEAM_ROTATION_SQL).all(cwd, 'jlp-patrimonio') as Array<{ id: string }>;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.id, 'coder@jlp-patrimonio');
     db.close();
   });
 
