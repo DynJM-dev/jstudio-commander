@@ -389,6 +389,8 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           liveComposing={liveComposing}
           liveActivity={liveActivity}
           shimmerState={shimmerState}
+          sessionActivity={session?.activity ?? null}
+          sessionTick={tick}
         />
       )}
 

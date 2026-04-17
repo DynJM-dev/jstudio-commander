@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ArrowDown, Loader2, Sparkles, Brain, Zap, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { ChatMessage } from '@commander/shared';
+import type { ChatMessage, SessionActivity, SessionTick } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
 import { TaskNotificationCard } from './TaskNotificationCard';
@@ -14,6 +14,7 @@ import {
 } from './ProtocolMessageCards';
 import { SystemEventChip } from './SystemEventChip';
 import { UnrecognizedProtocolCard } from './UnrecognizedProtocolCard';
+import { LiveActivityRow } from './LiveActivityRow';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
 import {
@@ -251,6 +252,11 @@ interface ChatThreadProps {
   // Drives the shimmer bar's color + speed: 'thinking' = calm accent,
   // 'tooling' = fast accent-light, 'waiting' = paused idle-yellow glow.
   shimmerState?: 'thinking' | 'tooling' | 'waiting';
+  // Phase M — live session data used by LiveActivityRow. `activity` is
+  // the Phase J pane-derived verb/spinner/elapsed; `tick` is the Phase M
+  // statusline-derived tokens + context %. Either can be absent.
+  sessionActivity?: SessionActivity | null;
+  sessionTick?: SessionTick | null;
 }
 
 export const ChatThread = ({
@@ -263,6 +269,8 @@ export const ChatThread = ({
   liveComposing,
   liveActivity,
   shimmerState = 'thinking',
+  sessionActivity,
+  sessionTick,
 }: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -558,6 +566,16 @@ export const ChatThread = ({
                       </motion.div>
                     );
                   })()}
+
+                  {/* Phase M — tick + pane-derived live activity row.
+                      Shows verb/elapsed/tokens/effort + a tiny context-%
+                      bar that colors by band. Hidden when neither tick
+                      nor activity has content to surface. */}
+                  <LiveActivityRow
+                    activity={sessionActivity}
+                    tick={sessionTick ?? null}
+                    visible={isWorking}
+                  />
 
                   <div
                     className={`thinking-shimmer h-1 rounded-full mt-1 ${shimmerState === 'tooling' ? 'tooling' : shimmerState === 'waiting' ? 'waiting' : ''}`}
