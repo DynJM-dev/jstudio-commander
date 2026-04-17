@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal } from 'lucide-react';
 import type { Project } from '@commander/shared';
 import { api } from '../../services/api';
+import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
 
 const M = 'Montserrat, sans-serif';
 
@@ -27,10 +28,22 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
   const [projects, setProjects] = useState<Project[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Fetch project list for autocomplete
+  // Fetch project list for autocomplete (#218 — TTL-cached in
+  // services/projectsCache).
   useEffect(() => {
     if (!open) return;
-    api.get<Project[]>('/projects').then(setProjects).catch(() => {});
+    const cached = getProjectsCache();
+    if (cached) {
+      setProjects(cached);
+      return;
+    }
+    api
+      .get<Project[]>('/projects')
+      .then((data) => {
+        setProjectsCache(data);
+        setProjects(data);
+      })
+      .catch(() => {});
   }, [open]);
 
   // Reset form when modal opens

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Project, WSEvent } from '@commander/shared';
 import { api } from '../services/api';
 import { useWebSocket } from './useWebSocket';
+import { invalidateProjectsCache } from '../services/projectsCache';
 
 interface UseProjectsReturn {
   projects: Project[];
@@ -55,10 +56,12 @@ export const useProjects = (): UseProjectsReturn => {
       setProjects((prev) =>
         prev.map((p) => (p.id === event.project.id ? event.project : p))
       );
+      invalidateProjectsCache();
     }
 
     if (event.type === 'project:scanned') {
       setProjects(event.projects);
+      invalidateProjectsCache();
     }
   }, [lastEvent]);
 
@@ -67,6 +70,7 @@ export const useProjects = (): UseProjectsReturn => {
     try {
       const res = await api.post<{ scanned: number; projects: Project[] }>('/projects/scan');
       setProjects(res.projects);
+      invalidateProjectsCache();
     } catch {
       // silently fail
     } finally {
