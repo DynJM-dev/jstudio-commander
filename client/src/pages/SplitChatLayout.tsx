@@ -425,9 +425,11 @@ export const SplitChatLayout = () => {
             minimize + overflow menu (force-close lives behind the overflow
             with a confirmation modal; see ForceCloseTeammateModal). */}
         <div
-          className="shrink-0 flex items-center gap-2 px-2"
+          className="shrink-0 flex items-center gap-2 px-2 py-1"
           style={{
-            height: 40,
+            /* Phase P.2 H2 — tabs wrap per JStudio rule, so the bar
+               needs flexible vertical space instead of fixed 40px. */
+            minHeight: 40,
             fontFamily: M,
             background: 'rgba(15, 20, 25, 0.72)',
             backdropFilter: 'blur(18px) saturate(170%)',
@@ -436,7 +438,10 @@ export const SplitChatLayout = () => {
           }}
         >
           {teammates.length > 1 ? (
-            <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
+            /* Phase P.2 H2 — flex-wrap instead of overflow-x-auto.
+               Hidden-tab scroll-UX is worse than a second-row wrap
+               when there are ~6+ teammates on a split pane. */
+            <div className="flex items-center gap-0.5 flex-1 min-w-0 flex-wrap">
               <AnimatePresence initial={false}>
                 {teammates.map((t) => {
                   const isActive = t.id === activeTabId;

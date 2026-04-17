@@ -13,9 +13,13 @@ interface TerminalTabsProps {
 
 export const TerminalTabs = ({ sessions, activeSessionId, onSelect, onNew }: TerminalTabsProps) => (
   <div
-    className="flex items-center gap-1 overflow-x-auto px-2 shrink-0"
+    /* Phase P.2 H2 — per JStudio rule "tabs use flex-wrap via TabBar,
+       NEVER overflow-x-auto". Replaces the horizontally-scrolling row
+       so overflowing tabs wrap to a second line instead of hiding
+       behind a scroll-bar. */
+    className="flex items-center gap-1 flex-wrap px-2 shrink-0 py-1"
     style={{
-      height: 44,
+      minHeight: 44,
       borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
       background: 'rgba(10, 14, 20, 0.8)',
     }}
@@ -45,8 +49,9 @@ export const TerminalTabs = ({ sessions, activeSessionId, onSelect, onNew }: Ter
       onClick={onNew}
       className="flex items-center justify-center shrink-0 rounded-lg transition-colors"
       style={{
-        width: 32,
-        height: 32,
+        /* Phase P.2 C4 — 44×44 minimum hit area for touch. */
+        minWidth: 44,
+        minHeight: 44,
         color: 'var(--color-text-tertiary)',
       }}
       onMouseEnter={(e) => {
