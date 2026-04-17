@@ -1,7 +1,7 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-17 — Coder-15 post-Phase-H refresh (3 bundle client fixes + test updates)
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H, 3 commits)
+> Last updated: 2026-04-17 — Coder-15 post-Phase-I refresh (4 bundles: color semantics + split top bar + force-close rework)
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + Phase I, 5 commits total)
 > Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
 ## HEAD of main (post-sprint)
@@ -851,6 +851,90 @@ e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
 4fbe99d fix(chat): persist plan widget dismissal in localStorage
 b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
 e5624e6 docs: Phase G.2 — adoption re-parents + config rewrite
+```
+
+---
+
+## Coder-15 Session — Phase I (Color semantics + split-pane glass top bar + force-close rework, 2026-04-17)
+
+### Commits (2)
+
+```
+d9ce052 feat(split): glass top bar + force-close behind overflow + PM notice
+a67dc1f feat(sessions): teammate-active display state + muted teammate-idle
+```
+
+### Triggering context
+
+Three intertwined user asks after hands-on use:
+
+1. "Make the Coder Green when one of the teammates is active." — teammates already used green (#22C55E) for working via STATUS_COLORS, but idle was sharing the amber of `--color-idle`, which polluted the green-means-active signal when 3+ teammates stacked in the minimized strip.
+2. "Session status should reflect teammate activity — light blue when PM is idle but teammate working, instead of yellow Idle." — the server's SessionStatus stays working/idle/waiting/stopped/error; the UI needed a new DERIVED state.
+3. "Top bar where teammates are needs a background; get rid of the X — PM should kill teammates. Force-close with double confirmation + PM warning is OK."
+
+### What shipped
+
+**Bundle 1 — Teammate palette variant.** `StatusBadge` gains an optional `variant?: 'session' | 'teammate'` prop. Session variant = unchanged STATUS_COLORS (idle = amber). Teammate variant = same palette except `idle → #6B7280` (same as stopped — muted grey, not amber). Working stays vivid green, waiting stays amber for action-required. Applied at: sidebar minimized strip (SplitChatLayout line 335), TeammateRow, split-pane top-bar tab pills. SessionCard + TopCommandBar keep the session variant because those ARE sessions.
+
+**Bundle 2 — `teammate-active` derived display state + light-blue token.**
+- New CSS vars: `--color-teammate-active: #60A5FA`, `--color-teammate-active-subtle`, `--color-teammate-active-border`.
+- New `utils/sessionDisplay.ts` export: `getDisplayStatus(session, teammates)` returns `working | waiting | teammate-active | idle | stopped | error`. Client-side projection only — the server's SessionStatus enum is untouched.
+- `SessionCard` renders a light-blue box-shadow halo when `PM=idle + teammate=working`; waiting glow still wins if the card is already yellow-pulsing.
+- `TopCommandBar` builds a `workingTeammateByParent` map alongside the existing `teammateCountByParent`. New `.session-tab--teammate-active` modifier applied on desktop tabs + overflow + mobile drawer when idle PM has working teammates.
+- `ContextBar` status dot + new `.bar-teammate-active` keyframe animation paint calm blue breath instead of the amber `.bar-waiting`. Suppresses `.bar-waiting` when teammate-active is derived, so we don't double-paint.
+
+**Bundle 3 — Glass top bar in split-pane expanded view.** The old layout had three floating/absolute pieces in the right pane: a tab bar (when teammates>1), a single-tab absolute-positioned header (when teammates===1), and absolute top-right controls. Unified into ONE 40px-tall glass bar that always renders, with `background: rgba(15, 20, 25, 0.72) + backdrop-filter: blur(18px) saturate(170%) + border-bottom: 1px rgba(255,255,255,0.06)`. Left side: tabs OR single-name pill (with teammate-variant dot). Right side: auto-split toggle + minimize + overflow menu — all inline, matching the rest of the app's nav chrome.
+
+**Bundle 4 — Force-close rework.**
+- The X button is **gone** from the default view.
+- Replaced with `MoreHorizontal` overflow that opens a dropdown menu containing a single rose-colored "Force close teammate" action.
+- Click → `ForceCloseTeammateModal` (new, `components/chat/`): glass modal, title + triangle icon in rose circle, explanatory copy ("bypasses PM's orchestration…"), mandatory acknowledgment checkbox, Cancel/Force-close buttons. Force-close stays disabled until the checkbox ticks.
+- Confirm path: reuse the existing Phase G `/dismiss` endpoint → fire-and-forget POST `/api/sessions/:pmId/system-notice` with a one-line notice describing what happened + asking the PM to reconcile → bottom-center toast "Force-closed X. PM notified." (3s AnimatePresence).
+- Server: new `POST /api/sessions/:id/system-notice` route. Reuses `sessionService.sendCommand` so the notice lands as a session_event for post-mortem. Newlines are flattened to spaces before send to sidestep tmux send-keys newline quirks.
+
+### Patterns established
+
+- **Variant-prop palette override.** When a component family needs a tuned palette for a specific surface, keep the shared default + add an optional `variant` prop that swaps the palette map. Beats cloning the component OR forking the tokens globally.
+- **Client-side derived state vs server enum.** `SessionStatus` is the server's truth; `DisplayStatus` is the UI's projection for cases where multiple truths combine (PM status + teammate statuses). Putting the derivation in `sessionDisplay.ts` keeps consumers from each reimplementing it.
+- **Friction-UX via overflow + modal + checkbox + PM notice.** For any destructive action that should work but shouldn't be easy, this four-step pattern (overflow, modal, acknowledgment, audit trail) is the template — matches how we handled Phase G's dismiss but with teeth.
+- **`sendCommand` as a reusable notice channel.** New action types that need to "tell the PM something happened" can POST through the notice endpoint rather than inventing a parallel notification system — the session_event log is the natural audit trail.
+
+### Critical lessons (read before touching nearby code)
+
+1. **StatusBadge default stays `variant='session'`** — existing callers (TopCommandBar, TerminalTabs, SessionCard header) keep the amber-on-idle behavior. If you add a NEW surface that renders teammates, pass `variant='teammate'` explicitly. The default is the wrong choice 90% of the time for teammate strips but the right choice everywhere else.
+2. **`teammate-active` is lower priority than `waiting`.** In every site that cares about both, the waiting glow/alarm wins. Don't flip the order — user attention > work-is-happening-elsewhere.
+3. **ContextBar has TWO conditions that trigger teammate-active paint.** `effectiveStatus === 'idle' && workingTeammateCount > 0` AND `effectiveStatus === 'waiting' && activeTeammateCount > 0 && !hasPrompt` (the "ambiguous waiting" case from Phase G.1). Both suppress `.bar-waiting` so we don't paint amber underneath blue.
+4. **System-notice endpoint is synchronous tmux send.** It reuses `sendCommand` which checks tmux liveness and returns a status. The client intentionally fires-and-forgets with `.catch(() => {})` — the force-close should proceed even if the PM pane is dead (which is often precisely why the user force-closed).
+5. **Force-close modal has `data-escape-owner` set.** Phase F installed a global ESC interrupt listener that could eat ESC before the modal sees it. The attribute tells the global handler to bail when the modal is mounted. If you add a new modal family in the app, do the same.
+6. **`MAX_TEAMMATES = 3` is a hard cap in SplitChatLayout.** The new top bar tabs + overflow menu assume this. If the cap ever grows, the tabs need an overflow strategy of their own (shrink + ellipsis? overflow dropdown?). Today: overflow flex + `overflow-x-auto` keeps the bar scrollable as a safety net.
+7. **`variant` prop on StatusBadge opt-in, not breaking.** Existing tests don't use it — default stays `session`. No test updates needed; the test suite at 22 client + 12 server still passes.
+
+### Tech debt opened by Phase I
+
+- **getDisplayStatus isn't unit-tested.** Pure function, easy to add 4-5 tests (each branch). Worth doing in a future pass; not shipping-critical.
+- **`workingTeammateByParent` is computed in two places** (TopCommandBar and ContextBar). Both derive from the same `sessions` array. Worth hoisting into a shared selector hook (e.g. `useTeammateActivity()`) if a third consumer lands.
+- **Force-close toast is local state, not a global toast system.** If a third "operation-outcome toast" lands, consider adopting a tiny toast library or rolling a `useToast()` hook. Don't inline-replicate more than twice.
+- **System-notice bypasses bypass-permissions mode.** The PM sees the notice as a literal user message in its input; if bypass-permissions is on, it may still act on it. That's actually the desired behavior (the PM SHOULD react to "user force-closed your teammate") — but document it so future-you doesn't break the invariant.
+- **The overflow dropdown has one menu item today.** Structure supports adding more (copy id, restart teammate, etc.) without touching the button — just add more `<button role="menuitem">` siblings.
+- **No server tests for the new endpoint.** The dismiss endpoint didn't have one either, so we're consistent. Add if/when the session.routes surface gets enough endpoints to justify a dedicated test file.
+
+### Verification (Phase I)
+
+- `pnpm -C client run typecheck` — exit 0.
+- `pnpm -C server run typecheck` — exit 0.
+- `pnpm -C client test` — 22/22 pass (no new tests in this phase).
+- `pnpm -C server test` — 12/12 pass.
+- **Server restart required** to activate `POST /api/sessions/:id/system-notice` — the user was warned in the PHASE_REPORT (no auto-restart because their session's PM was live).
+
+### HEAD (post-Phase-I)
+
+```
+d9ce052 feat(split): glass top bar + force-close behind overflow + PM notice
+a67dc1f feat(sessions): teammate-active display state + muted teammate-idle
+b13be92 docs: Phase H — timer reset + plan dismissal persistence + plan recency
+e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
+4fbe99d fix(chat): persist plan widget dismissal in localStorage
+b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
 ```
 
 ---
