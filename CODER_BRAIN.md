@@ -1,7 +1,7 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-16 — Coder-11 post-Phase-B refresh (proactive, pre-Phase-C handoff)
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits)
+> Last updated: 2026-04-17 — Coder-15 post-Phase-H refresh (3 bundle client fixes + test updates)
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H, 3 commits)
 > Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
 ## HEAD of main (post-sprint)
@@ -789,6 +789,69 @@ All three typechecks PASS (shared, client, server). Verification:
 - `~/.claude/skills/jstudio-pm/SKILL.md` has a Cold Start section at the top of the body.
 - `curl http://localhost:3002/api/chat/<any-team-lead>/stats` returns non-zero `totalTokens` AND `contextTokens`.
 - `sqlite3 ~/.jstudio-commander/commander.db 'SELECT id, status FROM sessions WHERE parent_session_id IS NOT NULL'` shows teammates' real status (coder-9 should be working if this conversation is alive).
+
+---
+
+## Coder-15 Session — Phase H (Chat-ergonomics triple: timer reset + plan dismissal persistence + plan recency, 2026-04-17)
+
+### Commits (3)
+
+```
+e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
+4fbe99d fix(chat): persist plan widget dismissal in localStorage
+b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
+```
+
+### Triggering context
+
+All three bugs were reproducible simultaneously in team-lead's own PM chat at HEAD `e5624e6`:
+
+1. Elapsed timer reading "300s" while the Claude Code pane's own indicator was at `✻ Stewing… 14s` — order-of-magnitude drift.
+2. X-closed StickyPlanWidget reappeared after reload / server restart.
+3. Widget reporting "Phase E" long after team-lead had shipped Phase G.2 — stale TaskCreate bundles from earlier transcript were winning over newer ones.
+
+### What shipped
+
+- **ContextBar timer reset.** Replaced the "last user message" pin with a forward walk that snaps `responseStartRef` to the latest *turn boundary* — user message OR first assistant message after a user message. Handles tool_result-only user echoes naturally (each tool cycle is its own turn boundary, matching pane semantics). `userJustSent` path now anchors to wallclock so the counter starts at 0 on optimistic send, pre-server-confirm, before the new user message lands in `messages`. `LiveElapsed` untouched — it derives elapsed from the ref, so the fix flows through.
+- **Plan dismissal persistence.** New `client/src/utils/dismissedPlans.ts` owns a localStorage-backed set under key `jsc-plan-dismissed` (JSON array, FIFO-capped at 50 entries). `isDismissed / dismiss / clearDismissed` as tiny helpers. StickyPlanWidget seeds from storage on mount + re-checks on `planKey` change (new plan = fresh surface by default) + writes through on X-close / Enter-on-close. The pre-existing "per-key dismissal scope" behavior is preserved — you dismiss plan A, plan B still shows.
+- **getActivePlan recency.** Rewrote `buildPlanFromMessages` around `groupMessages`: find the latest assistant group containing at least one TaskCreate, then build the plan from THAT group's TaskCreates only, applying TaskUpdates from that group onward. Earlier TaskCreates are historical — they belong to prior plans that are no longer current. The old "reset-when-allDone" heuristic only reset when EVERY task had completed, which silently absorbed incomplete phases into the next plan. Recency is a stronger invariant. Existing "new plan after allDone resets" test was re-worked to use a real user-message separator (the only realistic way two plans live in distinct groups); added 3 new tests (multi-TaskCreate-same-group merge, latest-completed-still-returns so widget can fade, cross-group TaskUpdates still apply). 22 tests pass (was 19).
+
+### Patterns established
+
+- **Turn boundary = forward walk, not backward scan.** A single-pass `for (const msg of messages)` with two state vars (`ref`, `sawUserSinceLastAssistant`) encodes the "boundary" rule without needing to scan backward multiple times. Backward scans only see the tail; forward walks capture the full turn history and naturally land on the newest boundary.
+- **Persisted set util pattern.** `utils/dismissedPlans.ts` is the template for any other "per-key dismissal" state that needs to survive reloads: key-prefixed localStorage, JSON array, FIFO cap, silent quota-fail fallback, `is / mutate / clear` trio. Keeps the consumer component free of storage ceremony.
+- **Recency over completion-state.** For plans specifically, "latest group with the identifying marker" is a stabler invariant than "reset on terminal state". Worth remembering for any similar "which is the CURRENT instance of X" question in the future (e.g. current plan, current phase, current audit pass).
+
+### Critical lessons (read before touching nearby code)
+
+1. **`buildPlanFromMessages` now depends on `groupMessages`.** Both are declared in `plans.ts`, with `groupMessages` declared AFTER `buildPlanFromMessages`. Works because the reference is inside the function body (evaluated at call time, not eval time). Don't refactor the file to call `groupMessages` from a module-level initializer — that would TDZ-throw.
+2. **`isDismissed(planKey)` is synchronous localStorage I/O.** Called from `useState` initializer + `useEffect` on every planKey change. Fine for the current widget frequency; if we ever batch-check dismissals for dozens of plans, switch to a memoized read that holds the parsed array for a tick.
+3. **`groupMessages` folds `tool_result`-only user messages into the PRIOR assistant group.** This means an assistant msg → tool_result user msg → assistant msg sequence produces ONE group (not three). The latest-TaskCreate logic handles this correctly because it iterates group messages and filters by `msg.role === 'assistant'` inside the loop.
+4. **ContextBar `lastBoundaryTs` memo recomputes on every `messages` identity change.** The `useChat` delta merge returns a NEW array reference only when content changes, so re-computation is bounded by actual content churn (not poll count). If future refactors loosen that, guard with a shallow signature or pass in a stable `messagesKey`.
+5. **`Date.parse('')` returns `NaN`.** The `lastBoundaryTs` walk explicitly skips NaN timestamps — necessary for the synthetic test fixtures (and for any real message with a missing ts, which shouldn't exist in practice but we defend anyway).
+
+### Tech debt opened by Phase H
+
+- `dismissedPlans.ts` has no tests of its own. Behavior is trivial enough that indirect coverage (via StickyPlanWidget manual verification) is fine, but adding 4 quick tests on the helper would be easy.
+- `useMemo(() => lastBoundaryTs, [messages])` inside ContextBar can be expensive on huge transcripts — linear in message count per re-render. If this ever shows up in profiles, cache the last-processed suffix + start from there.
+- `buildPlanFromMessages` now pays `groupMessages` cost (O(n)) on top of its own walk. Fine at current sizes; worth consolidating if we see N>10k messages per session.
+- `jsc-plan-dismissed` is unnamespaced-per-server-URL (matches existing `jsc-*` keys in the app). If a user opens two Commander instances on the same machine pointing at different ports, they'd share dismissals. Not a real issue today.
+
+### Verification (Phase H)
+
+- `pnpm -C client run typecheck` — 0 errors.
+- `pnpm -C client test` — 22 tests pass (19 prior + 3 new plan recency).
+- Manual: dismiss widget → reload → stays dismissed → new plan surfaces → widget returns for the new plan. Confirmed via Phase H acceptance criteria.
+- Server untouched — no server tests run.
+
+### HEAD (post-Phase-H)
+
+```
+e4a1645 fix(chat): ContextBar elapsed timer resets on new turn boundary
+4fbe99d fix(chat): persist plan widget dismissal in localStorage
+b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
+e5624e6 docs: Phase G.2 — adoption re-parents + config rewrite
+```
 
 ---
 
