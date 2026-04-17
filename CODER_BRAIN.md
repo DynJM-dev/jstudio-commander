@@ -1,12 +1,13 @@
 # CODER_BRAIN.md — JStudio Commander
 
-> Last updated: 2026-04-17 — Coder-15 post-Phase-J rotation-ending refresh
-> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + I + J, 11 commits + 1 Phase-I.0 team-lead emergency patch)
+> Last updated: 2026-04-17 — Coder-16 post-Phase-K refresh
+> Coders: Coder-7 (42 polish commits) → Coder-8 (verified + plan-attach) → Coder-9 (17+25 commits across two sessions) → Coder-11 (8 Phase A+B commits) → Coder-12 (Phase C/D/E, 17 commits) → Coder-14 (Phase F/G/G.1/G.2, 13 commits) → Coder-15 (Phase H + I + J + J.1, 11 commits + 1 Phase-I.0 team-lead emergency patch) → Coder-16 (Phase K, 3 commits)
 >
-> **Coder-15 rotation — read this first if you are the incoming coder:**
-> The "Coder-15 Cold Start Guide" section near the end of this doc collects the
-> context a new coder needs before touching anything substantial. Start there,
-> then read the current phase's section only if you need depth.
+> **Coder-16 rotation — read this first if you are the incoming coder:**
+> The "Coder-15 Cold Start Guide" section near the end of this doc collects
+> the base context. The "Phase K addendum to the Cold Start Guide" section
+> right after it adds the invariants introduced by the multi-wrapper parser.
+> Read both before touching chat-stream rendering.
 > Model: Opus 4.7 (migrated from 4.6 in commit 6d69fb0)
 
 ## HEAD of main (post-sprint)
@@ -1055,9 +1056,63 @@ b05a67a fix(plans): getActivePlan returns latest plan, not stale earlier ones
 
 ---
 
+## Coder-16 Session — Phase K (Chat parser robustness: multi-wrapper + JSON-in-wrapper + noise filter, 2026-04-17)
+
+### What shipped
+
+Three commits on top of `18f42f3`:
+
+| Commit | Subject | Scope |
+|---|---|---|
+| `9a37ec3` | `refactor(chat): parseChatMessage returns ordered fragment array` | Parser rewrite. `parseChatMessage(content)` returns `ParsedChatMessage[]`. Scanner walks content L-to-R emitting wrappers + prose fragments in order. JSON-in-wrapper routing recognizes `idle_notification` / `teammate_terminated` / `shutdown_approved` (plus existing shutdown / plan-approval). Unparseable JSON body in a wrapper degrades to a TeammateMessageCard with "(unparseable payload)" trailer. Unknown `type` JSON emits an `unrecognized-protocol` fragment. `parseStructuredUserContent` retained as deprecated shim for Phase F/J tests + belt-and-suspenders call sites. |
+| `686392d` | `feat(chat): system-event chips + unrecognized-protocol card + fragment renderer` | `SystemEventChip.tsx` (chip/card variants), `UnrecognizedProtocolCard.tsx`, `utils/systemEvents.ts` (`useSystemEventsMode` + `collapseConsecutiveIdles` + `isSystemEventFragment`), `utils/teammateColors.ts` (extracted palette used by three components). ChatThread iterates fragments; UserMessage belt-and-suspenders walks the array for the first card-worthy fragment. Collapse window: 60s. Default visibility: `chips`. |
+| `0c6210f` | `test(chat): Phase K parser + collapse coverage (+24 tests)` | Parser tests for each new detector, array-mode scenarios (multi-wrapper same-kind, mixed kinds, prose-between-wrappers, unparseable, unknown-type both inside and outside a wrapper), collapse tests (burst, non-adjacent, non-idle passthrough). 37 → 61 client tests. |
+
+### Why this phase existed
+
+In the shutdown sequence at the end of Phase J.1, Claude Code's messaging layer injected multiple back-to-back `<teammate-message>` wrappers whose BODIES were `idle_notification` JSON payloads. The Phase F/J parser handled one top-level wrapper with prose body and either ignored the rest or rendered raw JSON in a JB bubble. The team-lead saw repeated garbled chunks and the working session looked broken. Phase K makes the parser robust to:
+
+1. Multiple wrappers in one user-role message.
+2. JSON bodies inside a wrapper (route to the protocol parser, attach wrapper context).
+3. Unknown JSON `type` values (render placeholder, never leak JSON).
+4. Noise protocol kinds (idle / terminated / approved) — collapse bursts, show as muted chips by default.
+
+### Invariants added in Phase K (read before touching the chat-stream pipeline)
+
+1. **`parseChatMessage` is the new entry point** for structured detection. `parseStructuredUserContent` is the deprecated compat shim that returns only the first card-worthy fragment and is retained for tests + belt-and-suspenders call sites. Prefer `parseChatMessage` in new code.
+2. **The scanner preserves injection order.** If a message is `prose + <teammate-message> + prose + <teammate-message>`, the returned array is `[prose, card, prose, card]` in exactly that order. Prose segments that are purely whitespace are dropped.
+3. **JSON-in-wrapper forwards wrapper context.** When a `<teammate-message>` body parses as JSON with a recognized `type`, the parser forwards it through `routeJsonByType(obj, raw, context)` where `context` = `{ teammateId, color }` from the wrapper attrs. This is how SystemEventChip tints to the right teammate color for idle/terminated/approved kinds.
+4. **`hide` / `chips` / `cards` visibility mode** is backed by `localStorage['jsc-show-system-events']`, default `chips`. `useSystemEventsMode` re-renders on cross-tab `storage` events. No UI toggle exists today; flip via DevTools. See SUGGESTION below.
+5. **Consecutive same-teammate idles collapse within 60s.** The counter and the newest timestamp survive; the chip renders "coder-15 idled ×3" with the end-of-burst timestamp on hover.
+6. **Never render raw JSON in a user bubble.** Unknown `type` → `UnrecognizedProtocolCard`. Unparseable JSON body in a wrapper → TeammateMessageCard with "(unparseable payload)" trailer. These two paths are the last line of defense.
+7. **Teammate color palette lives in `utils/teammateColors.ts`.** TeammateMessageCard, SystemEventChip, UnrecognizedProtocolCard all import `resolveTeammateColor`. Don't inline the palette a third time.
+
+### Known footguns for next-you
+
+- **Strict-mode regressions.** `parseTaskNotification` / `parseTeammateMessage` (singular, top-level) keep strict-mode (whole content must be the tag); that's what the existing Phase F tests exercise. The scanner uses `extractTaskNotification` / `extractTeammateMessage` on a given match, which is non-strict. If you refactor these, preserve both paths.
+- **Overlapping wrappers.** Today no wrapper nests another. If that ever changes, `scanWrappers` collapses overlaps in favor of the outer match (non-overlapping cursor). A nested card would be lost, not crashed.
+- **Sender-preamble + wrapper collision.** If a user segment matches BOTH the sender-preamble regex AND is the body of a wrapper (shouldn't happen today), the wrapper wins because the scanner emits wrappers first and prose segments are only emitted for content NOT covered by a wrapper match.
+- **Collapse thresholds.** The 60s idle collapse window is a rough heuristic. Missing timestamps collapse optimistically (no way to tell apart, and users will almost always prefer collapse). If you ever see bursts separated by >60s that should still collapse (e.g., a stalled teammate idling once a minute for five minutes), relax the window here.
+
+### SUGGESTIONS (deferred / minor)
+
+- **UI toggle for system-events visibility.** Currently only flippable via `localStorage.setItem('jsc-show-system-events', 'cards' | 'hide')` in DevTools. When a Settings page materializes, surface there. Interim option: a tiny overflow dropdown in ContextBar.
+- **ProseFragment between multi-wrappers uses `whitespace-pre-wrap` + no JB chrome.** Looks correct but subtly different from the pre-Phase-K full UserMessage (no timestamp, no truncation). If a prose-between-wrappers segment is genuinely long, it won't truncate. Acceptable for now because the real-world scenario is short connective text between cards.
+- **`collapseConsecutiveIdles` only collapses WITHIN a single user message's fragment list.** Cross-message collapsing (e.g., 3 user messages in a row each containing 1 idle) is NOT merged. The server-side adjacency is different and would require group-level merging in ChatThread. Defer until we see it.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
+
+### Phase K addendum (read right after the numbered invariants below)
+
+- Phase K adds **`parseChatMessage` as the new primary parser entry point**. It returns an ORDERED `ParsedChatMessage[]`. Empty array = plain prose (caller falls back to `<UserMessage>`). See `Coder-16 Session — Phase K` above for full invariants.
+- `parseStructuredUserContent` is retained as a **deprecated shim** returning the first card-worthy fragment. Existing Phase F/J tests + the UserMessage belt-and-suspenders path use it, but new code should call `parseChatMessage` and iterate.
+- JSON protocol detectors now include **`parseIdleNotification`, `parseTeammateTerminated`, `parseShutdownApproved`**. Keep adding new detectors here (not in a parallel file) so the priority cascade remains single-source.
+- `localStorage['jsc-show-system-events']` (`hide | chips | cards`, default `chips`) controls whether the three noise kinds render as chips, full cards, or are hidden entirely.
+- `utils/teammateColors.ts` is the single source of truth for the named-color → hex palette. Don't inline it.
 
 ### What Coder-15 shipped across rotations
 
@@ -1095,9 +1150,9 @@ If you are the coder replacing Coder-15, read this section before touching anyth
 
 ### Start-of-session checklist
 
-1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-J should be `c852480`.
+1. `cd ~/Desktop/Projects/jstudio-commander && git log --oneline -8` — confirm HEAD. Post-Phase-K should be `0c6210f`.
 2. `pnpm -C client run typecheck && pnpm -C server run typecheck` — both exit 0.
-3. `pnpm -C client test && pnpm -C server test` — 37 client + 19 server pass.
+3. `pnpm -C client test && pnpm -C server test` — 61 client + 23 server pass.
 4. `curl -s localhost:<port>/api/system/health` — returns `{service:'jstudio-commander', version: ..., status:'ok', dbConnected:true}`.
 5. `ls -la ~/.claude/prompts/pm-session-bootstrap.md` — file exists, ~134 bytes.
 6. `grep -c "Cold Start" ~/.claude/skills/jstudio-pm/SKILL.md` — non-zero.
