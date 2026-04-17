@@ -46,7 +46,14 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
     onClose();
   };
 
-  const activeSessions = sessions.filter((s) => s.status !== 'stopped');
+  // Top-level only — teammates aren't standalone sessions in the UI's
+  // navigation surface (see TopCommandBar). The count here mirrors the
+  // top bar so users see the same number both places.
+  const activeSessions = sessions.filter(
+    (s) => s.status !== 'stopped'
+      && !s.parentSessionId
+      && (s.sessionType === 'pm' || s.sessionType === 'raw'),
+  );
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
   const totalCost = stats?.totalCostUsd ?? 0;
 

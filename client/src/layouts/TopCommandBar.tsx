@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Wifi, WifiOff, ChevronDown, MoreHorizontal } from 'lucide-react';
+import { Wifi, WifiOff, ChevronDown, MoreHorizontal, Bot } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { TunnelBadge } from '../components/shared/TunnelBadge';
@@ -43,9 +43,44 @@ export const TopCommandBar = () => {
     return () => document.removeEventListener('mousedown', handle);
   }, []);
 
-  const activeSessions = sessions.filter((s) => s.status !== 'stopped');
+  // Top-bar tabs are reserved for top-level sessions only — teammates
+  // (rows with parent_session_id) live in the split view + sidebar
+  // cluster, never as their own tab. The (sessionType === 'pm' || 'raw')
+  // filter is belt-and-suspenders so a misclassified row can't sneak in.
+  const topBarSessions = useMemo(
+    () => sessions.filter(
+      (s) => !s.parentSessionId && (s.sessionType === 'pm' || s.sessionType === 'raw'),
+    ),
+    [sessions],
+  );
+  const activeSessions = topBarSessions.filter((s) => s.status !== 'stopped');
   const displayNames = useMemo(() => buildDisplayNameMap(sessions), [sessions]);
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
+
+  // Active-teammate count keyed by parent session id. Used by the bot
+  // badge on each tab. WS-driven (useSessions hydrates from the same
+  // event stream that updates teammate status) so the count drops as
+  // soon as a coder stops. listTeammates' UNION-style parent matching
+  // is mirrored here so claudeSessionId-keyed relationships count too.
+  const teammateCountByParent = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of sessions) {
+      if (!s.parentSessionId || s.status === 'stopped') continue;
+      const k = s.parentSessionId;
+      map.set(k, (map.get(k) ?? 0) + 1);
+    }
+    // A parent's `parentSessionId` field on its teammate rows can be
+    // either the Commander UUID OR the Claude UUID. Surface both keys
+    // so SessionTab lookups work regardless of which one the team
+    // config recorded.
+    const out = new Map<string, number>();
+    for (const s of sessions) {
+      const direct = map.get(s.id) ?? 0;
+      const viaClaude = s.claudeSessionId ? (map.get(s.claudeSessionId) ?? 0) : 0;
+      if (direct + viaClaude > 0) out.set(s.id, direct + viaClaude);
+    }
+    return out;
+  }, [sessions]);
 
   const goToSession = (id: string) => {
     navigate(`/chat/${id}`);
@@ -77,6 +112,7 @@ export const TopCommandBar = () => {
   const SessionTab = ({ s }: { s: Session }) => {
     const isActive = s.id === currentSessionId;
     const isWaiting = s.status === 'waiting';
+    const teammateCount = teammateCountByParent.get(s.id) ?? 0;
     const cls = [
       'session-tab shrink-0',
       isActive ? 'session-tab--active' : '',
@@ -88,6 +124,18 @@ export const TopCommandBar = () => {
       <button onClick={() => goToSession(s.id)} className={cls} aria-current={isActive ? 'page' : undefined}>
         <StatusBadge status={s.status} size="sm" />
         <span className="truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
+        {teammateCount > 0 && (
+          <span
+            className="flex items-center gap-0.5 shrink-0"
+            style={{
+              color: isActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+            }}
+            title={`${teammateCount} active teammate${teammateCount === 1 ? '' : 's'}`}
+          >
+            <Bot size={13} />
+            <span className="text-xs font-semibold">{teammateCount}</span>
+          </span>
+        )}
         {isActive && (
           <span
             className="font-mono-stats hidden xl:inline-block"
@@ -144,6 +192,7 @@ export const TopCommandBar = () => {
                 s.status === 'stopped' ? 'session-tab--stopped' : '',
                 isWaiting ? 'waiting-tab-alarm' : '',
               ].filter(Boolean).join(' ');
+              const teammateCount = teammateCountByParent.get(s.id) ?? 0;
               return (
                 <button key={s.id} className={cls} onClick={() => goToSession(s.id)} aria-current={isActive ? 'page' : undefined}>
                   <StatusBadge status={s.status} size="sm" />
@@ -153,6 +202,16 @@ export const TopCommandBar = () => {
                       {s.model?.replace('claude-', '')}
                     </span>
                   </div>
+                  {teammateCount > 0 && (
+                    <span
+                      className="flex items-center gap-0.5 shrink-0 ml-auto"
+                      style={{ color: 'var(--color-text-tertiary)' }}
+                      title={`${teammateCount} active teammate${teammateCount === 1 ? '' : 's'}`}
+                    >
+                      <Bot size={13} />
+                      <span className="text-xs font-semibold">{teammateCount}</span>
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -303,6 +362,7 @@ export const TopCommandBar = () => {
                     s.status === 'stopped' ? 'session-tab--stopped' : '',
                     isWaiting ? 'waiting-tab-alarm' : '',
                   ].filter(Boolean).join(' ');
+                  const teammateCount = teammateCountByParent.get(s.id) ?? 0;
                   return (
                     <button key={s.id} className={cls} onClick={() => goToSession(s.id)} aria-current={isActive ? 'page' : undefined}>
                       <StatusBadge status={s.status} size="sm" />
@@ -312,6 +372,16 @@ export const TopCommandBar = () => {
                           {s.model?.replace('claude-', '')}
                         </span>
                       </div>
+                      {teammateCount > 0 && (
+                        <span
+                          className="flex items-center gap-0.5 shrink-0"
+                          style={{ color: 'var(--color-text-tertiary)' }}
+                          title={`${teammateCount} active teammate${teammateCount === 1 ? '' : 's'}`}
+                        >
+                          <Bot size={13} />
+                          <span className="text-xs font-semibold">{teammateCount}</span>
+                        </span>
+                      )}
                     </button>
                   );
                 })}
