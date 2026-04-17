@@ -58,6 +58,34 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     },
   );
 
+  // System notice — send a user-facing "notice" into a PM's tmux pane. Used
+  // by the UI when the user takes an action the PM should know about (e.g.
+  // force-closing a teammate out-of-band). Single-line text; multi-line
+  // notices need to be flattened by the caller because tmux send-keys
+  // treats newlines inconsistently.
+  app.post<{ Params: { id: string }; Body: { text: string } }>(
+    '/api/sessions/:id/system-notice',
+    async (request, reply) => {
+      const { text } = request.body ?? {};
+      if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        return reply.status(400).send({ error: 'text is required' });
+      }
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      // sendCommand gate-checks tmux liveness + logs the event. We reuse it
+      // so the notice appears as a session_event just like any other
+      // command — makes post-mortems on "who force-closed what" simple.
+      const result = sessionService.sendCommand(request.params.id, text.replace(/\r?\n/g, ' '));
+      if (!result.success) {
+        const status = result.error === 'Session not found' ? 404 : 400;
+        return reply.status(status).send({ error: result.error });
+      }
+      return { success: true };
+    },
+  );
+
   // Send command to session
   app.post<{ Params: { id: string }; Body: { command: string } }>(
     '/api/sessions/:id/command',

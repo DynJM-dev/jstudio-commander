@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { X, GripVertical, Minimize2, Users, Columns2 } from 'lucide-react';
+import { GripVertical, Minimize2, Users, Columns2, MoreHorizontal, CircleX, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { StatusBadge } from '../components/shared/StatusBadge';
+import { ForceCloseTeammateModal } from '../components/chat/ForceCloseTeammateModal';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePreference } from '../hooks/usePreference';
 import { api } from '../services/api';
@@ -233,27 +234,66 @@ export const SplitChatLayout = () => {
     };
   }, []);
 
+  // Force-close modal state — friction layer over dismiss (Phase I). The
+  // raw dismiss path still exists; the modal is the only way users can
+  // reach it from the split pane. An overflow menu + modal + checkbox is
+  // deliberately more expensive to hit than the old single-click X.
+  const [forceCloseTarget, setForceCloseTarget] = useState<Session | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [forceCloseToast, setForceCloseToast] = useState<string | null>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!overflowOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setOverflowOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [overflowOpen]);
+
   // Dismiss the active teammate — ends its agent_relationships edge on the
   // server and optimistically drops it from local state. Any remaining
   // teammates stay visible; the split fall-through renders single-pane
   // automatically when the list empties. Survives reload because the
   // server-side `ended_at` change is picked up by the teammates endpoint.
-  const closeCoderPane = useCallback(() => {
-    const dismissId = activeTabId;
-    if (!dismissId) return;
-    const remaining = teammates.filter((t) => t.id !== dismissId);
+  const dismissTeammate = useCallback((teammate: Session) => {
+    const remaining = teammates.filter((t) => t.id !== teammate.id);
     setTeammates(remaining);
     setSplit({
       activeTabId: remaining[0]?.id ?? null,
       minimized: false,
       percent,
     });
-    void api.post(`/sessions/${encodeURIComponent(dismissId)}/dismiss`)
+    void api.post(`/sessions/${encodeURIComponent(teammate.id)}/dismiss`)
       .catch(() => {
         // Rollback on failure — refetch from server to restore truth.
         void refreshTeammates({ promote: false });
       });
-  }, [activeTabId, teammates, setSplit, percent, refreshTeammates]);
+  }, [teammates, setSplit, percent, refreshTeammates]);
+
+  // Fire a system-notice into the PM's pane so it can reconcile against
+  // the out-of-band force-close. Fire-and-forget — the close proceeds
+  // either way; a failed notice just means the PM is unreachable (which
+  // is often precisely why the user force-closed in the first place).
+  const notifyPmOfForceClose = useCallback((teammate: Session) => {
+    if (!pmSessionId) return;
+    const notice = `System notice: user force-closed teammate ${teammate.name}${teammate.agentRole ? ` (${teammate.agentRole})` : ''} via Commander UI. Investigate whether the teammate was stuck before deciding whether to respawn.`;
+    void api.post(`/sessions/${encodeURIComponent(pmSessionId)}/system-notice`, { text: notice })
+      .catch(() => { /* fire-and-forget */ });
+  }, [pmSessionId]);
+
+  const confirmForceClose = useCallback(async () => {
+    const target = forceCloseTarget;
+    if (!target) return;
+    dismissTeammate(target);
+    notifyPmOfForceClose(target);
+    setForceCloseTarget(null);
+    setForceCloseToast(`Force-closed ${target.name}. PM notified.`);
+    window.setTimeout(() => setForceCloseToast(null), 3000);
+  }, [forceCloseTarget, dismissTeammate, notifyPmOfForceClose]);
 
   const activeTab = useMemo(
     () => teammates.find((t) => t.id === activeTabId) ?? null,
@@ -332,7 +372,7 @@ export const SplitChatLayout = () => {
                   color: 'var(--color-text-secondary)',
                 }}
               >
-                <StatusBadge status={t.status} size="md" />
+                <StatusBadge status={t.status} size="md" variant="teammate" />
                 <span
                   className="text-[10px] leading-tight mt-1 truncate w-full text-center font-medium"
                   style={{ color: 'var(--color-text-secondary)' }}
@@ -379,127 +419,175 @@ export const SplitChatLayout = () => {
         className={`relative h-full min-h-0 overflow-hidden flex flex-col ${activeTab?.status === 'waiting' ? 'waiting-glow' : ''}`}
         style={{ width: `${rightPercent}%` }}
       >
-        {/* Tab bar — hidden when exactly one teammate (keeps the old
-            single-slot silhouette). Rendered above ChatPage so tab clicks
-            reassign the mounted ChatPage's sessionIdOverride. */}
-        {teammates.length > 1 && (
-          <div
-            className="shrink-0 flex items-center gap-0.5 px-2 pt-2 pb-0 overflow-x-auto"
-            style={{
-              background: 'rgba(0,0,0,0.18)',
-              borderBottom: '1px solid rgba(255,255,255,0.04)',
-            }}
-          >
-            <AnimatePresence initial={false}>
-              {teammates.map((t) => {
-                const isActive = t.id === activeTabId;
-                const isWaiting = t.status === 'waiting';
-                return (
-                  <motion.button
-                    key={t.id}
-                    layout
+        {/* Unified teammate top bar — always rendered, glass surface with a
+            subtle divider so it reads as its own UI zone. Left side: tabs
+            (when >1) or a single-tab name pill. Right side: auto-split +
+            minimize + overflow menu (force-close lives behind the overflow
+            with a confirmation modal; see ForceCloseTeammateModal). */}
+        <div
+          className="shrink-0 flex items-center gap-2 px-2"
+          style={{
+            height: 40,
+            fontFamily: M,
+            background: 'rgba(15, 20, 25, 0.72)',
+            backdropFilter: 'blur(18px) saturate(170%)',
+            WebkitBackdropFilter: 'blur(18px) saturate(170%)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+          }}
+        >
+          {teammates.length > 1 ? (
+            <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
+              <AnimatePresence initial={false}>
+                {teammates.map((t) => {
+                  const isActive = t.id === activeTabId;
+                  const isWaiting = t.status === 'waiting';
+                  return (
+                    <motion.button
+                      key={t.id}
+                      layout
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.18 }}
+                      onClick={() => setActiveTabId(t.id)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all ${isWaiting && !isActive ? 'waiting-tab-alarm' : ''}`}
+                      style={{
+                        fontFamily: M,
+                        color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                        background: isActive ? 'rgba(14, 124, 123, 0.14)' : 'transparent',
+                        border: `1px solid ${isActive ? 'rgba(14, 124, 123, 0.45)' : 'rgba(255, 255, 255, 0.06)'}`,
+                      }}
+                    >
+                      <StatusBadge status={t.status} size="sm" variant="teammate" />
+                      <span className="truncate max-w-[120px]">{t.name}</span>
+                      {t.agentRole && (
+                        <span
+                          className="text-[10px] px-1 py-0.5 rounded shrink-0"
+                          style={{ color: 'var(--color-accent-light)', background: 'rgba(14, 124, 123, 0.08)' }}
+                        >
+                          {t.agentRole}
+                        </span>
+                      )}
+                    </motion.button>
+                  );
+                })}
+              </AnimatePresence>
+            </div>
+          ) : activeTab ? (
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <StatusBadge status={activeTab.status} size="sm" variant="teammate" />
+              <span
+                className="text-sm font-semibold truncate"
+                style={{ color: 'var(--color-text-primary)' }}
+                title={activeTab.name}
+              >
+                {activeTab.name}
+              </span>
+              {activeTab.agentRole && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+                  style={{ color: 'var(--color-accent-light)', background: 'rgba(14, 124, 123, 0.08)' }}
+                >
+                  {activeTab.agentRole}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
+
+          {/* Right-side controls */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setAutoSplitOnSpawn(!autoSplitOnSpawn)}
+              className="flex items-center justify-center rounded-md p-1 transition-colors"
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                color: autoSplitOnSpawn ? 'var(--color-accent-light)' : 'var(--color-text-tertiary)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+              title={autoSplitOnSpawn
+                ? 'Auto-open split on teammate spawn: ON'
+                : 'Auto-open split on teammate spawn: OFF'}
+            >
+              <Columns2 size={14} />
+            </button>
+            <button
+              onClick={() => setMinimized(true)}
+              className="flex items-center justify-center rounded-md p-1 transition-colors"
+              style={{
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                color: 'var(--color-text-secondary)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+              title="Minimize to strip"
+            >
+              <Minimize2 size={14} />
+            </button>
+            {/* Overflow menu — hosts force-close behind a confirmation.
+                The X shortcut is deliberately gone (Phase I). PMs are the
+                canonical teammate lifecycle owner; the UI should only
+                undercut that for genuinely stuck teammates. */}
+            <div className="relative" ref={overflowRef}>
+              <button
+                onClick={() => setOverflowOpen((v) => !v)}
+                className="flex items-center justify-center rounded-md p-1 transition-colors"
+                style={{
+                  background: overflowOpen ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  color: 'var(--color-text-secondary)',
+                }}
+                onMouseEnter={(e) => { if (!overflowOpen) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
+                onMouseLeave={(e) => { if (!overflowOpen) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
+                title="More actions"
+                aria-haspopup="menu"
+                aria-expanded={overflowOpen}
+              >
+                <MoreHorizontal size={14} />
+              </button>
+              <AnimatePresence>
+                {overflowOpen && activeTab && (
+                  <motion.div
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.18 }}
-                    onClick={() => setActiveTabId(t.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-md transition-all ${isWaiting && !isActive ? 'waiting-tab-alarm' : ''}`}
+                    transition={{ duration: 0.15 }}
+                    className="absolute top-full right-0 mt-1.5 z-50 rounded-lg overflow-hidden min-w-[220px]"
                     style={{
-                      fontFamily: M,
-                      color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                      background: isActive ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
-                      borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
-                      marginBottom: -1,
+                      background: 'rgba(12, 16, 22, 0.96)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      backdropFilter: 'blur(24px)',
+                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
                     }}
+                    role="menu"
                   >
-                    <StatusBadge status={t.status} size="sm" />
-                    <span>{t.name}</span>
-                    {t.agentRole && (
-                      <span
-                        className="text-[10px] px-1 py-0.5 rounded"
-                        style={{ color: 'var(--color-accent-light)', background: 'rgba(14, 124, 123, 0.08)' }}
-                      >
-                        {t.agentRole}
-                      </span>
-                    )}
-                  </motion.button>
-                );
-              })}
-            </AnimatePresence>
+                    <button
+                      onClick={() => {
+                        setOverflowOpen(false);
+                        setForceCloseTarget(activeTab);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+                      style={{
+                        fontFamily: M,
+                        color: '#f43f5e',
+                        background: 'transparent',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(244, 63, 94, 0.1)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      role="menuitem"
+                    >
+                      <CircleX size={14} />
+                      <span className="text-sm font-medium">Force close teammate</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
-        )}
-
-        {/* Single-tab header (hidden when tab bar is visible) */}
-        {teammates.length === 1 && activeTab && (
-          <div
-            className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md px-2 py-1"
-            style={{
-              background: 'rgba(0, 0, 0, 0.25)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              fontFamily: M,
-            }}
-          >
-            <StatusBadge status={activeTab.status} size="sm" />
-            <span className="text-xs font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              {activeTab.name}
-            </span>
-            {activeTab.agentRole && (
-              <span
-                className="text-xs px-1.5 py-0.5 rounded"
-                style={{ color: 'var(--color-accent-light)', background: 'rgba(14, 124, 123, 0.08)' }}
-              >
-                {activeTab.agentRole}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Top-right controls: auto-split toggle + minimize + close */}
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-          <button
-            onClick={() => setAutoSplitOnSpawn(!autoSplitOnSpawn)}
-            className="flex items-center justify-center rounded-md p-1 transition-colors"
-            style={{
-              background: 'rgba(0, 0, 0, 0.25)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              color: autoSplitOnSpawn ? 'var(--color-accent-light)' : 'var(--color-text-tertiary)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.25)'; }}
-            title={autoSplitOnSpawn
-              ? 'Auto-open split on teammate spawn: ON'
-              : 'Auto-open split on teammate spawn: OFF'}
-          >
-            <Columns2 size={14} />
-          </button>
-          <button
-            onClick={() => setMinimized(true)}
-            className="flex items-center justify-center rounded-md p-1 transition-colors"
-            style={{
-              background: 'rgba(0, 0, 0, 0.25)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              color: 'var(--color-text-secondary)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.25)'; }}
-            title="Minimize to strip"
-          >
-            <Minimize2 size={14} />
-          </button>
-          <button
-            onClick={closeCoderPane}
-            className="flex items-center justify-center rounded-md p-1 transition-colors"
-            style={{
-              background: 'rgba(0, 0, 0, 0.25)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              color: 'var(--color-text-secondary)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.25)'; }}
-            title="Close teammate pane"
-          >
-            <X size={14} />
-          </button>
         </div>
 
         <div className="flex-1 min-h-0">
@@ -508,7 +596,39 @@ export const SplitChatLayout = () => {
               session, scroll resets cleanly, inputs don't carry over. */}
           <ChatPage key={activeTabId} sessionIdOverride={activeTabId} />
         </div>
+
+        {/* Toast — confirms the force-close fired + PM was notified. Plain
+            local state; no global toast system in this app yet. */}
+        <AnimatePresence>
+          {forceCloseToast && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.2 }}
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"
+              style={{
+                fontFamily: M,
+                color: 'var(--color-text-primary)',
+                background: 'rgba(12, 16, 22, 0.94)',
+                border: '1px solid rgba(244, 63, 94, 0.4)',
+                backdropFilter: 'blur(18px)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+              }}
+            >
+              <Check size={14} style={{ color: 'var(--color-working)' }} />
+              {forceCloseToast}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      <ForceCloseTeammateModal
+        open={forceCloseTarget !== null}
+        teammateName={forceCloseTarget?.name ?? ''}
+        onCancel={() => setForceCloseTarget(null)}
+        onConfirm={confirmForceClose}
+      />
     </div>
   );
 };
