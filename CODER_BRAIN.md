@@ -746,6 +746,30 @@ The bug surface now has belt-and-suspenders: codeman-* short-circuits at the pre
 
 Commit `1b62f63`.
 
+### Phase G.2 — Adoption re-parents teammates + rewrites team config (2026-04-17)
+
+User-reported: OvaGas adoption ran successfully (boot log confirmed `[team-config] adopted existing PM "OvaGas" (e16a1cb2) into ovagas-ui`), but `coder@ovagas-ui` got dismissed as cross-session anyway. Trace:
+- Adopted PM `e16a1cb2` at `/OvaGas-ERP` linked into `ovagas-ui` team
+- `coder@ovagas-ui` kept `parent_session_id = '796eaede-...'` (the stale lead pre-adoption)
+- Coder's pane `%51` lives in `jsc-e16a1cb2` (adopted PM's tmux)
+- Phase G.1 predicate: `candidate(e16a1cb2).id NOT IN excludeIds([coder.id, '796eaede-...'])` → TRUE → cross-session flag → dismiss
+- Team config still had `leadSessionId: '796eaede-...'` — adoption didn't rewrite the file, so chokidar's next reconcile would re-resurrect the stale state
+
+**Two fixes:**
+
+1. **`adoptPmIntoTeam` re-parents teammates.** New optional `previousLeadId` parameter. When set and distinct from the adopted PM's id, the adoption transaction also runs:
+   - `UPDATE sessions SET parent_session_id = adoptedId WHERE parent_session_id = previousLeadId AND status != 'stopped' AND team_name = teamName` (RETURNING id) — scoped to the team to prevent cross-team pulls
+   - `UPDATE agent_relationships SET ended_at = now WHERE parent_session_id = previousLeadId AND ended_at IS NULL` — close stale edges
+   - `INSERT … ON CONFLICT DO UPDATE SET ended_at = NULL` per re-parented teammate — open fresh edges under the adopted PM
+   - All inside a single `db.transaction()` — partial re-parent on crash would leave orphans worse than the original bug
+2. **`updateTeamConfigLeadSessionId` rewrites the on-disk config atomically.** New helper in `team-config.service.ts`. Reads JSON, sets `leadSessionId`, preserves all other fields, writes via tmp + rename. Idempotent: returns false (no-op) when target id already matches. Safe against unparseable / missing files. Preserves trailing-newline convention so file diffs stay minimal.
+
+**Reconcile idempotency:** added a new "byConfigId steady state" branch at the top of the lead-resolution block. When `getSession(configParentSessionId)?.teamName === teamName`, reuse it directly and skip both adoption and the fresh-upsert path. Without this, the second reconcile after the rewrite would try to derive a new name (`deriveTeamLeadName(cwd, teamName, lead.name)` → e.g. `jstudio-base`) and overwrite the adopted PM's user-given name (e.g. `"OvaGas"`). The new branch lets the adopted PM keep whatever name it had pre-adoption.
+
+**Tests:** 5 new in `team-config-rewrite.test.ts` covering the helper (rewrite + members preserved, idempotent, missing file, corrupt JSON, trailing-newline convention). Server total: 12/12 pass.
+
+Commit `425632b`.
+
 ---
 
 All three typechecks PASS (shared, client, server). Verification:
