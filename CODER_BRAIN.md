@@ -429,6 +429,26 @@ A second failure mode surfaced during the same diagnosis: 7 zombie `pnpm server 
 5. **CFBundleName ≠ .app filename.** Finder shows the filename; Dock/Cmd-Tab/menu use CFBundleDisplayName. Display-only rebrand updates the plist, leaves `Commander.app` filename alone. If users want to rename the file, they do it themselves; the dock label already reflects the new name.
 6. **Rebrand scope A is "grep 'Commander' in user-facing contexts, leave slugs alone."** Don't touch imports (`@commander/shared`), class names (`CommanderEventBus`), internal var names (`byCommanderId`), archival commit messages, or CODER_BRAIN per-coder sections. The heading in STATE.md is the live source of truth for "what the product is called now."
 
+### Phase E.2 — Commander Vite port → 11573 (2026-04-17 hotfix #2)
+
+User was fully blocked by a Vite port collision: JLFamily's vite squatted `*:5173` (IPv4 all-interfaces) and Commander's vite fell back to `[::1]:5173` (IPv6 loopback only). Chrome hit JLFamily's vite at `192.168.88.243:5173` and got JLFamily's bundle + broken API proxy + failed WS.
+
+Fix: Commander's Vite moves off the `5173/5174` default ecosystem entirely. `client/vite.config.ts` now pins `port: 11573` + `strictPort: true` + `host: 'localhost'`. 11573 chosen to echo 11002 (server) and keep the "573" tail for muscle memory. `strictPort` fails loud if taken instead of drifting — silent fallback is the exact failure mode we just fixed.
+
+`vite.config.ts` also reads the server port from `~/.jstudio-commander/config.json` at startup so the `/api` + `/ws` proxy always targets the live server port (fallback 11002).
+
+Server-side: Phase E.1's dev-redirect fallback flipped `5173` → `11573`. CORS origin allowlist now includes both `:11573` (primary) and `:5173` (transitional for cached bookmarks during the migration window — can drop later). Comments throughout `server/src/index.ts` updated.
+
+`playwright.config.ts` base URL follows (`:5173` → `:11573`).
+
+Verified end-to-end with JLFamily's vite still alive on `*:5173`:
+- `lsof` shows Commander vite on `[::1]:11573`, server on `*:3002`, JLFamily untouched on `*:5173`.
+- `curl http://localhost:3002/` → `302 Location: http://localhost:11573`.
+- `curl http://localhost:11573/` → Commander's own `<title>JStudio Command Center</title>`.
+- `curl http://localhost:11573/api/system/health` via Vite proxy → `{service: "jstudio-commander"}`.
+
+Commit: `f7f0752 fix(dev): Commander Vite port → 11573 + strictPort` (see below; adjust if the actual sha differs).
+
 ### Tech debt opened by Phase E
 
 - **Server edits require manual restart** (no more `tsx watch`). Matches documented workflow (STATE.md, `feedback_tsx_watch_unreliable`) but mild regression for rapid server iteration. If it bites, flip to nodemon or add a hand-rolled watcher that terminates cleanly on child exit(0).

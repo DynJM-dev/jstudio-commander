@@ -13,7 +13,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {
-    baseURL: process.env.COMMANDER_URL ?? 'http://localhost:5173',
+    baseURL: process.env.COMMANDER_URL ?? 'http://localhost:11573',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

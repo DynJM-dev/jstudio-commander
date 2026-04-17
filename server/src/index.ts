@@ -51,13 +51,21 @@ const app = Fastify({
   },
 });
 
-// CORS for dev
+// CORS for dev — Commander's Vite runs on :11573 (unique port to
+// avoid collisions with default :5173 when other projects are also
+// in dev). Keep the legacy :5173 entry too so pre-Phase-E.2 local
+// bookmarks / tabs still authorize during the migration window.
 await app.register(cors, {
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: [
+    'http://localhost:11573',
+    'http://127.0.0.1:11573',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ],
 });
 
 // Serve client dist — production only. In dev, Vite serves the UI
-// from :5173 with HMR; letting fastify-static win there silently
+// from :11573 with HMR; letting fastify-static win there silently
 // shadowed the dev bundle with a stale build on 2026-04-17 (three
 // Wave 2 features appeared to "regress" because the server served
 // an Apr-14 `client/dist` frozen from before the feature shipped).
@@ -74,7 +82,7 @@ if (isProduction && existsSync(clientDist)) {
 } else if (existsSync(clientDist)) {
   console.warn(
     `[dev] client/dist exists at ${clientDist} but NODE_ENV !== production — ` +
-      'skipping fastify-static so Vite (:5173) serves the UI. ' +
+      'skipping fastify-static so Vite (:11573) serves the UI. ' +
       "If you want the built bundle, run with NODE_ENV=production or remove client/dist.",
   );
 }
@@ -84,9 +92,9 @@ if (isProduction && existsSync(clientDist)) {
 // dev, / has no handler unless we add one — bookmarks + Commander.app
 // would 404. Redirect / → Vite so the user lands on the live UI
 // regardless of which URL they opened. Respects VITE_URL env override
-// in case Vite moves off :5173.
+// in case Vite moves off :11573.
 if (!isProduction) {
-  const VITE_URL = process.env.VITE_URL ?? 'http://localhost:5173';
+  const VITE_URL = process.env.VITE_URL ?? 'http://localhost:11573';
   app.get('/', async (_req, reply) => reply.redirect(VITE_URL, 302));
 }
 
