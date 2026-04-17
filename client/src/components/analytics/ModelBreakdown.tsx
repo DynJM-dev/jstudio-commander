@@ -17,7 +17,8 @@ interface ModelBreakdownProps {
 }
 
 const MODEL_COLORS: Record<string, string> = {
-  'claude-opus-4-6': '#0E7C7B',
+  'claude-opus-4-7': '#0E7C7B',
+  'claude-opus-4-6': '#0A5E5D',
   'claude-sonnet-4-6': '#12A5A4',
   'claude-haiku-4-5': '#18D4D3',
 };
