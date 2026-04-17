@@ -228,6 +228,52 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
     }
   }
 
+  // Phase N.0 Patch 4 — SessionStart fires when Claude Code boots or
+  // resumes a session. Flip status to `working` so the UI reflects the
+  // fresh lifecycle boundary immediately, ahead of the first pane poll
+  // or tool_use hook. We DO NOT auto-create a session row on unknown
+  // owners — tmux + team-config paths own row lifecycle and racing with
+  // them here would produce orphans.
+  if (event === 'SessionStart') {
+    const match = resolveOwner(body);
+    if (match?.id) {
+      const db = getDb();
+      db.prepare(
+        "UPDATE sessions SET status = 'working', updated_at = datetime('now') WHERE id = ?",
+      ).run(match.id);
+      eventBus.emitSessionStatus(match.id, 'working', {
+        to: 'working',
+        evidence: 'session-start-hook',
+        at: new Date().toISOString(),
+      });
+      sessionService.bumpLastActivity(match.id);
+      console.log(`[hook:SessionStart] session=${match.id.slice(0, 30)} → working (via ${match.strategy})`);
+    } else {
+      console.log('[hook:SessionStart] unknown session, skipping');
+    }
+  }
+
+  // Phase N.0 Patch 4 — SessionEnd fires on explicit `/exit` or when
+  // the Claude process terminates. Flip to `stopped` + timestamp so
+  // Commander's UI can retire the card without waiting for the poller's
+  // tmux-hasSession check to catch up on the next cycle.
+  if (event === 'SessionEnd') {
+    const match = resolveOwner(body);
+    if (match?.id) {
+      const db = getDb();
+      db.prepare(
+        "UPDATE sessions SET status = 'stopped', stopped_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+      ).run(match.id);
+      eventBus.emitSessionStatus(match.id, 'stopped', {
+        to: 'stopped',
+        evidence: 'session-end-hook',
+        at: new Date().toISOString(),
+      });
+      sessionService.bumpLastActivity(match.id);
+      console.log(`[hook:SessionEnd] session=${match.id.slice(0, 30)} → stopped (via ${match.strategy})`);
+    }
+  }
+
   console.log(`[hook] ${event}${transcriptPath ? ` → ${basename(transcriptPath)}` : ''}`);
 
   if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) {
