@@ -27,6 +27,7 @@ export type MatchStrategy =
   | 'transcriptUUID'    // transcript_path's basename UUID already in a row's transcript_paths
   | 'sessionId-as-row'  // hook's sessionId === sessions.id (PM/lead pattern)
   | 'cwd-exclusive'     // exactly one session row has this cwd AND unclaimed
+  | 'pm-cwd-rotation'   // Phase L — PM/lead rotation, exactly one UUID-id session in this cwd
   | 'skipped';
 
 export const hookMatchStats: Record<MatchStrategy, number> = {
@@ -34,10 +35,15 @@ export const hookMatchStats: Record<MatchStrategy, number> = {
   transcriptUUID: 0,
   'sessionId-as-row': 0,
   'cwd-exclusive': 0,
+  'pm-cwd-rotation': 0,
   skipped: 0,
 };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// SQLite GLOB pattern — eight hex, four, four, four, twelve with hyphens.
+// Used to narrow "PM/lead sessions" (their id is a Claude UUID) vs
+// "teammate-coder sessions" (their id is a slug like `coder-11@team`).
+const UUID_ID_GLOB = '????????-????-????-????-????????????';
 
 const uuidFromTranscriptPath = (path: string): string | null => {
   const name = basename(path).replace(/\.jsonl$/i, '');
@@ -49,7 +55,7 @@ interface MatchedRow {
   strategy: Exclude<MatchStrategy, 'skipped'>;
 }
 
-const resolveOwner = (body: HookEventBody): MatchedRow | null => {
+export const resolveOwner = (body: HookEventBody): MatchedRow | null => {
   const db = getDb();
   const transcriptPath = body.data?.transcript_path;
   const transcriptUuid = transcriptPath ? uuidFromTranscriptPath(transcriptPath) : null;
@@ -93,6 +99,32 @@ const resolveOwner = (body: HookEventBody): MatchedRow | null => {
     ).all(cwd) as Array<{ id: string }>;
     if (unclaimed.length === 1) {
       return { id: unclaimed[0]!.id, strategy: 'cwd-exclusive' };
+    }
+  }
+
+  // 4. Phase L — PM/lead rotation bridge. Claude Code rotates transcripts
+  // (new JSONL filename = new claude session UUID) on compaction or after
+  // a crash/restart. The hook fires with the NEW UUID, which matches no
+  // existing row via steps 1-3 because:
+  //   - Step 1 (fast LIKE) fails: new path not yet in any transcript_paths.
+  //   - Step 2 (uuid = id or claude_session_id) fails: the PM row still
+  //     carries the ORIGINAL UUID as id; the new UUID matches nothing.
+  //   - Step 3 (cwd-exclusive) fails: PM already has the OLD transcript
+  //     registered, so its transcript_paths is not empty.
+  // We bridge the rotation by recognizing the PM/lead pattern: sessions
+  // whose id is a Claude UUID (vs teammate-coder sessions whose id is a
+  // slug like `coder-11@team-name`). Exactly-one UUID-id session in the
+  // cwd → append the new transcript to that session. Multi-match (two
+  // PMs in same cwd) drops to skip, preserving safety.
+  if (cwd) {
+    const pmRows = db.prepare(
+      `SELECT id FROM sessions
+       WHERE project_path = ?
+         AND status != 'stopped'
+         AND id GLOB ?`,
+    ).all(cwd, UUID_ID_GLOB) as Array<{ id: string }>;
+    if (pmRows.length === 1) {
+      return { id: pmRows[0]!.id, strategy: 'pm-cwd-rotation' };
     }
   }
 

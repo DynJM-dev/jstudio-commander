@@ -4,8 +4,10 @@ import { jsonlParserService } from './jsonl-parser.service.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 import { tokenTrackerService } from './token-tracker.service.js';
 import { projectScannerService } from './project-scanner.service.js';
+import { sessionService } from './session.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { getDb } from '../db/connection.js';
+import { resolveOwner } from '../routes/hook-event.routes.js';
 
 export const setupWatcherBridge = (): void => {
   // Wire JSONL file changes → parse new lines → emit chat messages
@@ -13,33 +15,73 @@ export const setupWatcherBridge = (): void => {
     const messages = jsonlParserService.parseLines(newLines);
     if (messages.length === 0) return;
 
-    // Try to find which session this JSONL file belongs to
     // JSONL path: ~/.claude/projects/{encoded-path}/{session-uuid}.jsonl
     const jsonlFilename = basename(filePath, '.jsonl');
     const encodedProjectDir = basename(dirname(filePath));
 
-    // Look up session by claude_session_id first
+    // Phase L — matcher cascade aligned with hook-event.resolveOwner so
+    // chokidar-discovered files survive PM/lead transcript rotation even
+    // when the hook event was dropped or arrived before the row existed.
     const db = getDb();
-    let session = db.prepare('SELECT id FROM sessions WHERE claude_session_id = ?')
-      .get(jsonlFilename) as { id: string } | undefined;
 
+    //   1. claude_session_id OR id matches the JSONL filename (covers
+    //      teammate-coder sessions + PM on first registration).
+    let session = db.prepare(
+      'SELECT id FROM sessions WHERE claude_session_id = ? OR id = ?'
+    ).get(jsonlFilename, jsonlFilename) as { id: string } | undefined;
+
+    //   2. Encoded-project-path match → fully resolved cwd. Reused below
+    //      for both the old "first row wins" behavior AND the new
+    //      PM-cwd-rotation check via resolveOwner.
+    let matchedCwd: string | null = null;
     if (!session) {
-      // Match by encoding each session's project_path and comparing to the
-      // encoded directory name. This avoids the broken reverse-decoding that
-      // fails for project names containing hyphens.
-      const rows = db.prepare('SELECT id, project_path FROM sessions WHERE project_path IS NOT NULL AND status != \'stopped\'')
-        .all() as { id: string; project_path: string }[];
+      const rows = db.prepare(
+        "SELECT id, project_path FROM sessions WHERE project_path IS NOT NULL AND status != 'stopped'"
+      ).all() as { id: string; project_path: string }[];
 
       for (const row of rows) {
         const encoded = jsonlDiscoveryService.encodeProjectPath(row.project_path);
         if (encoded === encodedProjectDir) {
-          session = { id: row.id };
-          break;
+          matchedCwd = row.project_path;
+          // Keep the FIRST match for bug-compat with pre-Phase-L code, but
+          // upgrade below if `resolveOwner` finds a better candidate (the
+          // rotated PM/lead session whose id is the original UUID).
+          if (!session) session = { id: row.id };
         }
       }
     }
 
+    //   3. Phase L — hand off to hook-event.resolveOwner so the
+    //      pm-cwd-rotation + cwd-exclusive rules apply here too. Overrides
+    //      the first-row-wins fallback above when a better match exists.
+    if (matchedCwd) {
+      const better = resolveOwner({
+        event: 'jsonl-discovery',
+        sessionId: jsonlFilename,
+        data: { transcript_path: filePath, cwd: matchedCwd },
+      });
+      if (better) session = { id: better.id };
+    }
+
     if (session) {
+      // Phase L — persist the new transcript file to the session's
+      // transcript_paths list so `/api/chat/:sessionId` reads fresh
+      // content on the next REST call. Without this, WS events delivered
+      // chat updates to a live client but any reload / cross-tab open /
+      // delta poll served stale JSONL content.
+      try {
+        const appended = sessionService.appendTranscriptPath(session.id, filePath);
+        if (appended) {
+          console.log(
+            `[bridge] JSONL discovery → session ${session.id.slice(0, 30)} appended ${basename(filePath)}`,
+          );
+          const updatedSession = sessionService.getSession(session.id);
+          if (updatedSession) eventBus.emitSessionUpdated(updatedSession);
+        }
+      } catch (err) {
+        console.error('[bridge] appendTranscriptPath error:', err);
+      }
+
       console.log(`[bridge] JSONL change → session ${session.id}, ${messages.length} new messages`);
       eventBus.emitChatMessages(session.id, messages);
 
