@@ -1767,6 +1767,178 @@ E2E stub. Typecheck clean on shared + server + client.
 
 ---
 
+## Coder-16 Session — Phase S + Q + R (attachments + pre-compact + cleanup, 2026-04-17)
+
+HEAD after this session: **`bc0295b`**. Previous HEAD was `0229bcf`
+(Phase P.4 docs commit). **11 commits** across 3 phases shipped in
+one rotation:
+
+### Phase S — File + image attachments in Commander chat (3 commits)
+
+1. `64fa7af` — `feat(upload): /api/upload/:sessionId multipart endpoint + storage`
+2. `b5e4f0a` — `feat(chat): file drop + paste + picker UI for chat input`
+3. `3473852` — `feat(chat): send flow injects @path references + uploads`
+
+Enables drag / drop / paste / picker attachment in chat. Upload lands
+at `~/.jstudio-commander/uploads/<sessionId>/<iso>__<name>` and tmux
+injects `@path1 @path2 message` into Claude's pane.
+
+### Phase Q — Auto pre-compact assistant (3 commits)
+
+4. `29cfd98` — `feat(pre-compact): service + state machine + migration + warning template`
+5. `1964bb6` — `feat(api): /api/pre-compact routes + WS event broadcast`
+6. `8d87545` — `feat(ui): SessionCard pre-compact indicator + opt-out toggle`
+
+Per-session state machine (`idle | warned | compacting | emergency`).
+At 85% ctx → warning injection (user-role), wait for
+`READY_TO_COMPACT`, auto-inject `/compact`. At 95% → emergency direct
+compact. 75% RESET floor with hysteresis. PM/lead-pm default
+opted-out via migration heal; per-session toggle in UI.
+
+### Phase R — QA cleanup bundle (5 commits)
+
+7. `4ace394` — `chore(db): drop legacy transcript_path column`
+8. `52aa8a1` — `chore(watcher): drop file_watch_state.last_line_count`
+9. `7ac6a90` — `fix(api): getAggregateRateLimits excludes stopped sessions`
+10. `b439a9d` — `fix(hooks): 503 backpressure on hook queue capacity`
+11. `bc0295b` — `fix(poller): strftime-based yield math + boot-time UTC audit`
+
+Addresses QA audit L4 + M3-M6. Column drops use SQLite 3.35+
+`ALTER TABLE DROP COLUMN` gated on `PRAGMA table_info` (idempotent).
+`transcript_path` drop includes one-shot consolidation of legacy
+rows into `transcript_paths` JSON array BEFORE drop (supersedes the
+boot-heal block previously in `index.ts`). `HOOK_QUEUE_MAX = 20`
+returns 503 + `Retry-After: 1` when saturated. Poller now uses
+`(strftime('%s','now') - strftime('%s', updated_at)) * 1000` (NULL
+on unparseable input, more defensive than `julianday`). Boot-time
+audit LIKE-scans `sessions.updated_at` for non-UTC drift shapes
+(AM/PM, `+HH:MM`, `-HH:MM`, trailing Z) and logs a warn count.
+
+### Test inventory after this session (4 execution modes)
+
+| Mode | Command | Tests | Runtime |
+|------|---------|-------|---------|
+| Server unit (node --test) | `pnpm -C server test` | 159 | ~1.0s |
+| Client unit (node --test) | `pnpm -C client test` | 167 | ~0.8s |
+| Server integration (node --test + app.inject) | `pnpm -C server test:integration` | 19 | ~1.2s |
+| Playwright E2E | `pnpm -C client exec playwright test` | 5 | ~17s |
+| **Total** | — | **350** | — |
+
+Phase S added 22 new tests (6 server integration + 16 client pure
+logic). Phase Q added 19 (13 server unit + 6 client pure logic).
+Phase R added 9 (7 server unit `poller-time-audit.test.ts` +
+2 server integration `post-hook-event.test.ts` queue-cap boundary).
+
+`pnpm audit --prod` → No known vulnerabilities found. Typecheck
+clean across shared + server + client.
+
+### Key invariants added in S/Q/R (beyond P.4's 48)
+
+49. **Upload endpoint is loopback-gated** (same preHandler style as
+    `/api/hook-event`). `isLoopbackIp(request.ip)` → 403 on non-loopback.
+    Multipart parsed with `@fastify/multipart` stream-mode; per-chunk
+    size enforcement (5MB image / 10MB file) — must NOT use
+    `.toBuffer()` which OOMs before size check. Filename sanitizer
+    allowlists `[A-Za-z0-9._-]` + strips `../`; on collision appends
+    ISO timestamp prefix.
+
+50. **Upload quota warn at 500MB per session dir.** Non-blocking —
+    logs a `[upload] quota-warn` line but accepts the upload. Hard
+    cap deferred.
+
+51. **Upload cleanup wired into `purgeTeamSession` + `cleanupStaleTeammates`.**
+    `removeSessionUploads(sessionId)` exported from `upload.routes.ts`
+    uses top-level `rmSync` import (NOT `require()` — ESM).
+
+52. **Client upload via FormData + fetch** (not the JSON api helper).
+    PIN header preserved. `buildInjectedPayload(paths, message)` in
+    `useAttachments.ts` returns `@path1 @path2 message` single-line
+    format (NOT bracketed paste multi-line — tmux Enter-submit
+    complexity avoided).
+
+53. **Pre-compact service uses READY_PHRASE = `READY_TO_COMPACT`**
+    (case-sensitive substring match). Scanned against user-role
+    text blocks only by `watcher-bridge.ts` — guards against chat
+    prose or assistant emissions triggering compact.
+
+54. **Pre-compact thresholds:** WARN=85, EMERGENCY=95, RESET=40,
+    HYSTERESIS_FLOOR=75. State machine reset only on RESET; the
+    75% floor prevents thrash as ctx hovers near the warn line.
+    Double-fire guard: once `warned`, further ticks at ≥85% don't
+    re-inject until state reset.
+
+55. **`auto_compact_enabled INTEGER NOT NULL DEFAULT 1`** on
+    sessions. PM/lead-pm rows are flipped to 0 in the one-shot heal
+    inside the same migration block. `rowToSession` coerces
+    INTEGER → boolean; `serializeCol` converts boolean → INTEGER.
+    Legacy pre-migration rows that are `undefined` default to `true`.
+
+56. **Circular import between `pre-compact.service.ts` and
+    `session.service.ts`** is intentional — only used inside
+    function bodies at runtime, ESM cycle handles it fine.
+
+57. **`HOOK_QUEUE_MAX = 20`** in `hook-event.routes.ts` gates the
+    serialized promise-chain queue. Exceeding depth returns 503 +
+    `Retry-After: 1`. Test helper `_setHookQueueDepthForTests(n)`
+    deterministically saturates the queue with stalled promises
+    returning a `release()` handle — simulating concurrency via
+    `Promise.all(inject×21)` is racy because `processHook` drains
+    between enqueues.
+
+58. **Poller `ms_since_update` uses strftime epoch-seconds math:**
+    `(strftime('%s','now') - strftime('%s', updated_at)) * 1000`.
+    Identical integer-second equivalence with `julianday` on UTC
+    inputs (±999ms). Returns NULL on unparseable input (surfaces
+    corruption as a typed boundary). All session `updated_at` writes
+    use `datetime('now')` (UTC) — boot audit warns if non-UTC drift
+    appears.
+
+59. **`transcript_path` is NO LONGER a DB column.** It still appears
+    as a field in hook payloads (Claude Code sends the absolute JSONL
+    path) and `sessions.transcript_paths` is the JSON array that
+    accumulates them. Don't confuse the two. The one-shot
+    consolidation in `db/connection.ts` ran on boot; data migrated
+    into `transcript_paths` before the column was dropped.
+
+60. **`file_watch_state.last_line_count` is NO LONGER persisted.**
+    The column diverged from reality on truncate-then-rewrite
+    (byte_offset rewound but count kept climbing). Nothing ever
+    read it. `file-watcher.service.ts` INSERT/UPDATE omits it.
+
+### Known live bugs flagged for Phase S.1 (not yet fixed)
+
+- **OvaGas PM→coder message leak.** Root cause: OvaGas PM's
+  `sessions.tmux_session` stored the session NAME (`jsc-04bb12d7`)
+  instead of a pane ID (`%58`). `tmux send-keys -t <session-name>`
+  routes to whichever pane is CURRENTLY-FOCUSED in that session —
+  so when coder pane was clicked last, PM messages leaked there.
+  All other PM rows correctly store pane IDs (`%46`, `%49`); only
+  OvaGas was broken. PM data-healed the row to `%58` as immediate
+  mitigation. The session-create/restart code path that introduced
+  the bad value needs fixing + boot-time heal + `sendKeys` guard.
+
+- **Context bar drift.** OvaGas showed stale/inconsistent ctx%
+  between SessionCard, ContextBar, and LiveActivityRow. Phase M
+  shipped tick-based ctx% via `useSessionTick` but some UI
+  components still read the old pane-regex-derived value. Single
+  source of truth sweep needed: every UI surface reads from
+  `useSessionTick` only, remove old regex-based paths.
+
+### Post-compact reconstruction path (6-step checklist — S+Q+R)
+
+1. `git log --oneline -15` — confirm HEAD is **`bc0295b`**. You
+   should see the 11 commits above `0229bcf` (Phase P.4 docs).
+2. `pnpm -r run typecheck` — clean across shared + server + client.
+3. `pnpm -C server test && pnpm -C client test` — **server 159,
+   client 167, both green**.
+4. `pnpm -C server test:integration` — **19 green** in ~1.2s.
+5. `pnpm audit --prod` — clean, zero CVEs.
+6. Live surfaces to eyeball: attachment chip row + drop overlay on
+   ChatPage; pre-compact indicator + ⚡ toggle on SessionCard;
+   `GET /api/pre-compact/status` returns `{sessions: [...]}`.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
