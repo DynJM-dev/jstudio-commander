@@ -21,12 +21,17 @@ const IDLE_GRACE_MS = 8_000;
 // the "stuck on Thinking..." class of bug observable in server logs.
 const workingSince = new Map<string, number>();
 const STUCK_WORKING_WARN_MS = 3 * 60_000;
-// Phase N.0 Patch 2 — how long the poller defers to a recent hook write.
-// Chosen so 1-2 poll cycles (5s each) comfortably sit inside the window
-// without the yield outlasting real work: if the hook wrote `idle` and
-// Claude starts a fresh turn within 10s, the NEXT hook event (or the
-// poll after the window expires) restores `working`.
-const HOOK_YIELD_MS = 10_000;
+// Phase T Patch 2 revision — the poller yields to ANY hook activity
+// within HOOK_YIELD_MS regardless of current row status. Rationale:
+// the hook payload is the authoritative "did Claude just do something
+// on this session" signal. The previous 10s/status=idle gate (Phase
+// N.0 Patch 2 at `cfd1e65`) was too narrow — it only defended idle
+// writes, letting a stale-working classification from the pane regex
+// flip a just-stopped session back to working if the Stop hook missed
+// that exact status=idle window. 60s covers 1-2 active turns of
+// realistic Claude pacing; outside that window the poller resumes
+// normal pane-regex classification.
+const HOOK_YIELD_MS = 60_000;
 
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
@@ -57,20 +62,19 @@ const poll = (): void => {
   // must re-probe and un-stick it. jsc-* session names stay filtered by
   // status because those are Commander-created and stopping is authoritative.
   //
-  // Phase R M6 — `ms_since_update` uses `strftime('%s', ...)` (UTC second
-  // epochs) instead of `julianday()` diff. Both produce identical results
-  // against UTC datetimes, but strftime is more defensive: it returns
-  // NULL on unparseable input (surfaces a typed boundary bug as a NULL
-  // rather than silently producing nonsense diffs). The boot-time audit
-  // in connection.ts logs a warn count when any persisted `updated_at`
-  // looks non-UTC, so future writes that drift from `datetime('now')`
-  // (UTC) are caught at startup instead of silently corrupting the poll.
+  // Phase T Patch 2 revision — `last_hook_at` is now the authoritative
+  // hook-yield gate (epoch ms, written by every hook-event handler that
+  // resolves an owner). The old Phase R M6 `ms_since_update` derived
+  // from `updated_at` was dropped because append-only transcript writes
+  // never touched `updated_at`, so the gate could never be tripped by
+  // the PostToolUse stream that keeps coming during a turn. Keep the
+  // column for other queries; the poller no longer needs it in this
+  // SELECT.
   const activeSessions = db.prepare(
-    `SELECT id, tmux_session, status,
-            (strftime('%s','now') - strftime('%s', updated_at)) * 1000 AS ms_since_update
+    `SELECT id, tmux_session, status, last_hook_at
      FROM sessions
      WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
-  ).all() as Array<{ id: string; tmux_session: string; status: string; ms_since_update: number }>;
+  ).all() as Array<{ id: string; tmux_session: string; status: string; last_hook_at: number }>;
 
   if (activeSessions.length === 0) return;
 
@@ -109,27 +113,18 @@ const poll = (): void => {
       }
     }
 
-    // Phase N.0 — yield to a recent hook write. If the DB row was just
-    // flipped to `idle` by the Stop hook (Patch 1 at `bc9b126`), trust
-    // that signal for HOOK_YIELD_MS and skip re-classifying from pane.
-    // Without this, the pane footer's lingering spinner glyph (`✻ Cooked`
-    // etc.) would flip the row straight back to `working` on the next
-    // 5s tick, defeating the hook-driven correction entirely.
+    // Phase T Patch 2 revision — hook-authoritative yield. If ANY hook
+    // event matched this session within HOOK_YIELD_MS (60s), trust the
+    // hook cascade entirely and skip pane-regex reclassification. No
+    // status predicate, no cache dance: the hook knows what the pane
+    // regex can only guess at.
     //
-    // Gate is ANDed with `status === 'idle'` so a stale `working` row
-    // never gets frozen — the yield is ONLY for the hook-asserted idle
-    // state. Keep activity cache warm (above) regardless so the UI's
-    // live-turn rendering isn't starved.
-    if (
-      session.status === 'idle' &&
-      session.ms_since_update < HOOK_YIELD_MS
-    ) {
-      // Treat this iteration as a no-op: keep the cache in sync with
-      // the hook-written truth so the next poll compares against `idle`
-      // not whatever the pane-regex tried to classify.
-      lastKnownStatus.set(session.id, 'idle');
-      idleSince.delete(session.id);
-      workingSince.delete(session.id);
+    // Outside the window the poller resumes normal classification so
+    // long-idle sessions (no hook coverage, e.g. a Claude that died
+    // with no SessionEnd) still flip to stopped when tmux confirms the
+    // pane is gone.
+    const msSinceHook = Date.now() - Number(session.last_hook_at ?? 0);
+    if (msSinceHook < HOOK_YIELD_MS) {
       continue;
     }
 

@@ -58,6 +58,20 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0');
     console.log('[db] Migration: added last_activity_at column to sessions');
   }
+  // Phase T Patch 2 revision — epoch-ms timestamp of the last successful
+  // hook-event owner match for this session. The status-poller uses this
+  // as an authoritative "recent signal" gate: if a hook matched within
+  // HOOK_YIELD_MS (60s), skip pane-regex reclassification entirely.
+  // Replaces the previous `updated_at < 10s + status = idle` heuristic
+  // from Phase N.0 Patch 2 (`cfd1e65`), which was too narrow — the hook
+  // should be authoritative whenever recent, regardless of current
+  // status value. Defaults to 0 so pre-migration rows fail the gate and
+  // the poller treats them as no-hook-coverage until a hook actually
+  // fires.
+  if (!cols.some((c) => c.name === 'last_hook_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_hook_at INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] Migration: added last_hook_at column to sessions');
+  }
   // Phase R M3 — drop file_watch_state.last_line_count. Nothing
   // reads it and it diverged from reality on truncate-then-rewrite
   // (offset rewound, count kept climbing). Idempotent: once the

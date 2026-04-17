@@ -408,6 +408,20 @@ export const sessionService = {
     return ts;
   },
 
+  // Phase T Patch 2 revision — write the hook-match timestamp the
+  // status poller reads to gate pane-regex reclassification. Every
+  // hook-event handler branch that resolves an owner (Stop,
+  // SessionStart, SessionEnd, transcript-append) funnels through
+  // here. Keeps the poller yield on ONE authoritative column
+  // instead of piggybacking on updated_at (which the append-only
+  // transcript path deliberately does NOT touch).
+  bumpLastHookAt(sessionId: string): number {
+    const db = getDb();
+    const ts = Date.now();
+    db.prepare('UPDATE sessions SET last_hook_at = ? WHERE id = ?').run(ts, sessionId);
+    return ts;
+  },
+
   // Add a JSONL transcript to a session's ordered path list. Idempotent —
   // calling twice with the same path is a no-op. Used by the hook-event
   // route every time Claude Code fires a Stop/PostToolUse hook carrying

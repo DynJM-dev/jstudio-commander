@@ -301,6 +301,7 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
       // because it's the signal the 5s poller can miss entirely. Bumping
       // here guarantees the "Xs ago" counter resets at turn boundary.
       sessionService.bumpLastActivity(match.id);
+      sessionService.bumpLastHookAt(match.id);
       console.log(`[hook:Stop] session=${match.id.slice(0, 30)} → idle (via ${match.strategy})`);
     }
   }
@@ -324,6 +325,7 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
         at: new Date().toISOString(),
       });
       sessionService.bumpLastActivity(match.id);
+      sessionService.bumpLastHookAt(match.id);
       console.log(`[hook:SessionStart] session=${match.id.slice(0, 30)} → working (via ${match.strategy})`);
     } else {
       console.log('[hook:SessionStart] unknown session, skipping');
@@ -347,6 +349,7 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
         at: new Date().toISOString(),
       });
       sessionService.bumpLastActivity(match.id);
+      sessionService.bumpLastHookAt(match.id);
       console.log(`[hook:SessionEnd] session=${match.id.slice(0, 30)} → stopped (via ${match.strategy})`);
     }
   }
@@ -393,6 +396,12 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   // life. Bump BEFORE appendTranscriptPath so the heartbeat timestamp is
   // visible even on dedup'd hooks where no new path is stored.
   sessionService.bumpLastActivity(match.id);
+  // Phase T Patch 2 revision — record hook-match time for the poller's
+  // 60s hook-authoritative yield. Every hook branch above (Stop /
+  // SessionStart / SessionEnd) already bumped; this covers the
+  // general-match branch (PostToolUse and other transcript-carrying
+  // hook types). Idempotent — multiple bumps in one request are fine.
+  sessionService.bumpLastHookAt(match.id);
   const appended = sessionService.appendTranscriptPath(match.id, transcriptPath);
   const shortId = match.id.slice(0, 30);
   console.log(
