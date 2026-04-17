@@ -24,8 +24,13 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('sessions', { type: 'session:updated', session });
   });
 
-  eventBus.on('session:status', (sessionId, status) => {
-    rooms.broadcast('sessions', { type: 'session:status', sessionId, status });
+  eventBus.on('session:status', (sessionId, status, extras) => {
+    rooms.broadcast('sessions', {
+      type: 'session:status',
+      sessionId,
+      status,
+      ...(extras ?? {}),
+    });
   });
 
   eventBus.on('session:deleted', (sessionId) => {

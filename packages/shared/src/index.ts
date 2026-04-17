@@ -1,5 +1,5 @@
 // Types
-export type { Session, SessionStatus, SessionEvent, Teammate, EffortLevel } from './types/session.js';
+export type { Session, SessionStatus, SessionEvent, Teammate, EffortLevel, SessionActivity, StatusFlip } from './types/session.js';
 export { EFFORT_LEVELS } from './types/session.js';
 export type { ChatMessage, ContentBlock, TokenUsage } from './types/chat.js';
 export type { Project, PhaseStatus, PhaseLog, StackPill, StackCategory, RecentCommit } from './types/project.js';

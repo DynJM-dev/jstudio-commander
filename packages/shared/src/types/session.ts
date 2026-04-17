@@ -6,6 +6,31 @@ export type SessionStatus = 'idle' | 'working' | 'waiting' | 'stopped' | 'error'
 export const EFFORT_LEVELS = ['high', 'xhigh', 'max'] as const;
 export type EffortLevel = typeof EFFORT_LEVELS[number];
 
+// Live pane-activity line, parsed from the Claude Code footer. Example:
+//   "✽ Ruminating… (1m 49s · ↓ 430 tokens · thinking with xhigh effort)"
+// spinner is the leading glyph; verb the gerund; elapsed the as-printed
+// duration; tokens the int; effort the matched effort keyword. `raw` is
+// the full matched line, kept so the UI can forward-compat unknown
+// shapes without the server needing a schema bump.
+export interface SessionActivity {
+  verb: string;
+  spinner: string;
+  elapsed?: string;
+  tokens?: number;
+  effort?: EffortLevel;
+  raw: string;
+}
+
+// Evidence string used by the poller when it logs a status flip and by
+// the WS `session:status` payload so the client can toast the transition
+// with a short human-readable rationale.
+export interface StatusFlip {
+  at: string;
+  from: SessionStatus;
+  to: SessionStatus;
+  evidence: string;
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -32,6 +57,12 @@ export interface Session {
   // switches, or any other rotation produces additional entries here
   // rather than replacing the previous transcript.
   transcriptPaths: string[];
+  // Live pane activity — populated on route boundaries (GET /sessions/:id
+  // and the teammates list) by re-capturing the tmux pane tail. Null when
+  // nothing parses, when the session is stopped, or when the list endpoint
+  // skipped activity to avoid N tmux-capture shellouts per poll. Never
+  // persisted to the DB — activity is strictly derived.
+  activity?: SessionActivity | null;
 }
 
 export interface Teammate {

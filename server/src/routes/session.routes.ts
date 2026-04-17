@@ -1,11 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
+import { statusPollerService } from '../services/status-poller.service.js';
 
 export const sessionRoutes = async (app: FastifyInstance) => {
   // List all sessions (polled frequently — suppress logs)
   app.get('/api/sessions', { logLevel: 'warn' as const }, async () => {
-    return sessionService.listSessions();
+    // Phase J — attach the poller's cached activity per row. Cache lookup
+    // only (no tmux shell-outs) so the cost per request is a Map lookup
+    // per session, which is negligible even at hundreds of sessions.
+    return sessionService.listSessions().map((s) => ({
+      ...s,
+      activity: statusPollerService.getCachedActivity(s.id) ?? null,
+    }));
   });
 
   // Get single session (polled frequently — suppress logs)
@@ -14,8 +21,27 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     if (!session) {
       return reply.status(404).send({ error: 'Session not found' });
     }
-    return session;
+    // Phase J — decorate with the poller's cached pane-activity. Never persisted.
+    const activity = statusPollerService.getCachedActivity(session.id) ?? null;
+    return { ...session, activity };
   });
+
+  // Phase J — status-flip history. Returns the poller's in-memory ring
+  // buffer (last ~20 transitions) for the given session; each entry
+  // carries the rationale string that drove the flip. Useful when a user
+  // asks "why did this session flip to waiting" — grep the log or hit
+  // this endpoint for the most recent flips without grepping the log.
+  app.get<{ Params: { id: string } }>(
+    '/api/sessions/:id/status-history',
+    { logLevel: 'warn' as const },
+    async (request, reply) => {
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      return { sessionId: session.id, flips: statusPollerService.getFlipHistory(session.id) };
+    },
+  );
 
   // Create session
   app.post<{ Body: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' } }>(

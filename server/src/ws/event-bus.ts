@@ -1,5 +1,13 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, ChatMessage, Project, TokenUsageEntry, Teammate } from '@commander/shared';
+import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate } from '@commander/shared';
+
+export interface StatusEmitExtras {
+  from?: SessionStatus;
+  to?: SessionStatus;
+  evidence?: string;
+  activity?: SessionActivity | null;
+  at?: string;
+}
 
 class CommanderEventBus extends EventEmitter {
   // Session events
@@ -11,8 +19,8 @@ class CommanderEventBus extends EventEmitter {
     this.emit('session:updated', session);
   }
 
-  emitSessionStatus(sessionId: string, status: SessionStatus): void {
-    this.emit('session:status', sessionId, status);
+  emitSessionStatus(sessionId: string, status: SessionStatus, extras: StatusEmitExtras = {}): void {
+    this.emit('session:status', sessionId, status, extras);
   }
 
   emitSessionDeleted(sessionId: string): void {

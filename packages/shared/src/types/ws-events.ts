@@ -1,4 +1,4 @@
-import type { Session, SessionStatus, Teammate } from './session.js';
+import type { Session, SessionStatus, SessionActivity, Teammate } from './session.js';
 import type { ChatMessage } from './chat.js';
 import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
@@ -7,7 +7,22 @@ export type WSEvent =
   | { type: 'session:created'; session: Session }
   | { type: 'session:updated'; session: Session }
   | { type: 'session:deleted'; sessionId: string }
-  | { type: 'session:status'; sessionId: string; status: SessionStatus }
+  | {
+      type: 'session:status';
+      sessionId: string;
+      // Kept for back-compat — existing consumers read this as the "new"
+      // status. Newer consumers should prefer `to` + the richer fields.
+      status: SessionStatus;
+      from?: SessionStatus;
+      to?: SessionStatus;
+      // Human-readable rationale captured at poll time ("active-indicator
+      // ✽ in tail", "numbered-choice prompt", etc.). Absent on legacy
+      // emit paths that predate Phase J.
+      evidence?: string;
+      // Live activity snapshot at transition time; null when nothing parses.
+      activity?: SessionActivity | null;
+      at?: string;
+    }
   | { type: 'chat:message'; sessionId: string; message: ChatMessage }
   | { type: 'chat:messages'; sessionId: string; messages: ChatMessage[] }
   | { type: 'project:updated'; project: Project }

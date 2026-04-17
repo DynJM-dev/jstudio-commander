@@ -1,5 +1,69 @@
-import type { SessionStatus } from '@commander/shared';
+import type { SessionStatus, SessionActivity, EffortLevel } from '@commander/shared';
 import { tmuxService } from './tmux.service.js';
+
+// Parsed from the Claude Code footer. The line format (as observed across
+// 4.6 / 4.7 releases):
+//   "<spinner> <Verb>… (<elapsed> · ↓ <tokens> tokens · thinking with <effort> effort)"
+// The parenthetical is optional and its inner segments are independent —
+// older/newer builds drop `↓`, re-order the segments, or omit the
+// "thinking with X effort" tail entirely. We capture the whole block then
+// pick out each segment separately.
+//
+// Verb set is deliberately open. Claude's Hullaballoo / Tomfoolering /
+// Doodling flavor rotates every release; pinning to an enum would stale.
+// `raw` holds the entire matched line so the client can render unknown
+// shapes forward-compatibly.
+const SPINNER_GLYPHS = '✢✣✤✥✦✧✩✪✫✬✭✮✯✰✱✲✳✴✵✶✷✸✹✺✻✼✽❀❁❂❃❄❅❆❇❈❉❊❋⏺';
+// Verb is a single capitalized word — all Claude Code active-indicator
+// verbs observed so far (Ruminating, Doodling, Brewing, Cogitating,
+// Composing, Crunching, Hullaballooing, Tomfoolering, etc.) fit this
+// shape. Greedy `[a-z]+` avoids the non-greedy-clamp-to-minimum bug we
+// hit when the outer optional terminator let the engine settle on a
+// 2-char match ("Ru", "Do"). If Claude ships a two-word verb later, this
+// captures the first word — good enough for the chip; the `raw` field
+// still carries the full line.
+const ACTIVITY_RE = new RegExp(
+  `([${SPINNER_GLYPHS}])\\s+([A-Z][a-z]+)(?:…|\\.\\.\\.)?(?:\\s*\\(([^)]*)\\))?`,
+);
+const ELAPSED_RE = /(\d+m\s*\d+s|\d+s|\d+m)/;
+const TOKENS_RE = /(?:↓\s*)?(\d[\d,]*)\s*tokens?/i;
+const EFFORT_RE = /thinking with (high|xhigh|max) effort/i;
+
+export const detectActivity = (paneContent: string): SessionActivity | null => {
+  // Scan the tail — the active indicator sits at/near the bottom of the
+  // pane. Reading bottom-up caps the regex scan to O(lines-checked) and
+  // picks the MOST RECENT spinner line if Claude stacks two frames in
+  // the capture window.
+  const lines = paneContent.split('\n');
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 12); i--) {
+    const line = lines[i];
+    if (!line) continue;
+    const match = ACTIVITY_RE.exec(line);
+    if (!match) continue;
+
+    const spinner = match[1] ?? '';
+    const verb = match[2] ?? '';
+    const paren = match[3] ?? '';
+
+    const elapsed = ELAPSED_RE.exec(paren)?.[1]?.replace(/\s+/g, ' ').trim();
+    const tokensMatch = TOKENS_RE.exec(paren)?.[1];
+    const tokens = tokensMatch ? Number.parseInt(tokensMatch.replace(/,/g, ''), 10) : undefined;
+    const effortMatch = EFFORT_RE.exec(paren)?.[1]?.toLowerCase();
+    const effort = (effortMatch === 'high' || effortMatch === 'xhigh' || effortMatch === 'max')
+      ? (effortMatch as EffortLevel)
+      : undefined;
+
+    return {
+      spinner,
+      verb,
+      elapsed,
+      tokens: Number.isFinite(tokens) ? tokens : undefined,
+      effort,
+      raw: line.trim(),
+    };
+  }
+  return null;
+};
 
 const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✶⏺';
 const ACTIVE_INDICATORS = [
@@ -119,114 +183,102 @@ const hasActiveInTail = (text: string, n = 8): boolean => {
   return false;
 };
 
+export interface DetectedStatus {
+  status: SessionStatus;
+  evidence: string;
+  activity: SessionActivity | null;
+}
+
+// Internal classifier — same branches as the original detectStatus, but each
+// branch returns the `evidence` string alongside the status so the poller
+// can log WHY a flip happened. Evidence strings are short (<=40 chars) and
+// stable enough to grep server logs by.
+const classify = (paneContent: string): Omit<DetectedStatus, 'activity'> => {
+  const lastLine = getLastMeaningfulLine(paneContent);
+
+  for (const pattern of ERROR_PATTERNS) {
+    if (pattern.test(paneContent)) {
+      return { status: 'error', evidence: `error pattern: ${pattern.source.slice(0, 24)}` };
+    }
+  }
+
+  if (hasNumberedChoiceInTail(paneContent) || hasNumberedChoiceBlock(paneContent)) {
+    return { status: 'waiting', evidence: 'numbered-choice prompt' };
+  }
+
+  if (hasActiveInTail(paneContent)) {
+    return { status: 'working', evidence: 'active-indicator in tail' };
+  }
+
+  if (!hasIdleFooter(paneContent)) {
+    for (const pattern of WAITING_INDICATORS) {
+      if (pattern.test(paneContent)) {
+        return { status: 'waiting', evidence: `waiting pattern: ${pattern.source.slice(0, 24)}` };
+      }
+    }
+  }
+
+  if (hasIdlePromptInTail(paneContent)) {
+    const afterPrompt = paneContent.split(/❯[^\n]*\n/).pop() ?? '';
+    const afterTrimmed = afterPrompt.trim();
+    if (afterTrimmed.length > 0 && !DECORATOR_RE.test(afterTrimmed)) {
+      for (const pattern of ACTIVE_INDICATORS) {
+        if (pattern.test(afterTrimmed)) {
+          return { status: 'working', evidence: 'active content after ❯' };
+        }
+      }
+    }
+    return { status: 'idle', evidence: 'idle ❯ prompt visible' };
+  }
+
+  for (const pattern of IDLE_INDICATORS) {
+    if (pattern.test(lastLine)) {
+      return { status: 'idle', evidence: `idle pattern: ${pattern.source.slice(0, 24)}` };
+    }
+  }
+
+  if ([...lastLine].some((ch) => SPINNER_CHARS.includes(ch))) {
+    return { status: 'working', evidence: 'spinner glyph on last line' };
+  }
+  for (const pattern of ACTIVE_INDICATORS) {
+    if (pattern.test(lastLine)) {
+      return { status: 'working', evidence: `active pattern: ${pattern.source.slice(0, 24)}` };
+    }
+  }
+
+  return { status: 'idle', evidence: 'fallthrough → idle' };
+};
+
 export const agentStatusService = {
   detectStatus(tmuxSessionName: string): SessionStatus {
+    return this.detectStatusDetailed(tmuxSessionName).status;
+  },
+
+  // Richer variant — returns status + evidence + parsed live activity in one
+  // capture. The poller uses this; the status-history ring buffer records the
+  // evidence; the WS event carries both activity and evidence on transitions.
+  detectStatusDetailed(tmuxSessionName: string): DetectedStatus {
     if (!tmuxService.hasSession(tmuxSessionName)) {
-      return 'stopped';
+      return { status: 'stopped', evidence: 'no tmux session', activity: null };
     }
-
-    // 25 lines (up from 15). The old window missed waiting prompts when
-    // Claude printed a long tool-output tail before the prompt — the
-    // permission UI scrolled out before detection could run.
     const paneContent = tmuxService.capturePane(tmuxSessionName, 25);
-    const lastLine = getLastMeaningfulLine(paneContent);
-
-    // Check for errors first
-    for (const pattern of ERROR_PATTERNS) {
-      if (pattern.test(paneContent)) {
-        return 'error';
-      }
-    }
-
-    // Numbered choice prompts (❯ 1. Yes) = waiting for user selection.
-    // Two variants: with the ❯ marker, or a block of consecutive numbered
-    // lines (Claude sometimes redraws the UI so the marker lands on a
-    // different line than the choices). Strongest waiting signal — runs
-    // ahead of the idle-footer short-circuit so a real numbered prompt
-    // sitting next to the idle-ish chrome still classifies as waiting.
-    if (hasNumberedChoiceInTail(paneContent) || hasNumberedChoiceBlock(paneContent)) {
-      return 'waiting';
-    }
-
-    // Active-in-tail outranks the generic 'waiting for input' regex.
-    // When ✢ Tomfoolering / ✻ / a spinner glyph / a token counter is
-    // alive in the last few lines, the session is mid-turn. Chat
-    // content elsewhere in the pane (a PM-to-teammate message that
-    // contains the phrase "waiting for input") used to flip the status
-    // to 'waiting' here — Phase G.1 hoists this check above the
-    // generic loop so an active turn always wins.
-    if (hasActiveInTail(paneContent)) {
-      return 'working';
-    }
-
-    // Idle-footer short-circuit (#236). When Claude renders its idle
-    // chrome ('⏵⏵ accept edits on', '? for shortcuts', 'new task?')
-    // below the ❯ cursor, the other WAITING_INDICATORS can over-match
-    // on chrome text. If a known idle-footer marker is present we
-    // skip the broad regex loop and fall through to the idle-prompt
-    // detection below.
-    if (!hasIdleFooter(paneContent)) {
-      for (const pattern of WAITING_INDICATORS) {
-        if (pattern.test(paneContent)) {
-          return 'waiting';
-        }
-      }
-    }
-
-    // Check if the idle prompt (❯) is visible — means Claude is idle
-    if (hasIdlePromptInTail(paneContent)) {
-      // But check if Claude is actively thinking/working AFTER the prompt
-      // (e.g., user typed something and Claude is now processing)
-      const afterPrompt = paneContent.split(/❯[^\n]*\n/).pop() ?? '';
-      const afterTrimmed = afterPrompt.trim();
-
-      // If there's active content after the prompt, check if it's working
-      if (afterTrimmed.length > 0 && !DECORATOR_RE.test(afterTrimmed)) {
-        // Check for active indicators after the prompt
-        for (const pattern of ACTIVE_INDICATORS) {
-          if (pattern.test(afterTrimmed)) {
-            return 'working';
-          }
-        }
-      }
-
-      // Prompt visible, nothing active after it
-      return 'idle';
-    }
-
-    // Check for idle indicators on the last meaningful line
-    for (const pattern of IDLE_INDICATORS) {
-      if (pattern.test(lastLine)) {
-        return 'idle';
-      }
-    }
-
-    // Check for active work indicators
-    if ([...lastLine].some((ch) => SPINNER_CHARS.includes(ch))) {
-      return 'working';
-    }
-    for (const pattern of ACTIVE_INDICATORS) {
-      if (pattern.test(lastLine)) {
-        return 'working';
-      }
-    }
-
-    // If we can't determine, check the process — but Claude Code itself isn't always "working"
-    const paneCommand = tmuxService.getPaneCommand(tmuxSessionName).trim();
-    const shellCommands = ['zsh', 'bash', 'sh', 'fish'];
-    if (paneCommand && !shellCommands.includes(paneCommand)) {
-      // Process is running but we couldn't detect specific state — default to idle
-      // (Claude Code is always running in the pane, doesn't mean it's actively working)
-      return 'idle';
-    }
-
-    return 'idle';
+    const core = classify(paneContent);
+    const activity = detectActivity(paneContent);
+    return { ...core, activity };
   },
 
   detectStatusBatch(tmuxSessionNames: string[]): Record<string, SessionStatus> {
     const results: Record<string, SessionStatus> = {};
     for (const name of tmuxSessionNames) {
       results[name] = this.detectStatus(name);
+    }
+    return results;
+  },
+
+  detectStatusDetailedBatch(tmuxSessionNames: string[]): Record<string, DetectedStatus> {
+    const results: Record<string, DetectedStatus> = {};
+    for (const name of tmuxSessionNames) {
+      results[name] = this.detectStatusDetailed(name);
     }
     return results;
   },

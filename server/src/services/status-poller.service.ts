@@ -1,4 +1,4 @@
-import type { SessionStatus } from '@commander/shared';
+import type { SessionStatus, SessionActivity, StatusFlip } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { agentStatusService } from './agent-status.service.js';
 import { tmuxService } from './tmux.service.js';
@@ -21,6 +21,27 @@ const IDLE_GRACE_MS = 8_000;
 const workingSince = new Map<string, number>();
 const STUCK_WORKING_WARN_MS = 3 * 60_000;
 
+// Status-flip ring buffer per session. Phase J: debuggers hunting "why is
+// this session stuck" can grep these flips with their evidence strings
+// before diving into the detector source. Capped at FLIP_HISTORY_MAX per
+// session; oldest entries drop first.
+const statusFlipHistory = new Map<string, StatusFlip[]>();
+const FLIP_HISTORY_MAX = 20;
+
+// Latest parsed activity per session — read by the single-session / teammates
+// API routes so they don't need to re-shell-out to tmux on every request.
+const lastKnownActivity = new Map<string, SessionActivity | null>();
+
+const recordFlip = (sessionId: string, flip: StatusFlip): void => {
+  let arr = statusFlipHistory.get(sessionId);
+  if (!arr) {
+    arr = [];
+    statusFlipHistory.set(sessionId, arr);
+  }
+  arr.push(flip);
+  if (arr.length > FLIP_HISTORY_MAX) arr.splice(0, arr.length - FLIP_HISTORY_MAX);
+};
+
 const poll = (): void => {
   const db = getDb();
   // Poll non-stopped rows PLUS any row whose tmux_session looks like a pane
@@ -42,11 +63,20 @@ const poll = (): void => {
   if (pollable.length === 0) return;
 
   const tmuxNames = pollable.map((s) => s.tmux_session);
-  const statuses = agentStatusService.detectStatusBatch(tmuxNames);
+  const detailed = agentStatusService.detectStatusDetailedBatch(tmuxNames);
 
   for (const session of activeSessions) {
-    let newStatus = statuses[session.tmux_session];
-    if (!newStatus) continue;
+    const detectedResult = detailed[session.tmux_session];
+    if (!detectedResult) continue;
+
+    let newStatus = detectedResult.status;
+    let evidence = detectedResult.evidence;
+    const activity = detectedResult.activity;
+
+    // Keep the activity cache fresh for downstream API reads regardless of
+    // whether the status itself flipped — the footer updates many times
+    // per second and polling every 5s is already a coarse snapshot.
+    lastKnownActivity.set(session.id, activity);
 
     // Pane-target safety net: if a row whose tmux_session starts with '%'
     // was classified as 'stopped' (heuristic transient miss), double-check
@@ -56,10 +86,11 @@ const poll = (): void => {
     if (newStatus === 'stopped' && session.tmux_session.startsWith('%')) {
       if (tmuxService.hasSession(session.tmux_session)) {
         newStatus = 'idle';
+        evidence = 'pane live despite stopped classification';
       }
     }
 
-    const cachedStatus = lastKnownStatus.get(session.id) ?? session.status;
+    const cachedStatus = lastKnownStatus.get(session.id) ?? (session.status as SessionStatus);
 
     // Grace period applies ONLY to working → idle (prevents flicker
     // between tool calls). working → waiting skips the grace: a permission
@@ -73,6 +104,7 @@ const poll = (): void => {
       const elapsed = now - idleSince.get(session.id)!;
       if (elapsed < IDLE_GRACE_MS) continue;
       idleSince.delete(session.id);
+      evidence = `${evidence} (after ${Math.round(elapsed / 1000)}s grace)`;
     } else {
       idleSince.delete(session.id);
     }
@@ -95,6 +127,15 @@ const poll = (): void => {
         workingSince.delete(session.id);
       }
 
+      const at = new Date().toISOString();
+      const from = cachedStatus as SessionStatus;
+      const to = newStatus;
+
+      // Phase J — log the flip with its rationale. Single line so log-grep
+      // on `[status]` reveals the entire transition history per session.
+      console.log(`[status] ${session.id.slice(0, 8)} ${from}→${to} evidence="${evidence}"`);
+      recordFlip(session.id, { at, from, to, evidence });
+
       // Update DB
       db.prepare("UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?")
         .run(newStatus, session.id);
@@ -102,8 +143,17 @@ const poll = (): void => {
       // Update cache
       lastKnownStatus.set(session.id, newStatus);
 
-      // Emit event
-      eventBus.emitSessionStatus(session.id, newStatus);
+      // Emit event — richer payload on transition with the before/after
+      // statuses, the parsed evidence, and the live activity snapshot.
+      // The legacy `status` field stays populated to the `to` value for
+      // back-compat with consumers that predate Phase J.
+      eventBus.emitSessionStatus(session.id, newStatus, {
+        from,
+        to,
+        evidence,
+        activity,
+        at,
+      });
     } else {
       // Cache the current status even if unchanged (first run)
       lastKnownStatus.set(session.id, newStatus);
@@ -129,5 +179,16 @@ export const statusPollerService = {
     }
     lastKnownStatus.clear();
     console.log('[poller] Status poller stopped');
+  },
+
+  // Exposed so the routes layer can surface the ring buffer + cached
+  // activity without a fresh tmux shell-out. History survives the life
+  // of the process; it does NOT persist to disk — restart clears it.
+  getFlipHistory(sessionId: string): StatusFlip[] {
+    return (statusFlipHistory.get(sessionId) ?? []).slice();
+  },
+
+  getCachedActivity(sessionId: string): SessionActivity | null | undefined {
+    return lastKnownActivity.get(sessionId);
   },
 };
