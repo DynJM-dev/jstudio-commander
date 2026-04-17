@@ -192,6 +192,13 @@ const deriveCoderName = (
 };
 
 const reconcile = (path: string): void => {
+  // Phase P.3 M2 — self-heal orphans every reconcile, not only on boot.
+  // Catches mid-session team-dir deletion: user rm's ~/.claude/teams/X
+  // while Commander is running. Pre-patch, the orphan rows stuck around
+  // holding their panes until next server restart. Idempotent + cheap
+  // (one SELECT on team_name-non-null rows + per-row existsSync).
+  sessionService.healOrphanedTeamSessions();
+
   const config = readConfig(path);
   if (!config || !config.members) return;
 
