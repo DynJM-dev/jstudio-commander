@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { X, GripVertical, Minimize2, Users } from 'lucide-react';
+import { X, GripVertical, Minimize2, Users, Columns2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -91,6 +91,11 @@ export const SplitChatLayout = () => {
     percent: DEFAULT_PERCENT,
   }, [legacy]);
   const [split, setSplit] = usePreference<SplitState>(prefKey, defaultSplit);
+  // Account-wide (cross-PM) preference — when true, a teammate spawn
+  // auto-activates the split pane on whichever PM's chat is open. When
+  // false, the spawn still registers but the user has to click the
+  // teammate in the strip/Sessions tree to focus them.
+  const [autoSplitOnSpawn, setAutoSplitOnSpawn] = usePreference<boolean>('auto-split-on-spawn', true);
   const activeTabId = split.activeTabId ?? null;
   const minimized = !!split.minimized;
   const percent = split.percent ?? DEFAULT_PERCENT;
@@ -111,8 +116,15 @@ export const SplitChatLayout = () => {
 
   // Server is authoritative. Filter to non-stopped, hard-cap at 3, sort
   // by creation so a consistent tab order survives across reloads.
-  const refreshTeammates = useCallback(async () => {
+  //
+  // `promote` — when true, fill an empty activeTabId with the first
+  // remaining teammate. Initial mount and manual refresh use true (the
+  // user just arrived; showing the split they expect is correct). WS
+  // spawn events gate on the auto-split-on-spawn preference so users
+  // can opt out of having the split pop open under their cursor.
+  const refreshTeammates = useCallback(async (opts?: { promote?: boolean }) => {
     if (!pmSessionId) return;
+    const promote = opts?.promote ?? true;
     try {
       const list = await api.get<Session[]>(
         `/sessions/${encodeURIComponent(pmSessionId)}/teammates`,
@@ -122,15 +134,20 @@ export const SplitChatLayout = () => {
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
         .slice(0, MAX_TEAMMATES);
 
-      // Drop any active tab that's no longer in the list; promote first
-      // remaining teammate when the previously-active one got dismissed.
       setTeammates(active);
-      const next = activeTabId && active.some((t) => t.id === activeTabId) ? activeTabId : (active[0]?.id ?? null);
-      if (next !== activeTabId) setActiveTabId(next);
+
+      // Drop any stale active tab (previously-active teammate is gone).
+      // This path always runs, regardless of promote — a dead tab must
+      // not linger.
+      const tabStillValid = activeTabId && active.some((t) => t.id === activeTabId);
+      if (!tabStillValid) {
+        const next = promote ? (active[0]?.id ?? null) : null;
+        if (next !== activeTabId) setActiveTabId(next);
+      }
     } catch { /* transient — next WS event will retry */ }
   }, [pmSessionId, activeTabId, setActiveTabId]);
 
-  useEffect(() => { refreshTeammates(); }, [refreshTeammates]);
+  useEffect(() => { refreshTeammates({ promote: true }); }, [refreshTeammates]);
 
   useEffect(() => {
     if (!lastEvent) return;
@@ -142,9 +159,9 @@ export const SplitChatLayout = () => {
         // No cleanup needed — setState is safe post-unmount.
         void t;
       }
-      refreshTeammates();
+      refreshTeammates({ promote: autoSplitOnSpawn });
     } else if (lastEvent.type === 'teammate:dismissed') {
-      refreshTeammates();
+      refreshTeammates({ promote: false });
     } else if (lastEvent.type === 'session:status') {
       // Patch status in place so tab dots update without a full refetch.
       setTeammates((prev) =>
@@ -160,7 +177,7 @@ export const SplitChatLayout = () => {
         return next;
       });
     }
-  }, [lastEvent, refreshTeammates, minimized]);
+  }, [lastEvent, refreshTeammates, minimized, autoSplitOnSpawn]);
 
   // Direct Mode — watch focus movement into/out of the right pane. A
   // teammate input is any element inside rightPaneRef; when focus lands
@@ -420,8 +437,24 @@ export const SplitChatLayout = () => {
           </div>
         )}
 
-        {/* Top-right controls: minimize + close */}
+        {/* Top-right controls: auto-split toggle + minimize + close */}
         <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+          <button
+            onClick={() => setAutoSplitOnSpawn(!autoSplitOnSpawn)}
+            className="flex items-center justify-center rounded-md p-1 transition-colors"
+            style={{
+              background: 'rgba(0, 0, 0, 0.25)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              color: autoSplitOnSpawn ? 'var(--color-accent-light)' : 'var(--color-text-tertiary)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.4)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0, 0, 0, 0.25)'; }}
+            title={autoSplitOnSpawn
+              ? 'Auto-open split on teammate spawn: ON'
+              : 'Auto-open split on teammate spawn: OFF'}
+          >
+            <Columns2 size={14} />
+          </button>
           <button
             onClick={() => setMinimized(true)}
             className="flex items-center justify-center rounded-md p-1 transition-colors"
