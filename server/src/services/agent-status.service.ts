@@ -215,9 +215,29 @@ const hasNumberedChoiceInTail = (text: string, n = 6): boolean => {
 // `waiting for input` regex fallback when Claude is clearly still in a
 // turn — chat-content phrases ("waiting for input from coder-14") in
 // the scrollback must not flip the live status to 'waiting'.
+
+// Phase U.1 Fix 2 — Commander's own statusline chrome always renders at
+// pane bottom: "Opus 4.7 │ ctx 33% │ 5h 46% │ 7d 35% │ $26.54" +
+// "⏵⏵ bypass permissions on · 1 shell". These match generic ACTIVE_INDICATORS
+// (/\d+%/ fires three times on the ctx/5h/7d row) but carry zero active-work
+// signal. Skip them from the active-indicator scan so an idle pane whose
+// scrollback has the chrome at bottom doesn't false-positive as working.
+// Does NOT touch ACTIVE_INDICATORS itself — real signals like "47% complete",
+// "Reading 123", "Searching", "Editing", "Writing" still match normally.
+export const STATUSLINE_CHROME_MARKERS = [
+  /ctx\s*\d+%/i,                    // ctx 33%
+  /\b\d+[hd]\s+\d+%/i,              // 5h 46%, 7d 35% — rate-limit cells
+  /⏵⏵\s+bypass permissions on/i,
+  /⏵⏵\s+accept edits on/i,          // mirror of IDLE_FOOTER_MARKERS entry
+];
+
+const isStatuslineChrome = (line: string): boolean =>
+  STATUSLINE_CHROME_MARKERS.some((re) => re.test(line));
+
 const hasActiveInTail = (text: string, n = 8): boolean => {
   const lines = text.split('\n').slice(-n);
   for (const line of lines) {
+    if (isStatuslineChrome(line)) continue;
     if ([...line].some((ch) => SPINNER_CHARS.includes(ch))) return true;
     for (const pattern of ACTIVE_INDICATORS) {
       if (pattern.test(line)) return true;
@@ -328,9 +348,19 @@ export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus
     const afterPrompt = paneContent.split(/❯[^\n]*\n/).pop() ?? '';
     const afterTrimmed = afterPrompt.trim();
     if (afterTrimmed.length > 0 && !DECORATOR_RE.test(afterTrimmed)) {
-      for (const pattern of ACTIVE_INDICATORS) {
-        if (pattern.test(afterTrimmed)) {
-          return { status: 'working', evidence: 'active content after ❯' };
+      // Phase U.1 Fix 2 — skip Commander's statusline chrome lines before
+      // testing ACTIVE_INDICATORS. The chrome's "ctx N% │ 5h M% │ 7d P%"
+      // sits right after ❯ for idle panes; without this filter, /\d+%/
+      // falsely flags them as working.
+      const nonChromeAfter = afterTrimmed
+        .split('\n')
+        .filter((line) => !isStatuslineChrome(line))
+        .join('\n');
+      if (nonChromeAfter.length > 0) {
+        for (const pattern of ACTIVE_INDICATORS) {
+          if (pattern.test(nonChromeAfter)) {
+            return { status: 'working', evidence: 'active content after ❯' };
+          }
         }
       }
     }
