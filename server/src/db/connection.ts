@@ -58,6 +58,16 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0');
     console.log('[db] Migration: added last_activity_at column to sessions');
   }
+  // Phase R M3 — drop file_watch_state.last_line_count. Nothing
+  // reads it and it diverged from reality on truncate-then-rewrite
+  // (offset rewound, count kept climbing). Idempotent: once the
+  // column is absent the block skips.
+  const fwsCols = db.prepare("PRAGMA table_info(file_watch_state)").all() as Array<{ name: string }>;
+  if (fwsCols.some((c) => c.name === 'last_line_count')) {
+    db.exec('ALTER TABLE file_watch_state DROP COLUMN last_line_count');
+    console.log('[db] Migration: dropped last_line_count column from file_watch_state');
+  }
+
   // Phase R L4 — drop the legacy single-transcript_path column.
   // Replaced by transcript_paths (JSON array) in #204. Before
   // dropping, copy any rows where transcript_path is populated but

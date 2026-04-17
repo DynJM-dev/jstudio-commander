@@ -86,7 +86,6 @@ CREATE TABLE IF NOT EXISTS session_events (
 CREATE TABLE IF NOT EXISTS file_watch_state (
   file_path TEXT PRIMARY KEY,
   last_byte_offset INTEGER NOT NULL DEFAULT 0,
-  last_line_count INTEGER NOT NULL DEFAULT 0,
   last_modified TEXT,
   session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE
 );

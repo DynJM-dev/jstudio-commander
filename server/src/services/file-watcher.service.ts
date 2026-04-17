@@ -58,15 +58,17 @@ const getIncrementalLines = (filePath: string): string[] => {
   const newContent = buffer.toString('utf-8');
   const lines = newContent.split('\n').filter((l) => l.trim().length > 0);
 
-  // Update state
+  // Update state. Phase R M3 — last_line_count was write-only; nothing
+  // read it, and it diverged from reality when a file was truncated
+  // and rewritten to the same size (offset rewound, count kept
+  // climbing). Dropped from the schema + this INSERT.
   db.prepare(`
-    INSERT INTO file_watch_state (file_path, last_byte_offset, last_line_count, last_modified)
-    VALUES (?, ?, ?, datetime('now'))
+    INSERT INTO file_watch_state (file_path, last_byte_offset, last_modified)
+    VALUES (?, ?, datetime('now'))
     ON CONFLICT(file_path) DO UPDATE SET
       last_byte_offset = excluded.last_byte_offset,
-      last_line_count = last_line_count + excluded.last_line_count,
       last_modified = datetime('now')
-  `).run(filePath, fileSize, lines.length);
+  `).run(filePath, fileSize);
 
   return lines;
 };
