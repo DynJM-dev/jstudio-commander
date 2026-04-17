@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronDown, CheckCircle2, Circle, CircleDotDashed, CircleAlert, CircleX, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PlanTask } from './AgentPlan';
+import { isDismissed, dismiss } from '../../utils/dismissedPlans';
 
 const M = 'Montserrat, sans-serif';
 
@@ -32,20 +33,19 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
   const [expanded, setExpanded] = useState(false);
   const [hiddenAfterDone, setHiddenAfterDone] = useState(false);
   const [inlineVisible, setInlineVisible] = useState(false);
-  // Stores the planKey the user dismissed. When the active plan changes to a
-  // new key, the widget surfaces again automatically — no need to reset.
-  // Previously this was a bool, which meant clicking X on plan A and then
-  // Claude starting plan B would hide plan B too until the key-change
-  // effect ran; now the comparison is direct and stable.
-  const [dismissedPlanKey, setDismissedPlanKey] = useState<string | null>(null);
+  // Dismissal is persisted to localStorage via utils/dismissedPlans so an
+  // X-close survives reload + server restart. Key-scoped: a new planKey
+  // re-checks the store so fresh plans surface by default.
+  const [dismissed, setDismissed] = useState<boolean>(() => isDismissed(planKey));
   const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Reset transient UI state on plan swap. Dismissal is NOT reset here —
-  // its key-scoped compare handles that cleanly.
+  // Reset transient UI state on plan swap + re-check persisted dismissal
+  // against the new planKey.
   useEffect(() => {
     setExpanded(false);
     setHiddenAfterDone(false);
     setInlineVisible(false);
+    setDismissed(isDismissed(planKey));
   }, [planKey]);
 
   // Auto-hide 3s after all steps complete.
@@ -89,7 +89,7 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
     [plan],
   );
 
-  const visible = !hiddenAfterDone && !inlineVisible && dismissedPlanKey !== planKey && total > 0;
+  const visible = !hiddenAfterDone && !inlineVisible && !dismissed && total > 0;
   const reduced = prefersReducedMotion();
 
   return (
@@ -165,13 +165,15 @@ export const StickyPlanWidget = ({ plan, planKey, allDone, title = 'Plan' }: Sti
                 title="Hide"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setDismissedPlanKey(planKey);
+                  dismiss(planKey);
+                  setDismissed(true);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     e.stopPropagation();
-                    setDismissedPlanKey(planKey);
+                    dismiss(planKey);
+                    setDismissed(true);
                   }
                 }}
                 className="shrink-0 flex items-center justify-center rounded p-0.5 -mr-0.5 cursor-pointer transition-colors"
