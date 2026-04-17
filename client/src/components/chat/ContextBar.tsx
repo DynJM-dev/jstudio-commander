@@ -359,17 +359,50 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     return () => clearInterval(id);
   }, [isWorking]);
   const isLongTask = isWorking && elapsedSecs >= 60;
-  useEffect(() => {
-    if (isWorking && messages.length > 0) {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i];
-        if (m && m.role === 'user') {
-          responseStartRef.current = new Date(m.timestamp).getTime();
-          break;
-        }
+
+  // Reset the elapsed reference to the latest turn boundary on every message
+  // change — NOT just when isWorking toggles. A turn boundary is:
+  //   1. A user message (including tool_result-only echoes during a tool loop)
+  //   2. The FIRST assistant message after a user message (start-of-compose)
+  // Prior implementation pinned the reference only to the last user message,
+  // which drifted stale across a long compose: the ContextBar kept reading
+  // "300s" while the Claude Code pane's own counter had already reset on the
+  // current tool/compose phase. Walking forward and snapping on each boundary
+  // keeps our display in lockstep with pane semantics.
+  //
+  // Also resets when userJustSent flips on — pre-server-confirm we use the
+  // current wallclock so the counter starts from 0, not from the stale prior
+  // reference, even before the optimistic user message lands in `messages`.
+  const lastBoundaryTs = useMemo(() => {
+    let ref = 0;
+    let sawUserSinceLastAssistant = false;
+    for (const msg of messages) {
+      const ts = Date.parse(msg.timestamp);
+      if (!ts || Number.isNaN(ts)) continue;
+      if (msg.role === 'user') {
+        ref = ts;
+        sawUserSinceLastAssistant = true;
+      } else if (msg.role === 'assistant' && sawUserSinceLastAssistant) {
+        ref = ts;
+        sawUserSinceLastAssistant = false;
       }
     }
-  }, [isWorking, messages.length]);
+    return ref;
+  }, [messages]);
+
+  useEffect(() => {
+    if (!isWorking) return;
+    if (userJustSent) {
+      // Optimistic send — the message may not be in `messages` yet. Anchor
+      // to wallclock so the counter starts at 0 on the new turn.
+      const now = Date.now();
+      if (responseStartRef.current === 0 || responseStartRef.current < now - 250) {
+        responseStartRef.current = now;
+      }
+      return;
+    }
+    if (lastBoundaryTs > 0) responseStartRef.current = lastBoundaryTs;
+  }, [isWorking, userJustSent, lastBoundaryTs]);
 
   return (
     <div
