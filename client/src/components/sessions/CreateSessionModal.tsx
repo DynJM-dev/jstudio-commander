@@ -2,15 +2,28 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal } from 'lucide-react';
 import type { Project } from '@commander/shared';
+import { MODEL_PRICING, MODEL_CONTEXT_LIMITS } from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
 
 const M = 'Montserrat, sans-serif';
 
+// Pull pricing from the shared MODEL_PRICING constant so changes there
+// flow through the picker automatically.
+const priceDetail = (modelId: string): string => {
+  const p = MODEL_PRICING[modelId];
+  const ctx = MODEL_CONTEXT_LIMITS[modelId];
+  const ctxLabel = ctx === 1_000_000 ? '1M' : ctx === 200_000 ? '200K' : `${Math.round((ctx ?? 0) / 1_000)}K`;
+  return p
+    ? `${ctxLabel} ctx · $${p.input}/$${p.output}`
+    : `${ctxLabel} ctx`;
+};
+
 const MODEL_OPTIONS = [
-  { value: 'claude-opus-4-6', label: 'Opus 4.6', detail: '1M ctx · $15/$75', tier: 'premium' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', detail: '200K ctx · $3/$15', tier: 'balanced' },
-  { value: 'claude-haiku-4-5', label: 'Haiku 4.5', detail: '200K ctx · $0.80/$4', tier: 'fast' },
+  { value: 'claude-opus-4-7',  label: 'Opus 4.7',         detail: priceDetail('claude-opus-4-7'),  tier: 'premium' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6',       detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
+  { value: 'claude-haiku-4-5',  label: 'Haiku 4.5',        detail: priceDetail('claude-haiku-4-5'),  tier: 'fast' },
+  { value: 'claude-opus-4-6',   label: 'Opus 4.6 (legacy)', detail: priceDetail('claude-opus-4-6'),  tier: 'legacy' },
 ];
 
 interface CreateSessionModalProps {
@@ -22,7 +35,7 @@ interface CreateSessionModalProps {
 export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionModalProps) => {
   const [name, setName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [model, setModel] = useState('claude-opus-4-6');
+  const [model, setModel] = useState('claude-opus-4-7');
   const [sessionType, setSessionType] = useState<'pm' | 'raw'>('pm');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -51,7 +64,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
     if (open) {
       setName('');
       setProjectPath('');
-      setModel('claude-opus-4-6');
+      setModel('claude-opus-4-7');
       setSessionType('pm');
       setIsSubmitting(false);
     }
