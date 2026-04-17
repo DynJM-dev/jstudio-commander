@@ -50,6 +50,63 @@ export const STALE_ACTIVITY_MS = 90_000;
 // `<` cutoff: at msSinceForceIdle === 60_000 the gate is done.
 export const FORCE_IDLE_COOLDOWN_MS = 60_000;
 
+// Phase U.1 Fix 3 — oscillation telemetry. Observability-only: any
+// session that flips status 3+ times within a 15s window logs once
+// per 60s per session. Gives us an alarm when Fix 1 + Fix 2 miss a
+// new false-positive class so we notice before users do.
+export const OSCILLATION_WINDOW_MS = 15_000;
+export const OSCILLATION_THRESHOLD = 3;
+export const OSCILLATION_DEDUP_MS = 60_000;
+const oscillationHistory = new Map<string, Array<{ status: string; at: number }>>();
+const oscillationLastLog = new Map<string, number>();
+
+// Return true iff THIS call emitted a warn log. Pure tracking — the
+// caller is the status-poller's flip write sites (stale-activity
+// force-idle branch + normal classifier flip branch). Tests pass
+// `nowOverride` to walk the time axis without real timers.
+export const trackOscillation = (
+  sessionId: string,
+  status: string,
+  nowOverride?: number,
+): boolean => {
+  const now = nowOverride ?? Date.now();
+  let arr = oscillationHistory.get(sessionId);
+  if (!arr) {
+    arr = [];
+    oscillationHistory.set(sessionId, arr);
+  }
+  arr.push({ status, at: now });
+  // Trim in-place to entries within the last OSCILLATION_WINDOW_MS.
+  // `<=` retention semantics: an entry exactly at the window boundary
+  // is kept. Matches the 15s test assertion that "three flips spread
+  // over 16s" removes the t0 entry but keeps the one at t0+5s.
+  while (arr.length > 0 && now - arr[0]!.at > OSCILLATION_WINDOW_MS) {
+    arr.shift();
+  }
+  if (arr.length < OSCILLATION_THRESHOLD) return false;
+  const lastLog = oscillationLastLog.get(sessionId) ?? 0;
+  if (now - lastLog < OSCILLATION_DEDUP_MS) return false;
+  oscillationLastLog.set(sessionId, now);
+  const spanMs = now - arr[0]!.at;
+  console.warn(
+    `[poller] oscillation suspected: session=${sessionId.slice(0, 8)} ` +
+    `flips=${arr.length} in ${Math.round(spanMs / 1000)}s`,
+  );
+  return true;
+};
+
+// Test-only harness for resetting + inspecting tracker state. Not
+// referenced by production code paths; safe to leave exported.
+export const __oscillationTestSupport = {
+  reset: (): void => {
+    oscillationHistory.clear();
+    oscillationLastLog.clear();
+  },
+  getHistory: (sessionId: string): Array<{ status: string; at: number }> =>
+    (oscillationHistory.get(sessionId) ?? []).slice(),
+  getLastLogAt: (sessionId: string): number => oscillationLastLog.get(sessionId) ?? 0,
+};
+
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
 // before diving into the detector source. Capped at FLIP_HISTORY_MAX per
@@ -197,6 +254,7 @@ const poll = (): void => {
           `[status] ${session.id.slice(0, 8)} working→idle evidence="${evidence}"`,
         );
         recordFlip(session.id, { at, from: 'working', to: 'idle', evidence });
+        trackOscillation(session.id, 'idle');
         lastKnownStatus.set(session.id, 'idle');
         workingSince.delete(session.id);
         idleSince.delete(session.id);
@@ -255,6 +313,9 @@ const poll = (): void => {
       // on `[status]` reveals the entire transition history per session.
       console.log(`[status] ${session.id.slice(0, 8)} ${from}→${to} evidence="${evidence}"`);
       recordFlip(session.id, { at, from, to, evidence });
+      // Phase U.1 Fix 3 — observability on classifier-driven flips.
+      // Same-threshold (3 within 15s) alarm as the force-idle branch.
+      trackOscillation(session.id, newStatus);
 
       // Update DB
       db.prepare("UPDATE sessions SET status = ?, updated_at = datetime('now') WHERE id = ?")
