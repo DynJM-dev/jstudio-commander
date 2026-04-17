@@ -124,14 +124,25 @@ const getStatusInfo = (
   };
 };
 
-const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const;
+// Matches SKILL.md's effort matrix: high is the floor, xhigh is the
+// feature-work default, max for overnight / heavy. Pre-migration `low`
+// and `medium` are intentionally omitted — Commander rows should never
+// write them (see Phase E heal migration on legacy rows).
+const EFFORT_LEVELS = ['high', 'xhigh', 'max'] as const;
 type EffortLevel = typeof EFFORT_LEVELS[number];
 
 const EFFORT_LABELS: Record<EffortLevel, string> = {
-  low: 'low',
-  medium: 'med',
   high: 'high',
+  xhigh: 'x-high',
   max: 'max',
+};
+
+// Legacy values (`low`, `medium`) land here from older rows that
+// haven't been healed yet — coerce to `xhigh` for both the dropdown
+// initial state and any subsequent reads.
+const normalizeEffort = (raw?: string): EffortLevel => {
+  if (raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
+  return 'xhigh';
 };
 
 interface ContextBarProps {
@@ -161,7 +172,7 @@ interface ContextBarProps {
   onRefresh?: () => Promise<void> | void;
 }
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'medium', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -179,7 +190,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   const showWarning = contextPercent > 85;
 
   // Effort level selector
-  const [effort, setEffort] = useState<EffortLevel>((effortLevel as EffortLevel) || 'medium');
+  const [effort, setEffort] = useState<EffortLevel>(normalizeEffort(effortLevel));
   const [effortOpen, setEffortOpen] = useState(false);
   const effortRef = useRef<HTMLDivElement>(null);
 
