@@ -32,6 +32,14 @@ const STUCK_WORKING_WARN_MS = 3 * 60_000;
 // realistic Claude pacing; outside that window the poller resumes
 // normal pane-regex classification.
 const HOOK_YIELD_MS = 60_000;
+// Phase U Patch 2 — stale-activity force-idle threshold. A row that
+// has been in 'working' for this long WITHOUT any bumpLastActivity
+// (hook OR poller-derived flip) is treated as stuck regardless of
+// what the pane regex currently says. Chosen to sit above the 60s
+// hook-yield window: any real active turn refreshes last_activity_at
+// on nearly every tool-use hook, so anything crossing 90s of silence
+// is overwhelmingly a routing/classifier gap rather than a long turn.
+const STALE_ACTIVITY_MS = 90_000;
 
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
@@ -71,10 +79,16 @@ const poll = (): void => {
   // column for other queries; the poller no longer needs it in this
   // SELECT.
   const activeSessions = db.prepare(
-    `SELECT id, tmux_session, status, last_hook_at
+    `SELECT id, tmux_session, status, last_hook_at, last_activity_at
      FROM sessions
      WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
-  ).all() as Array<{ id: string; tmux_session: string; status: string; last_hook_at: number }>;
+  ).all() as Array<{
+    id: string;
+    tmux_session: string;
+    status: string;
+    last_hook_at: number;
+    last_activity_at: number;
+  }>;
 
   if (activeSessions.length === 0) return;
 
@@ -125,6 +139,42 @@ const poll = (): void => {
     // pane is gone.
     const msSinceHook = Date.now() - Number(session.last_hook_at ?? 0);
     if (msSinceHook < HOOK_YIELD_MS) {
+      continue;
+    }
+
+    // Phase U Patch 2 — stale-activity force-idle. Ordering: (1) hook
+    // yield above wins — a recent hook is authoritative so we never
+    // force-idle over a real active turn; (2) this force-idle handles
+    // rows that are stuck 'working' with no proof of life; (3) pane
+    // classifier below handles everything else. Narrow scope: only
+    // flips 'working' → 'idle'. All other transitions fall through to
+    // the classifier so a waiting prompt, a stopped session, or an
+    // idle row is untouched. Prevents the "Composing response 1100s"
+    // class of bug where the pane footer is frozen on a past-tense
+    // verb the classifier can't distinguish from live work.
+    const msSinceActivity = Date.now() - Number(session.last_activity_at ?? 0);
+    if (session.status === 'working' && msSinceActivity > STALE_ACTIVITY_MS) {
+      const result = db.prepare(
+        `UPDATE sessions SET status = 'idle', updated_at = datetime('now')
+         WHERE id = ? AND status = 'working'`,
+      ).run(session.id);
+      if (result.changes > 0) {
+        const at = new Date().toISOString();
+        const evidence = `stale-activity-force-idle (${Math.round(msSinceActivity / 1000)}s)`;
+        console.log(
+          `[status] ${session.id.slice(0, 8)} working→idle evidence="${evidence}"`,
+        );
+        recordFlip(session.id, { at, from: 'working', to: 'idle', evidence });
+        lastKnownStatus.set(session.id, 'idle');
+        workingSince.delete(session.id);
+        idleSince.delete(session.id);
+        eventBus.emitSessionStatus(session.id, 'idle', {
+          from: 'working',
+          to: 'idle',
+          evidence,
+          at,
+        });
+      }
       continue;
     }
 
