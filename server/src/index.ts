@@ -56,14 +56,27 @@ await app.register(cors, {
   origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
 });
 
-// Serve client dist in production
+// Serve client dist — production only. In dev, Vite serves the UI
+// from :5173 with HMR; letting fastify-static win there silently
+// shadowed the dev bundle with a stale build on 2026-04-17 (three
+// Wave 2 features appeared to "regress" because the server served
+// an Apr-14 `client/dist` frozen from before the feature shipped).
+// Explicit NODE_ENV gate prevents recurrence — if dist exists in
+// dev, we warn and skip.
 const clientDist = join(__dirname, '..', '..', 'client', 'dist');
-if (existsSync(clientDist)) {
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction && existsSync(clientDist)) {
   await app.register(fastifyStatic, {
     root: clientDist,
     prefix: '/',
     wildcard: false,
   });
+} else if (existsSync(clientDist)) {
+  console.warn(
+    `[dev] client/dist exists at ${clientDist} but NODE_ENV !== production — ` +
+      'skipping fastify-static so Vite (:5173) serves the UI. ' +
+      "If you want the built bundle, run with NODE_ENV=production or remove client/dist.",
+  );
 }
 
 // Security headers — runs on every response, including static assets.
