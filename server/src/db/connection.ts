@@ -62,18 +62,21 @@ export const getDb = (): Database.Database => {
     console.log('[db] Migration: added recent_commits_json column to projects');
   }
 
-  // #188 one-time heal: promote recently-active sessions whose effort was
-  // left at 'medium' / 'low' to 'max' so they benefit from the new default
-  // without stomping user-chosen values on older rows. Idempotent — once
-  // a row is flipped it won't match the predicate on subsequent boots.
+  // Phase E heal: promote ALL sessions whose effort is still at the
+  // pre-migration 'low' / 'medium' to 'xhigh' — SKILL.md's effort
+  // matrix is now high|xhigh|max, and the narrowed EffortLevel type
+  // can't represent the legacy values. Earlier 24h-bounded heal was
+  // superseded; any remaining rows from that era get swept here.
+  // Idempotent: once a row is flipped it won't match the predicate
+  // on subsequent boots.
   const healed = db.prepare(
     `UPDATE sessions
-     SET effort_level = 'max'
+     SET effort_level = 'xhigh'
      WHERE effort_level IN ('medium','low')
-       AND updated_at > datetime('now','-24 hours')`,
+        OR effort_level IS NULL`,
   ).run();
   if (healed.changes > 0) {
-    console.log(`[db] Migration: promoted ${healed.changes} recent session(s) to effort=max`);
+    console.log(`[db] Migration: healed ${healed.changes} legacy session(s) to effort=xhigh`);
   }
 
   // Key/value preference store — replaces ad-hoc localStorage on the
