@@ -124,6 +124,33 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       // Detect interactive prompts
       const prompts: { type: string; message: string; context?: string; options?: string[] }[] = [];
 
+      // Kill-switches — footer states that CONCLUSIVELY mean "no
+      // permission/confirm prompt can be active right now". They run before
+      // any detection so stray prompt-shaped characters elsewhere in the
+      // pane (a `?` in a user message, a "Continue?" from chat prose)
+      // don't misfire a popup the user then has to dismiss.
+      //
+      // 1. `⏵⏵ bypass permissions on` — Claude Code's bypass-permissions
+      //    mode is active. No permission prompt can fire in this mode by
+      //    design; anything that looks like one is chrome or chat content.
+      // 2. `N teammate` in footer + "Waiting on input" status — this is
+      //    the team-lead-waiting-on-teammate idle state, not a user-facing
+      //    prompt. The team lead is paused for a teammate reply, not for
+      //    a click.
+      const footerTail = outputLines.slice(-15).join('\n');
+      const hasBypassPermissions = /⏵⏵\s*bypass permissions on/i.test(footerTail);
+      const waitingOnTeammate =
+        /\b\d+\s+teammates?\b/i.test(footerTail) &&
+        /Waiting on input/i.test(footerTail);
+      if (hasBypassPermissions || waitingOnTeammate) {
+        return {
+          output: raw,
+          lines: outputLines,
+          alive: true,
+          prompts,
+        };
+      }
+
       // Helper: extract tool call context from terminal output
       // Looks for the block between ─── separator and the prompt options
       const extractToolContext = (): string | undefined => {
@@ -219,14 +246,18 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      // Final fallback — pane tail contains a question mark or numbered-list
-      // shape but nothing above matched. Better to surface a generic prompt
-      // than leave the user staring at a waiting tab with no card.
-      if (prompts.length === 0) {
-        const tail10 = outputLines.slice(-10).join('\n');
-        const hasQuestion = /\?\s*$/m.test(tail10) || /\?\s*\(/m.test(tail10);
-        const hasNumberedList = /^\s*[❯ ]?\s*\d+\)\s+/m.test(tail10);
-        if (hasQuestion || hasNumberedList) {
+      // Final fallback — only when the LAST non-empty line itself looks
+      // like an actionable prompt. Previously we matched `?` anywhere in
+      // the last 10 lines, which regularly fired on chat content
+      // containing a question mark. A real Claude Code prompt always ends
+      // right above the input cursor, so the last non-empty line is the
+      // right surface to probe.
+      if (prompts.length === 0 && bottomLines.length > 0) {
+        const lastLine = bottomLines[bottomLines.length - 1]!.trim();
+        const lastLineIsQuestion =
+          /\?\s*$/.test(lastLine) || /\?\s*\(/.test(lastLine);
+        const lastLineIsNumberedOption = /^[❯ ]?\s*\d+\)\s+/.test(lastLine);
+        if (lastLineIsQuestion || lastLineIsNumberedOption) {
           prompts.push({
             type: 'confirm',
             message: 'Waiting on input — see terminal',
