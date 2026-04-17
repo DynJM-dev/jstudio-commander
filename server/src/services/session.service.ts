@@ -1,8 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
+import { watch as chokidarWatch } from 'chokidar';
 import type { Session, SessionStatus, EffortLevel } from '@commander/shared';
+import { config } from '../config.js';
+import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 
 // Coerce any legacy or malformed effort_level value (pre-migration
 // 'low'/'medium', NULL from a row that pre-dates the column default
@@ -194,6 +197,91 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
   { col: 'auto_compact_enabled', key: 'autoCompactEnabled' },
 ];
 
+// Phase T Patch 0 — UUID shape of Claude Code's JSONL filenames. A
+// directory-scoped add-event must match this before we bind — Claude
+// Code only writes UUID-named JSONLs, but filtering here guards against
+// spurious unrelated files that happen to show up in the encoded-cwd
+// directory.
+const CLAUDE_JSONL_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+const SPAWN_BIND_TIMEOUT_MS = 30_000;
+
+// Watch the encoded-cwd directory under ~/.claude/projects/ and bind
+// the first new JSONL file Claude Code creates to this Commander
+// session row. Closes the gap between spawn (tmux pane created) and
+// first hook event, during which `resolveOwner` would otherwise drop
+// events for Commander-spawned sessions because `claude_session_id`
+// is still NULL (CTO snapshot §7).
+//
+// Fire-and-forget — failure falls through to the existing 5-strategy
+// resolveOwner cascade and logs a warn. Idempotent on re-entry: if a
+// subsequent event fires after we've already bound (first JSONL seen),
+// we close and clear.
+const bindClaudeSessionFromJsonl = (sessionId: string, cwd: string | null): void => {
+  if (!cwd) return; // No cwd → Claude writes to its own default dir; we can't predict it.
+  const encoded = jsonlDiscoveryService.encodeProjectPath(cwd);
+  const dir = join(config.claudeProjectsDir, encoded);
+  try { mkdirSync(dir, { recursive: true }); } catch { /* best effort */ }
+
+  const startedAt = Date.now();
+  const shortId = sessionId.slice(0, 8);
+  let bound = false;
+
+  const watcher = chokidarWatch(dir, {
+    depth: 0,
+    ignoreInitial: true,
+    persistent: false, // don't keep the event loop alive if the process tries to exit
+    // Ignore anything that isn't a candidate JSONL to cut wakeups.
+    ignored: (p: string) => !p.endsWith('.jsonl'),
+  });
+
+  const cleanup = (): void => {
+    clearTimeout(timer);
+    watcher.close().catch(() => { /* noop */ });
+  };
+
+  const timer = setTimeout(() => {
+    if (bound) return;
+    console.warn(
+      `[spawn-bind] session=${shortId} cwd=${cwd} — no JSONL file appeared in ` +
+      `${Math.round(SPAWN_BIND_TIMEOUT_MS / 1000)}s; Claude Code may not have started. ` +
+      `Falling back to existing resolveOwner cascade.`,
+    );
+    cleanup();
+  }, SPAWN_BIND_TIMEOUT_MS);
+
+  watcher.on('add', (filePath: string) => {
+    if (bound) return;
+    const fname = basename(filePath);
+    if (!CLAUDE_JSONL_UUID_RE.test(fname)) return;
+    const uuid = fname.replace(/\.jsonl$/i, '');
+    bound = true;
+    cleanup();
+
+    // eventBus + sessionService are legal at runtime — this function is
+    // called from inside createSession, long after the module exports
+    // have resolved. Using sessionService.* keeps all DB writes funneled
+    // through the single upsert surface so column defaults stay honest.
+    try {
+      sessionService.upsertSession({ id: sessionId, claudeSessionId: uuid });
+      sessionService.appendTranscriptPath(sessionId, filePath);
+      const row = sessionService.getSession(sessionId);
+      if (row) eventBus.emitSessionUpdated(row);
+      const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(
+        `[spawn-bind] session=${shortId} → claude_session_id=${uuid} (bound in ${elapsedSec}s)`,
+      );
+    } catch (err) {
+      console.warn(`[spawn-bind] session=${shortId} write failed: ${(err as Error).message}`);
+    }
+  });
+
+  watcher.on('error', (err) => {
+    if (bound) return;
+    console.warn(`[spawn-bind] session=${shortId} watcher error: ${(err as Error).message}`);
+  });
+};
+
 export const sessionService = {
   // Single write surface for every caller that wants to create or modify a
   // session row. Takes a sparse input — only the keys the caller sets end up
@@ -294,6 +382,13 @@ export const sessionService = {
     // if unquoted — single-quote the value so strict shells don't error.
     const modelFlag = model ? `--model '${model}'` : '';
     const claudeCmd = `claude ${modelFlag}`.trim();
+
+    // Phase T Patch 0 — start the JSONL-dir watcher BEFORE sending the
+    // `claude` keystroke so the first add-event cannot race past us.
+    // Claude Code creates `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+    // on first turn; binding on the add-event gives resolveOwner's primary
+    // strategy an O(1) claude_session_id hit from the very first hook.
+    bindClaudeSessionFromJsonl(id, opts.projectPath ?? null);
 
     // Small delay to let the shell initialize, then send the claude command
     setTimeout(() => {
