@@ -376,6 +376,15 @@ export const sessionService = {
   // route every time Claude Code fires a Stop/PostToolUse hook carrying
   // a transcript_path. Replaces the old rotation-detector heuristics with
   // a deterministic append.
+  // Phase P.3 H2 — append-only mutation; does NOT bump `updated_at`.
+  // `updated_at` is the poller's yield gate (Phase N.0 Patch 2) — a
+  // hook-fired Stop flips status to `idle` + writes updated_at, and the
+  // poller yields for 10s before re-classifying from pane. If a
+  // subsequent tick landing inside that window bumped updated_at for
+  // appending to transcript_paths, the yield window reset and the
+  // poller could flip the row back to `working` off a stale pane
+  // footer. Keep updated_at reserved for status-flip semantics; append-
+  // only paths like this one leave it alone.
   appendTranscriptPath(sessionId: string, path: string): boolean {
     const db = getDb();
     const row = db.prepare('SELECT transcript_paths FROM sessions WHERE id = ?').get(sessionId) as
@@ -386,7 +395,7 @@ export const sessionService = {
     if (existing.includes(path)) return false;
     const next = [...existing, path];
     db.prepare(
-      "UPDATE sessions SET transcript_paths = ?, updated_at = datetime('now') WHERE id = ?",
+      'UPDATE sessions SET transcript_paths = ? WHERE id = ?',
     ).run(JSON.stringify(next), sessionId);
     return true;
   },
