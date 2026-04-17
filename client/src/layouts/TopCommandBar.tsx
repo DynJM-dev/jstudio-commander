@@ -62,24 +62,30 @@ export const TopCommandBar = () => {
   // event stream that updates teammate status) so the count drops as
   // soon as a coder stops. listTeammates' UNION-style parent matching
   // is mirrored here so claudeSessionId-keyed relationships count too.
-  const teammateCountByParent = useMemo(() => {
-    const map = new Map<string, number>();
+  const { teammateCountByParent, workingTeammateByParent } = useMemo(() => {
+    const count = new Map<string, number>();
+    const working = new Map<string, number>();
     for (const s of sessions) {
       if (!s.parentSessionId || s.status === 'stopped') continue;
       const k = s.parentSessionId;
-      map.set(k, (map.get(k) ?? 0) + 1);
+      count.set(k, (count.get(k) ?? 0) + 1);
+      if (s.status === 'working') working.set(k, (working.get(k) ?? 0) + 1);
     }
     // A parent's `parentSessionId` field on its teammate rows can be
     // either the Commander UUID OR the Claude UUID. Surface both keys
     // so SessionTab lookups work regardless of which one the team
     // config recorded.
-    const out = new Map<string, number>();
+    const outCount = new Map<string, number>();
+    const outWorking = new Map<string, number>();
     for (const s of sessions) {
-      const direct = map.get(s.id) ?? 0;
-      const viaClaude = s.claudeSessionId ? (map.get(s.claudeSessionId) ?? 0) : 0;
-      if (direct + viaClaude > 0) out.set(s.id, direct + viaClaude);
+      const direct = count.get(s.id) ?? 0;
+      const viaClaude = s.claudeSessionId ? (count.get(s.claudeSessionId) ?? 0) : 0;
+      if (direct + viaClaude > 0) outCount.set(s.id, direct + viaClaude);
+      const wd = working.get(s.id) ?? 0;
+      const wc = s.claudeSessionId ? (working.get(s.claudeSessionId) ?? 0) : 0;
+      if (wd + wc > 0) outWorking.set(s.id, wd + wc);
     }
-    return out;
+    return { teammateCountByParent: outCount, workingTeammateByParent: outWorking };
   }, [sessions]);
 
   const goToSession = (id: string) => {
@@ -113,11 +119,17 @@ export const TopCommandBar = () => {
     const isActive = s.id === currentSessionId;
     const isWaiting = s.status === 'waiting';
     const teammateCount = teammateCountByParent.get(s.id) ?? 0;
+    const workingTeammates = workingTeammateByParent.get(s.id) ?? 0;
+    // PM pane idle but a teammate is working — light-blue tab accent.
+    // Skipped when the PM itself is working (green/working class wins)
+    // or when a waiting alarm is active (yellow wins, user must act).
+    const isTeammateActive = !isWaiting && s.status === 'idle' && workingTeammates > 0;
     const cls = [
       'session-tab shrink-0',
       isActive ? 'session-tab--active' : '',
       s.status === 'working' ? 'session-tab--working' : '',
       s.status === 'stopped' ? 'session-tab--stopped' : '',
+      isTeammateActive ? 'session-tab--teammate-active' : '',
       isWaiting ? 'waiting-tab-alarm' : '',
     ].filter(Boolean).join(' ');
     return (
@@ -185,11 +197,14 @@ export const TopCommandBar = () => {
             {tabs.map((s) => {
               const isActive = s.id === currentSessionId;
               const isWaiting = s.status === 'waiting';
+              const workingTeammates = workingTeammateByParent.get(s.id) ?? 0;
+              const isTeammateActive = !isWaiting && s.status === 'idle' && workingTeammates > 0;
               const cls = [
                 'session-tab session-tab--stack',
                 isActive ? 'session-tab--active' : '',
                 s.status === 'working' ? 'session-tab--working' : '',
                 s.status === 'stopped' ? 'session-tab--stopped' : '',
+                isTeammateActive ? 'session-tab--teammate-active' : '',
                 isWaiting ? 'waiting-tab-alarm' : '',
               ].filter(Boolean).join(' ');
               const teammateCount = teammateCountByParent.get(s.id) ?? 0;
@@ -355,11 +370,14 @@ export const TopCommandBar = () => {
                 {activeSessions.map((s) => {
                   const isActive = s.id === currentSessionId;
                   const isWaiting = s.status === 'waiting';
+                  const workingTeammates = workingTeammateByParent.get(s.id) ?? 0;
+                  const isTeammateActive = !isWaiting && s.status === 'idle' && workingTeammates > 0;
                   const cls = [
                     'session-tab session-tab--stack',
                     isActive ? 'session-tab--active' : '',
                     s.status === 'working' ? 'session-tab--working' : '',
                     s.status === 'stopped' ? 'session-tab--stopped' : '',
+                    isTeammateActive ? 'session-tab--teammate-active' : '',
                     isWaiting ? 'waiting-tab-alarm' : '',
                   ].filter(Boolean).join(' ');
                   const teammateCount = teammateCountByParent.get(s.id) ?? 0;

@@ -3,10 +3,27 @@ import type { SessionStatus } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
+// Teammate variant — working stays vivid green (it's THE "this pane is doing
+// work" signal the user needs to spot across a strip of icons), but idle
+// drops to a neutral muted grey so green really pops. Waiting stays amber
+// because teammates that need your attention should still glow; stopped is
+// the same greyed-out treatment as the session palette.
+const TEAMMATE_STATUS_COLORS: Record<SessionStatus, string> = {
+  working: '#22C55E',
+  idle: '#6B7280',
+  waiting: '#F59E0B',
+  error: '#EF4444',
+  stopped: '#6B7280',
+};
+
 interface StatusBadgeProps {
   status: SessionStatus;
   showLabel?: boolean;
   size?: 'sm' | 'md';
+  // 'session' (default) — standard SESSION_STATUS palette (idle = amber).
+  // 'teammate' — tuned for teammate surfaces: idle goes muted so the green
+  // working state is unambiguous across a row of teammate icons.
+  variant?: 'session' | 'teammate';
 }
 
 const pulseClass: Record<SessionStatus, string> = {
@@ -17,8 +34,9 @@ const pulseClass: Record<SessionStatus, string> = {
   stopped: '',
 };
 
-export const StatusBadge = ({ status, showLabel = false, size = 'md' }: StatusBadgeProps) => {
-  const color = STATUS_COLORS[status];
+export const StatusBadge = ({ status, showLabel = false, size = 'md', variant = 'session' }: StatusBadgeProps) => {
+  const palette = variant === 'teammate' ? TEAMMATE_STATUS_COLORS : STATUS_COLORS;
+  const color = palette[status];
   const label = STATUS_LABELS[status];
   const dotSize = size === 'sm' ? 8 : 10;
 

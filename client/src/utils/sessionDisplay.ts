@@ -1,4 +1,31 @@
-import type { Session } from '@commander/shared';
+import type { Session, SessionStatus } from '@commander/shared';
+
+// Client-side derived UI state. The server stores the raw SessionStatus
+// (working/idle/waiting/stopped/error); the UI layer augments it with
+// `teammate-active` for PMs whose pane is idle but whose teammates are
+// actively working. That state exists only visually — the server doesn't
+// care, it's purely for "the session is productive, don't paint it idle".
+export type DisplayStatus = 'working' | 'waiting' | 'teammate-active' | 'idle' | 'stopped' | 'error';
+
+// `teammate-active` is distinct from `waiting`: waiting means the user must
+// act (yellow alarm), while teammate-active means "no action required, work
+// is happening in a sub-agent" (calm blue). Precedence top-to-bottom below
+// mirrors the severity/attention-required ladder — a PM that's BOTH working
+// its own pane AND has busy teammates reads as `working` (own pane wins
+// because that's what the user is watching on this surface).
+export const getDisplayStatus = (
+  session: Pick<Session, 'status'>,
+  teammates?: Session[] | null,
+): DisplayStatus => {
+  const raw = session.status as SessionStatus;
+  if (raw === 'working') return 'working';
+  if (raw === 'waiting') return 'waiting';
+  if (raw === 'stopped') return 'stopped';
+  if (raw === 'error') return 'error';
+  // raw is 'idle' — check teammates
+  if (teammates && teammates.some((t) => t.status === 'working')) return 'teammate-active';
+  return 'idle';
+};
 
 // Return a display name that disambiguates when multiple sessions share the
 // same `name`. Works on the full session list (active + stopped) so a dead

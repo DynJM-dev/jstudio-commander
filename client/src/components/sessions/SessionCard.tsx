@@ -8,6 +8,7 @@ import { StatusBadge } from '../shared/StatusBadge';
 import { CommandInput } from './CommandInput';
 import { SessionActions } from './SessionActions';
 import { TeammateRow } from './TeammateRow';
+import { getDisplayStatus } from '../../utils/sessionDisplay';
 
 const M = 'Montserrat, sans-serif';
 
@@ -93,6 +94,11 @@ export const SessionCard = ({
   // the "someone is waiting on you" signal bubble up to the top of the list.
   const anyTeammateWaiting = teammates?.some((t) => t.status === 'waiting') ?? false;
   const isWaiting = session.status === 'waiting' || anyTeammateWaiting;
+  // Light-blue "teammate-active" halo when the PM pane is idle but a
+  // teammate is actively working. Only renders when NOT already glowing
+  // yellow for waiting — waiting is higher priority (user must act).
+  const displayStatus = getDisplayStatus(session, teammates ?? null);
+  const isTeammateActive = !isWaiting && displayStatus === 'teammate-active';
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -119,7 +125,13 @@ export const SessionCard = ({
   return (
     <div
       className={isWaiting ? 'waiting-glow' : ''}
-      style={{ opacity: isStopped ? 0.6 : 1 }}
+      style={{
+        opacity: isStopped ? 0.6 : 1,
+        ...(isTeammateActive ? {
+          borderRadius: 20,
+          boxShadow: '0 0 0 1px var(--color-teammate-active-border), 0 0 14px -4px color-mix(in srgb, var(--color-teammate-active) 40%, transparent)',
+        } : null),
+      }}
     >
       <GlassCard
         hover={!isStopped}

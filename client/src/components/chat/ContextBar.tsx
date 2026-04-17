@@ -103,6 +103,7 @@ const getStatusInfo = (
   actionLabel: string | null,
   hasPrompt: boolean,
   activeTeammateCount: number,
+  workingTeammateCount: number,
 ): StatusInfo => {
   if (sessionStatus === 'working') {
     return {
@@ -121,15 +122,28 @@ const getStatusInfo = (
       return { label: 'Waiting for approval', dotColor: 'var(--color-idle)', pulse: true };
     }
     if (activeTeammateCount > 0) {
+      // Light-blue dot for teammate-active state even on `waiting` rows —
+      // the pane may have entered the `waiting` branch via an ambiguous
+      // footer match while teammates are still churning. Blue signals
+      // "productive, no action needed".
       return {
         label: `Monitoring ${activeTeammateCount} teammate${activeTeammateCount === 1 ? '' : 's'}`,
-        dotColor: 'var(--color-accent)',
+        dotColor: workingTeammateCount > 0 ? 'var(--color-teammate-active)' : 'var(--color-accent)',
         pulse: true,
       };
     }
     return { label: 'Waiting for input', dotColor: 'var(--color-idle)', pulse: true };
   }
-  // idle, stopped, or undefined
+  // idle / stopped / undefined — surface teammate-active when the PM is
+  // genuinely idle but a teammate is working. The session is productive;
+  // don't paint it with the stopped-grey that means "nothing happening".
+  if (sessionStatus === 'idle' && workingTeammateCount > 0) {
+    return {
+      label: `Monitoring ${activeTeammateCount} teammate${activeTeammateCount === 1 ? '' : 's'}`,
+      dotColor: 'var(--color-teammate-active)',
+      pulse: true,
+    };
+  }
   return {
     label: 'Idle — Waiting for instructions',
     dotColor: 'var(--color-stopped)',
@@ -260,23 +274,31 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // on a teammate row may match either the Commander UUID or the
   // claudeSessionId, so we count both.
   const { sessions } = useSessions();
-  const activeTeammateCount = useMemo(() => {
-    if (!sessionId) return 0;
+  const { activeTeammateCount, workingTeammateCount } = useMemo(() => {
+    if (!sessionId) return { activeTeammateCount: 0, workingTeammateCount: 0 };
     const me = sessions.find((s) => s.id === sessionId);
     const claudeId = me?.claudeSessionId;
-    let count = 0;
+    let active = 0;
+    let working = 0;
     for (const s of sessions) {
       if (!s.parentSessionId || s.status === 'stopped') continue;
-      if (s.parentSessionId === sessionId) count += 1;
-      else if (claudeId && s.parentSessionId === claudeId) count += 1;
+      const matches = s.parentSessionId === sessionId
+        || (claudeId ? s.parentSessionId === claudeId : false);
+      if (!matches) continue;
+      active += 1;
+      if (s.status === 'working') working += 1;
     }
-    return count;
+    return { activeTeammateCount: active, workingTeammateCount: working };
   }, [sessions, sessionId]);
 
   // Status info (always shown)
   const effectiveStatus = userJustSent && sessionStatus !== 'working' ? 'working' : sessionStatus;
   const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
-  const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount);
+  const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount, workingTeammateCount);
+  // Drives the bar-teammate-active CSS class: only when the PM pane is idle
+  // AND a teammate is working AND no user-actionable prompt is pending.
+  const isTeammateActiveDisplay =
+    !isWorking && !hasPrompt && workingTeammateCount > 0 && (effectiveStatus === 'idle' || effectiveStatus === 'waiting');
   const status = messagesQueued && isWorking
     ? { ...statusInfo, label: `${statusInfo.label} (queued)` }
     : statusInfo;
@@ -406,7 +428,7 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
 
   return (
     <div
-      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav ${isWorking ? 'bar-working' : ''} ${effectiveStatus === 'waiting' ? 'bar-waiting' : ''}`}
+      className={`shrink-0 flex items-center gap-2 px-4 lg:px-6 glass-nav ${isWorking ? 'bar-working' : ''} ${effectiveStatus === 'waiting' && !isTeammateActiveDisplay ? 'bar-waiting' : ''} ${isTeammateActiveDisplay ? 'bar-teammate-active' : ''}`}
       style={{
         fontFamily: M,
         height: 34,

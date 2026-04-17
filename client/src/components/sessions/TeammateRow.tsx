@@ -50,7 +50,7 @@ export const TeammateRow = ({ teammate, parentId, onOpen }: TeammateRowProps) =>
       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
-      <StatusBadge status={teammate.status} size="sm" />
+      <StatusBadge status={teammate.status} size="sm" variant="teammate" />
       <span
         className="text-sm font-medium shrink-0"
         style={{ color: 'var(--color-text-primary)' }}

@@ -31,6 +31,12 @@
   --color-waiting:        #F59E0B;
   --color-error:          #EF4444;
   --color-stopped:        #6B7280;
+  /* Light blue — signals "PM pane is idle but a teammate is actively working,
+     so the session as a whole is still productive". Distinct from both idle
+     yellow (wants attention) and working green (PM itself is busy). */
+  --color-teammate-active: #60A5FA;
+  --color-teammate-active-subtle: rgba(96, 165, 250, 0.12);
+  --color-teammate-active-border: rgba(96, 165, 250, 0.45);
 
   /* === Text === */
   --color-text-primary:   #F0F4F8;
@@ -310,6 +316,17 @@ button:active, a:active, [role="button"]:active {
   border-top-color: color-mix(in srgb, var(--color-idle) 55%, transparent) !important;
   box-shadow: inset 0 2px 0 color-mix(in srgb, var(--color-idle) 55%, transparent), 0 -2px 14px color-mix(in srgb, var(--color-idle) 35%, transparent);
 }
+/* ContextBar variant for the teammate-active derived state — calm blue
+   breath, NOT the waiting amber alarm. Signals "work is happening" without
+   the "you must act" urgency. */
+@keyframes bar-glow-blue {
+  0%, 100% { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-teammate-active) 30%, transparent); }
+  50% { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--color-teammate-active) 55%, transparent), 0 -2px 14px color-mix(in srgb, var(--color-teammate-active) 28%, transparent); }
+}
+.bar-teammate-active {
+  animation: bar-glow-blue 2.2s ease-in-out infinite;
+  border-top-color: color-mix(in srgb, var(--color-teammate-active) 45%, transparent) !important;
+}
 
 /* Reduced motion — disable all animations */
 @media (prefers-reduced-motion: reduce) {
@@ -558,6 +575,21 @@ button:active, a:active, [role="button"]:active {
   color: color-mix(in srgb, var(--color-text-tertiary) 70%, transparent);
   box-shadow: none;
   opacity: 0.7;
+}
+/* PM pane idle, but at least one teammate is actively working — the
+   "session is productive even though the PM is paused" state. Light-blue
+   outline instead of idle amber / waiting alarm so the color cues tell
+   the user "no action required, work is happening". */
+.session-tab--teammate-active {
+  border-color: var(--color-teammate-active-border);
+  color: var(--color-teammate-active);
+  box-shadow: 0 0 10px -3px color-mix(in srgb, var(--color-teammate-active) 40%, transparent);
+}
+.session-tab--teammate-active.session-tab--active {
+  background: var(--color-teammate-active-subtle);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-teammate-active) 30%, transparent),
+    0 0 16px -4px color-mix(in srgb, var(--color-teammate-active) 55%, transparent);
 }
 /* .waiting-tab-alarm composes on top via className concat — its keyframe
    already drives the box-shadow, so .session-tab's transition on
