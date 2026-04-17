@@ -49,22 +49,6 @@ export const bandRank = (band: ContextBand): number => BAND_ORDER.indexOf(band);
 // `green → yellow` is noise; `yellow → orange` warrants a soft prompt,
 // `orange → red` warrants a firm one. Never warn on downward crossings
 // — post-/compact the context drops back and that's relief, not alarm.
-// Phase N.0 — resolves the "what % do we show right now" question. When
-// Commander has inferred a /compact rotation but no fresh tick has
-// arrived, the persisted tick still carries the PRE-compact value (often
-// 100%). Trusting it would show a green session as "full" for however
-// long the PM sits idle at `❯ ` post-compact. Returning null pushes the
-// band into `unknown` so the strip goes muted grey and the toast path
-// can't fire.
-export const resolveVisibleCtxPct = (
-  tickPct: number | null | undefined,
-  postCompact: boolean,
-): number | null => {
-  if (postCompact) return null;
-  if (tickPct === null || tickPct === undefined || !Number.isFinite(tickPct)) return null;
-  return tickPct;
-};
-
 export const isWarningCrossing = (prev: ContextBand, next: ContextBand): boolean => {
   if (prev === next) return false;
   const prevRank = bandRank(prev);

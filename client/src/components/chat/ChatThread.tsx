@@ -257,10 +257,6 @@ interface ChatThreadProps {
   // statusline-derived tokens + context %. Either can be absent.
   sessionActivity?: SessionActivity | null;
   sessionTick?: SessionTick | null;
-  // Phase N.0 — Commander inferred a /compact rotation but no fresh tick
-  // has arrived yet. Hides LiveActivityRow so the stale pre-compact
-  // telemetry doesn't claim the session is still mid-turn.
-  postCompact?: boolean;
 }
 
 export const ChatThread = ({
@@ -275,7 +271,6 @@ export const ChatThread = ({
   shimmerState = 'thinking',
   sessionActivity,
   sessionTick,
-  postCompact = false,
 }: ChatThreadProps) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -579,7 +574,7 @@ export const ChatThread = ({
                   <LiveActivityRow
                     activity={sessionActivity}
                     tick={sessionTick ?? null}
-                    visible={isWorking && !postCompact}
+                    visible={isWorking}
                   />
 
                   <div
