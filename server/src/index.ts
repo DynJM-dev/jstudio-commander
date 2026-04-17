@@ -22,6 +22,7 @@ import { maintenanceRoutes } from './routes/maintenance.routes.js';
 import { preferencesRoutes } from './routes/preferences.routes.js';
 import { cityRoutes } from './routes/city.routes.js';
 import { teamConfigService } from './services/team-config.service.js';
+import { sessionService } from './services/session.service.js';
 import { terminalService } from './services/terminal.service.js';
 import { tunnelService } from './services/tunnel.service.js';
 import { pinAuthMiddleware } from './middleware/pin-auth.js';
@@ -142,6 +143,16 @@ statusPollerService.start();
 
 // Watch team config files and emit teammate:spawned / teammate:dismissed
 teamConfigService.start();
+
+// Heal any teammate row whose pane actually belongs to another Commander
+// PM's tmux session. Runs ONCE at boot and is idempotent — after the
+// Bundle 1 cross-session guard in reconcile lands, these rows shouldn't
+// be created anew, but existing corrupt state needs cleanup. See
+// detectCrossSessionPaneOwner in session.service.ts for the check.
+{
+  const healed = sessionService.healCrossSessionTeammates();
+  if (healed > 0) console.log(`[startup-heal] dismissed ${healed} cross-session teammate reference(s)`);
+}
 
 // Startup recovery — fix stale statuses, mark gone sessions, discover orphans
 {

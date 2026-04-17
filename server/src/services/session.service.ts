@@ -455,18 +455,47 @@ export const sessionService = {
   // path to adopt an existing "PM - <something>" session instead of
   // spawning a duplicate "team-lead" row when the orchestrator writes a
   // team config in a cwd the user already has a PM for.
+  //
+  // Matching is NOT strict equality — a team config at
+  // `/OvaGas-ERP/apps/jstudio-base` should adopt a PM at `/OvaGas-ERP`.
+  // Tightness preference: exact > config-descends-from-PM > PM-descends-
+  // from-config. The `/` boundary guard in descendantOf prevents
+  // `/Projects/A` from ever matching `/Projects/AB`.
   findAdoptablePmAtCwd(cwd: string): Session | null {
     const db = getDb();
-    const row = db.prepare(
+    const rows = db.prepare(
       `SELECT * FROM sessions
        WHERE session_type = 'pm'
-         AND project_path = ?
+         AND project_path IS NOT NULL
          AND (team_name IS NULL OR team_name = '')
          AND status != 'stopped'
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-    ).get(cwd) as Record<string, unknown> | undefined;
-    return row ? rowToSession(row) : null;
+       ORDER BY updated_at DESC`,
+    ).all() as Array<Record<string, unknown>>;
+    if (rows.length === 0) return null;
+
+    const descendantOf = (child: string, parent: string): boolean => {
+      if (child === parent) return true;
+      const p = parent.endsWith('/') ? parent : parent + '/';
+      return child.startsWith(p);
+    };
+
+    // Score: 0 = exact, 1 = config-path descends from PM, 2 = PM descends
+    // from config. Lower is tighter. Within a tier, the longer
+    // common-prefix wins (shallower PM beats a deeper unrelated PM).
+    let best: { row: Record<string, unknown>; tier: number; depth: number } | null = null;
+    for (const row of rows) {
+      const pmPath = row.project_path as string;
+      let tier = -1;
+      if (pmPath === cwd) tier = 0;
+      else if (descendantOf(cwd, pmPath)) tier = 1;
+      else if (descendantOf(pmPath, cwd)) tier = 2;
+      if (tier < 0) continue;
+      const depth = Math.abs(pmPath.length - cwd.length);
+      if (!best || tier < best.tier || (tier === best.tier && depth < best.depth)) {
+        best = { row, tier, depth };
+      }
+    }
+    return best ? rowToSession(best.row) : null;
   },
 
   // Link an existing PM session to a team without renaming it or touching
@@ -500,6 +529,49 @@ export const sessionService = {
     const session = this.getSession(opts.sessionId);
     if (session) eventBus.emitSessionUpdated(session);
     return session;
+  },
+
+  // Detect whether `paneId` lives inside another Commander-managed tmux
+  // session (e.g. `jsc-<uuid>`) that's already claimed by a PM row. This
+  // guards the "coder is really the PM's own pane" failure mode the
+  // ovagas-ui team config hit: the orchestrator wrote `tmuxPaneId: '%51'`
+  // for a coder, but %51 is a pane inside jsc-e16a1cb2 which the OvaGas
+  // PM owns. Without this check the coder row would silently send-key
+  // the PM's own pane. Returns the owning PM session, or null.
+  detectCrossSessionPaneOwner(paneId: string, excludeSessionId?: string): Session | null {
+    if (!paneId.startsWith('%')) return null;
+    const pane = tmuxService.listAllPanes().find((p) => p.paneId === paneId);
+    if (!pane) return null;
+    // Only Commander-managed tmux sessions start with `jsc-`. A pane in
+    // a user's own tmux session is fine for a teammate — the user chose
+    // that pane explicitly; we don't second-guess it.
+    if (!pane.sessionName.startsWith('jsc-')) return null;
+    const db = getDb();
+    const row = db.prepare(
+      "SELECT * FROM sessions WHERE tmux_session = ? AND session_type = 'pm' AND id != ? LIMIT 1",
+    ).get(pane.sessionName, excludeSessionId ?? '') as Record<string, unknown> | undefined;
+    return row ? rowToSession(row) : null;
+  },
+
+  // Boot-time cleanup: any teammate row whose pane actually belongs to
+  // another Commander PM's tmux session is a stale cross-session
+  // reference — dismiss it so the UI doesn't render a ghost coder that
+  // send-keys into the PM's own pane. Idempotent: re-run is free.
+  healCrossSessionTeammates(): number {
+    const db = getDb();
+    const rows = db.prepare(
+      "SELECT id, name, tmux_session FROM sessions WHERE parent_session_id IS NOT NULL AND tmux_session LIKE '\\%%' ESCAPE '\\' AND status != 'stopped'",
+    ).all() as Array<{ id: string; name: string; tmux_session: string }>;
+    let healed = 0;
+    for (const r of rows) {
+      const owner = this.detectCrossSessionPaneOwner(r.tmux_session, r.id);
+      if (owner) {
+        console.log(`[startup-heal] dismissing ${r.name} (${r.id.slice(0, 20)}) — pane ${r.tmux_session} belongs to PM "${owner.name}"`);
+        this.markTeammateDismissed(r.id);
+        healed += 1;
+      }
+    }
+    return healed;
   },
 
   // For every session whose tmux_session is an `agent:<agentId>` sentinel,

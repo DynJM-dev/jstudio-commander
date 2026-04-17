@@ -241,6 +241,23 @@ const reconcile = (path: string): void => {
 
     if (!isFresh && !hasRealPane) continue;
 
+    // Cross-session pane guard: if the config-provided paneId actually
+    // lives inside ANOTHER Commander PM's tmux session, this "teammate"
+    // is a mislabelled reference to the PM's own pane. Reject the spawn
+    // rather than let send-key target a real PM and corrupt its input.
+    // ovagas-ui hit this: coder@ovagas-ui was written with tmuxPaneId=%51,
+    // but %51 is a pane inside jsc-e16a1cb2 owned by the OvaGas PM.
+    if (hasRealPane) {
+      const owner = sessionService.detectCrossSessionPaneOwner(member.tmuxPaneId!, member.agentId);
+      if (owner) {
+        console.log(`[team-config] rejecting cross-session pane for ${member.name}: ${member.tmuxPaneId} belongs to PM "${owner.name}"`);
+        // Ensure the row is stopped + the relationship ended so the UI
+        // stops showing the ghost. Idempotent.
+        sessionService.markTeammateDismissed(member.agentId);
+        continue;
+      }
+    }
+
     // Teammate agentIds look like "name@team" — not Claude UUIDs. Without
     // a pane or prior claude_session_id link, we can't verify liveness,
     // so live defaults to false (honest: "we don't know yet"). The hook
