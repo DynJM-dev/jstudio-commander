@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   station_x INTEGER,
   station_y INTEGER,
-  station_sprite TEXT
+  station_sprite TEXT,
+  stack_json TEXT NOT NULL DEFAULT '[]',
+  recent_commits_json TEXT NOT NULL DEFAULT '[]'
 );
 
 -- Token usage: per-message token data parsed from JSONL

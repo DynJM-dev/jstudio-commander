@@ -51,6 +51,17 @@ export const getDb = (): Database.Database => {
     console.log('[db] Migration: added transcript_paths column to sessions');
   }
 
+  // #230 — project tech-stack pills + recent commits persistence.
+  const projCols = db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
+  if (!projCols.some((c) => c.name === 'stack_json')) {
+    db.exec("ALTER TABLE projects ADD COLUMN stack_json TEXT NOT NULL DEFAULT '[]'");
+    console.log('[db] Migration: added stack_json column to projects');
+  }
+  if (!projCols.some((c) => c.name === 'recent_commits_json')) {
+    db.exec("ALTER TABLE projects ADD COLUMN recent_commits_json TEXT NOT NULL DEFAULT '[]'");
+    console.log('[db] Migration: added recent_commits_json column to projects');
+  }
+
   // #188 one-time heal: promote recently-active sessions whose effort was
   // left at 'medium' / 'low' to 'max' so they benefit from the new default
   // without stomping user-chosen values on older rows. Idempotent — once

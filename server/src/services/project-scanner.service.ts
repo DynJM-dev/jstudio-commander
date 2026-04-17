@@ -1,9 +1,20 @@
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import type { Project, PhaseStatus } from '@commander/shared';
+import type { Project, PhaseStatus, StackPill, RecentCommit } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { config } from '../config.js';
+import { detectStack, getRecentCommits } from './project-stack.service.js';
+
+const safeParseJson = <T>(raw: unknown, fallback: T): T => {
+  if (typeof raw !== 'string') return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as unknown as T) : fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 interface ParsedState {
   currentPhase: string | null;
@@ -27,6 +38,8 @@ const rowToProject = (row: Record<string, unknown>): Project => ({
   currentPhaseStatus: row.current_phase_status as PhaseStatus | null,
   totalPhases: (row.total_phases as number) ?? 0,
   completedPhases: (row.completed_phases as number) ?? 0,
+  stack: safeParseJson<StackPill[]>(row.stack_json, []),
+  recentCommits: safeParseJson<RecentCommit[]>(row.recent_commits_json, []),
   lastScannedAt: row.last_scanned_at as string,
   createdAt: row.created_at as string,
 });
@@ -148,6 +161,14 @@ export const projectScannerService = {
               }
             }
 
+            // Tech-stack detection (#230) — sync manifest read.
+            let stack: StackPill[] = [];
+            try {
+              stack = detectStack(fullPath);
+            } catch {
+              // never let a bad manifest kill the scan
+            }
+
             projects.push({
               id: '', // Will be assigned during sync
               name: entry,
@@ -158,6 +179,8 @@ export const projectScannerService = {
               currentPhaseStatus: stateData.currentPhaseStatus,
               totalPhases: stateData.totalPhases,
               completedPhases: stateData.completedPhases,
+              stack,
+              recentCommits: [],
               lastScannedAt: new Date().toISOString(),
               createdAt: new Date().toISOString(),
             });
@@ -176,8 +199,8 @@ export const projectScannerService = {
   syncToDb(projects: Project[]): void {
     const db = getDb();
     const upsert = db.prepare(`
-      INSERT INTO projects (id, name, path, has_state_md, has_handoff_md, current_phase, current_phase_status, total_phases, completed_phases, last_scanned_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      INSERT INTO projects (id, name, path, has_state_md, has_handoff_md, current_phase, current_phase_status, total_phases, completed_phases, stack_json, recent_commits_json, last_scanned_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       ON CONFLICT(path) DO UPDATE SET
         name = excluded.name,
         has_state_md = excluded.has_state_md,
@@ -186,6 +209,8 @@ export const projectScannerService = {
         current_phase_status = excluded.current_phase_status,
         total_phases = excluded.total_phases,
         completed_phases = excluded.completed_phases,
+        stack_json = excluded.stack_json,
+        recent_commits_json = excluded.recent_commits_json,
         last_scanned_at = datetime('now')
     `);
 
@@ -197,11 +222,31 @@ export const projectScannerService = {
           project.hasStateMd ? 1 : 0, project.hasHandoffMd ? 1 : 0,
           project.currentPhase, project.currentPhaseStatus,
           project.totalPhases, project.completedPhases,
+          JSON.stringify(project.stack ?? []),
+          JSON.stringify(project.recentCommits ?? []),
         );
       }
     });
 
     transaction();
+  },
+
+  // Async enrichment step: runs `git log` per project in parallel. Kept
+  // separate from the sync scanDirectories so callers can pick which
+  // pathway they need (e.g. the watcher-bridge STATE.md pulse doesn't
+  // need to re-shell git if nothing there changed, but we do anyway
+  // because it's cheap and keeps rows fresh).
+  async enrichWithCommits(projects: Project[]): Promise<Project[]> {
+    await Promise.all(
+      projects.map(async (p) => {
+        try {
+          p.recentCommits = await getRecentCommits(p.path, 10);
+        } catch {
+          p.recentCommits = [];
+        }
+      }),
+    );
+    return projects;
   },
 
   listProjects(): Project[] {
@@ -244,9 +289,10 @@ export const projectScannerService = {
     }
   },
 
-  runInitialScan(): void {
+  async runInitialScan(): Promise<void> {
     console.log('[scanner] Running initial project scan...');
     const projects = this.scanDirectories();
+    await this.enrichWithCommits(projects);
     this.syncToDb(projects);
     console.log(`[scanner] Found ${projects.length} projects`);
   },

@@ -87,7 +87,7 @@ await app.register(preferencesRoutes);
 await app.register(cityRoutes);
 
 // Initial project scan
-projectScannerService.runInitialScan();
+await projectScannerService.runInitialScan();
 
 // Start file watchers + bridge to event bus
 fileWatcherService.start();

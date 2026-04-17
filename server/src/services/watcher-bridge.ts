@@ -61,16 +61,18 @@ export const setupWatcherBridge = (): void => {
     const project = projectScannerService.getProjectByPath(projectDir);
 
     if (project) {
-      // Re-scan just this project
+      // Re-scan just this project. Fire-and-forget async enrich for
+      // recent commits (#230) — git log is cheap but we don't want to
+      // block the watcher callback.
       const scanned = projectScannerService.scanDirectories([dirname(projectDir)]);
       const updated = scanned.find((p) => p.path === projectDir);
       if (updated) {
         updated.id = project.id;
-        projectScannerService.syncToDb([updated]);
-        const refreshed = projectScannerService.getProject(project.id);
-        if (refreshed) {
-          eventBus.emitProjectUpdated(refreshed);
-        }
+        void projectScannerService.enrichWithCommits([updated]).then(() => {
+          projectScannerService.syncToDb([updated]);
+          const refreshed = projectScannerService.getProject(project.id);
+          if (refreshed) eventBus.emitProjectUpdated(refreshed);
+        });
       }
     }
   });
