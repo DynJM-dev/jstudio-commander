@@ -4,7 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
+import { TaskNotificationCard } from './TaskNotificationCard';
+import { TeammateMessageCard } from './TeammateMessageCard';
 import { formatTime, formatTokens } from '../../utils/format';
+import { parseStructuredUserContent } from '../../utils/chatMessageParser';
 import {
   buildToolResultMap,
   getActivePlan,
@@ -93,6 +96,19 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
 
 const LIVE_THINKING_CHARS = 280;
 const LIVE_COMPOSING_CHARS = 320;
+
+// Claude Code occasionally threads structured payloads (<task-notification>,
+// <teammate-message>) through the user role. Detect those so the renderer
+// can show a purpose-built card instead of a raw "JB" user message.
+// Strict mode: the message must have exactly one text block whose entire
+// content is the tag. Mixed content falls back to UserMessage.
+const detectStructured = (msg: ChatMessage) => {
+  const textBlocks = msg.content.filter((b) => b.type === 'text');
+  if (textBlocks.length !== 1) return null;
+  const first = textBlocks[0];
+  if (first?.type !== 'text') return null;
+  return parseStructuredUserContent(first.text);
+};
 
 interface ChatThreadProps {
   messages: ChatMessage[];
@@ -320,9 +336,17 @@ export const ChatThread = ({
                 )}
 
                 {/* Render the group */}
-                {group.role === 'user' && (
-                  <UserMessage message={group.messages[0]!} />
-                )}
+                {group.role === 'user' && (() => {
+                  const msg = group.messages[0]!;
+                  const structured = detectStructured(msg);
+                  if (structured?.kind === 'task-notification') {
+                    return <TaskNotificationCard notification={structured.notification} />;
+                  }
+                  if (structured?.kind === 'teammate-message') {
+                    return <TeammateMessageCard message={structured.teammate} />;
+                  }
+                  return <UserMessage message={msg} />;
+                })()}
 
                 {group.role === 'assistant' && (
                   <AssistantMessage

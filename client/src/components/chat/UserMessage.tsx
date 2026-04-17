@@ -4,6 +4,9 @@ import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { formatTime } from '../../utils/format';
+import { parseStructuredUserContent } from '../../utils/chatMessageParser';
+import { TaskNotificationCard } from './TaskNotificationCard';
+import { TeammateMessageCard } from './TeammateMessageCard';
 
 const M = 'Montserrat, sans-serif';
 
@@ -25,6 +28,20 @@ export const UserMessage = ({ message }: UserMessageProps) => {
   // If the message is only tool_results (no user text), skip rendering
   const isToolResultOnly = textBlocks.length === 0 && toolResults.length > 0;
   if (isToolResultOnly) return null;
+
+  // Belt-and-suspenders: if ChatThread (or a future caller) didn't intercept
+  // a structured user payload, suppress the JB header here too and render
+  // the purpose-built card. Never let raw <task-notification> /
+  // <teammate-message> XML leak into the chat.
+  if (textBlocks.length === 1 && textBlocks[0]?.type === 'text') {
+    const structured = parseStructuredUserContent(textBlocks[0].text);
+    if (structured?.kind === 'task-notification') {
+      return <TaskNotificationCard notification={structured.notification} />;
+    }
+    if (structured?.kind === 'teammate-message') {
+      return <TeammateMessageCard message={structured.teammate} />;
+    }
+  }
 
   const reduced = prefersReducedMotion();
 
