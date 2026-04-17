@@ -548,9 +548,75 @@ User reported two Wave-2-regression-class failures on the live OvaGas-ERP test s
 - **Tag parser is regex-based.** Predictable payload structure today; if Claude Code ever nests tags within tags, the greedy/non-greedy boundaries would need re-thinking. Add a fixture-based test at that point (follow the `plans.test.ts` / `fixtures/` pattern).
 - **No drift detection between server-authored preference and local cache.** `usePreference` caches in-memory; if the server re-writes the value out-of-band, the cross-tab WS event patches the cache. But a direct DB edit wouldn't. Acceptable for now.
 
-### HEAD (post-Phase-F)
+### Bundle 6 — bypass-permissions kill-switch (2026-04-17 follow-on)
+
+Root cause: `server/src/routes/session.routes.ts` `/output` endpoint had a
+generic "final fallback" prompt detector that matched `?` anywhere in the
+last 10 lines. On a team-lead-idle pane with a teammate footer + a `?`
+elsewhere in the chat, it emitted `{type:'confirm', message:'Waiting on
+input — see terminal'}` which the client's `PermissionPrompt` rendered as
+the "Confirmation needed" Yes/No popup.
+
+Fix:
+1. **Kill-switches.** If the last 15 lines contain `⏵⏵ bypass permissions
+   on`, Claude Code cannot fire a permission prompt by design → return
+   empty prompts. Same treatment for `N teammate` + `Waiting on input`
+   which is the team-lead-waiting-on-teammate idle state.
+2. **Tighten the generic fallback.** Match the question-mark / numbered-
+   option pattern only on the actual last non-empty line, not anywhere
+   in the last 10 lines. A real prompt always sits directly above the
+   input cursor; anything further back is chat content.
+
+Commit `a1aa074`.
+
+### Bundle 5 — team-lead adoption + coder naming (2026-04-17 follow-on)
+
+Triggered by the OvaGas-ERP test session where the user had a Commander
+PM called `PM - OvaGas` at a cwd, then an external orchestrator wrote a
+`~/.claude/teams/ovagas-ui/config.json` for the same cwd. Reconcile
+created a DUPLICATE session named literally `team-lead` instead of
+adopting the existing PM.
+
+**Three changes:**
+
+1. **Adoption.** New `sessionService.findAdoptablePmAtCwd(cwd)` + `sessionService.adoptPmIntoTeam({sessionId, teamName, claudeSessionId?})`.
+   The reconcile looks up an alive `session_type='pm'` with matching `project_path` and no prior `team_name`; if found it updates `team_name + agent_role='pm'` on the existing row and uses that id as the parent for teammates. No duplicate row.
+2. **Coder naming.** `deriveCoderName(parent.name, member.name, agentType, siblings)` — when the parent has a non-generic display name, fresh teammates inherit it: `PM - OvaGas (coder)`, `PM - OvaGas (coder 2)`, `PM - OvaGas (qa)`, etc. `ROLE_HINT_RE` maps `qa|security|ui|db|landing|scaffold|supabase|docs?|test` out of `agentType`; falls back to `coder`. Falls all the way back to the raw config name when the parent is generic or missing.
+3. **deriveTeamLeadName fallback.** When no adoption is available, the new team-lead row gets a human-readable name via `basename(cwd) → teamName → rawName → "team-lead"`. Keeps the UI scannable instead of littering it with literal "team-lead" rows.
+
+**Plumbing change:** `upsertTeammateSession.name` is now optional. On mid-lifecycle re-upserts (Bundle 3's pane heal), we SKIP passing `name` so a carefully-derived display doesn't get clobbered back to the raw config value. On fresh sightings, name is always passed.
+
+Commit `ad163ba`.
+
+### Patterns established (Bundle 5+6)
+
+- **Kill-switch > elaborate disambiguation.** When a state flag conclusively invalidates a detection class (bypass permissions → no prompt), early-return is cheaper and more maintainable than stacking conditions inside every matcher. Applied: `bypass permissions on` + `N teammate + Waiting on input`.
+- **Adopt rather than duplicate.** When ingesting external-orchestrator state, look for an adoptable existing row before creating. Cheap lookup (indexed `(session_type, project_path)`) and the UX win is large.
+- **Optional name on upsert.** Any field whose value should be set-once-then-preserved through re-upserts should be optional on the upsert surface, with callers passing it only on fresh inserts. Prevents mid-lifecycle regressions.
+- **Role hint out of agentType.** Orchestrators already encode role info in `agentType` (`qa-agent`, `security-auditor`, etc.) — we don't need a separate taxonomy column. Match a regex, fall back to `coder`.
+
+### Critical lessons (Bundle 5+6)
+
+1. **`bypass permissions on` in the pane footer means NO prompt can be active.** Period. If you extend prompt detection, respect this kill-switch or you'll reopen the "Confirmation needed on idle PM" regression.
+2. **The final fallback in `/output` is load-bearing but easy to over-generalize.** Keep it scoped to the last non-empty line. Any broader surface turns chat content into false positives.
+3. **Adoption only works when the existing session has no prior team link.** The query filters `team_name IS NULL OR team_name = ''`. If the user had a PM that was already in a DIFFERENT team, we'd never adopt it into a new team — that's correct; teams shouldn't silently steal sessions.
+4. **Commander-spawned sessions have session_type='pm'** per Phase A. This is the adoption key. If a Commander session wasn't a PM (e.g. raw session the user later turned into a team lead by external means), the adoption query misses it. That's fine — adoption is best-effort; no adoption falls through to the fresh-create path.
+5. **parentSessionId must be the adopted session's id, not the config's leadSessionId.** After adoption, agent_relationships needs to point to the adopted id. `listTeammates` already handles lookup by Commander UUID OR claude_session_id, so the relationship row's FK is deterministic.
+6. **Name derivation only on fresh sightings.** If you derive on every upsert, a rename of the parent would cascade into teammate renames mid-lifecycle, which is jarring. Lock the name on first insert; preserve thereafter.
+
+### Tech debt opened by Bundle 5+6
+
+- **Adoption is one-way.** Once an existing PM is adopted into a team, it stays that way — even if the user later deletes the team config. The team-dismissal path clears `ended_at` on `agent_relationships` but doesn't reset `team_name` on the adopted PM. Low-priority; add a "release from team" flow if users ask.
+- **Role hints are English-only.** `qa|security|ui|db|landing|scaffold|supabase|docs?|test` matches English agent types. If Spanish orchestrator names appear (`calidad`, `seguridad`), they fall through to `coder`. Acceptable today; extend the regex if we ship a Spanish-language orchestrator.
+- **Disambiguator caps at 20.** More than 20 coders under the same parent is unrealistic but if it ever happens the function returns the base name, which would conflict. Cheap to raise the cap if needed.
+- **Stale `"team-lead"` rows from before Bundle 5 are not auto-cleaned.** The DB still has `796eaede-...` (stopped, name="team-lead") and similar. Per team-lead's spec: "do NOT auto-delete existing stale rows as part of this phase — that's user data." Surface a cleanup tool if the backlog gets bigger.
+- **Adoption check runs on every reconcile.** One indexed SELECT, cheap, but could add a short-circuit for teams whose lead row already has `team_name = teamName`. Marginal savings.
+
+### HEAD (post-Phase-F — all bundles shipped)
 
 ```
+ad163ba feat(sessions): team-lead adoption + coder naming inherits parent PM
+a1aa074 fix(status): bypass-permissions kill-switch + tighten prompt fallback
 467adce fix(sessions): harden teammate-spawn pane adoption (coder-13 autopsy)
 2c0e063 feat(split): auto-split-on-spawn preference + toolbar toggle
 654cb05 fix(chat): ChatThread routes structured tags to cards, suppresses JB header
@@ -559,7 +625,7 @@ d357f03 feat(chat): TaskNotificationCard component
 457d9e5 feat(chat): parse task-notification + teammate-message structured tags
 ```
 
-All three typechecks PASS (shared, client, server). 19/19 unit tests pass (13 new parser + 6 existing plans). Parser verified against real-shape payloads in both happy-path and strict-mode-rejection cases.
+All three typechecks PASS (shared, client, server). 19/19 unit tests pass (13 new parser + 6 existing plans).
 
 ---
 
