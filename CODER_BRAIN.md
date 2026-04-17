@@ -1270,6 +1270,361 @@ a42cfb0   Patch 4 — SessionStart + SessionEnd hooks (install script + route ha
 
 ---
 
+## Coder-16 Session — Phase N.2 + Phase O + Phase P (Audit + Remediation, 2026-04-17)
+
+Continuing the Coder-16 rotation after the first /compact. Shipped the
+N.2 collision-fix, built the Phase O header stats widget, then ran a
+4-agent parallel audit (Track A QA / B Security / C UI / D E2E — outputs
+at `audits/PHASE_P_{QA,SECURITY,UI,E2E}.md`, 69 findings total) followed
+by three remediation phases covering every Critical + nearly every High.
+
+### Phase N.2 — sentinel-collision fix (HEAD `c057718`, 1 commit)
+
+Closed the pre-existing collision flagged in Phase N.0. Root cause:
+`resolveSentinelTargets` claimed pane `%59` for an orphan `ovagas-ui`
+sentinel whose team config had been removed from
+`~/.claude/teams/`; the live `ovagas-r2` coder's reconcile then tried
+to upsert with `tmux_session='%59'` and crashed `UNIQUE(tmux_session)`.
+Two-layer fix:
+- **Option A (positive check)** — `resolveSentinelTargets` now SELECTs
+  `team_name` alongside id/project_path and skips any sentinel whose
+  team's `config.json` doesn't exist on disk. Injectable `teamExists`
+  predicate makes it testable without touching `~/.claude/teams/`.
+- **Boot-time self-heal** — new `sessionService.healOrphanedTeamSessions()`
+  runs BEFORE `teamConfigService.start()` in `index.ts`. Every row with
+  non-null `team_name` whose config is missing gets `team_name=NULL`,
+  `status='stopped'`, `stopped_at=COALESCE(existing,now)`, and if the
+  row held a real pane (`%NN`) `tmux_session` rewrites to
+  `retired:<id>` to unblock UNIQUE. Idempotent — second pass exits
+  early on the `retired:` prefix.
+
+Tests: server 92→99 (+7). Boot log verified retired one orphan
+(`coder@ovagas` → `retired:coder@ovagas`) with zero UNIQUE errors.
+
+### Phase O — HeaderStatsWidget (HEAD `6fc3534`, 4 commits)
+
+Top-right stats widget: CPU / Mem / 5h / 7d budgets with band coloring
+and live countdowns. Four commits, zero new deps, node `os` only
+server-side.
+
+**Server:**
+- `server/src/services/system-stats.service.ts` — samples `os.loadavg`
+  / `os.cpus` / `os.totalmem` / `os.freemem` / `os.uptime` every 2s
+  (VS Code perf-widget cadence). Emits `system:stats` WS on the new
+  `system` channel. `buildSystemStatsSnapshot` pure, injectable `os`
+  impl for deterministic tests; `cpuLoadPct` capped at 999;
+  totalmem=0 + cores=0 divide-by-zero guards.
+- `sessionTickService.getAggregateRateLimits` — picks freshest
+  `session_ticks` row whose `five_hour_pct` OR `seven_day_pct` is
+  non-null. 10-min staleness gate forces pcts + resetsAt to null.
+  Emits `system:rate-limits` WS (signature-deduped — only when the
+  payload actually changes). REST: `GET /api/system/rate-limits`.
+
+**Shared types:** `SystemStatsPayload`, `AggregateRateLimitsPayload`,
+`RateLimitWindow` in `packages/shared/src/types/system-stats.ts`;
+exported from `@commander/shared`.
+
+**Client:**
+- `useSystemStats` — 6s stale threshold (3× server cadence).
+- `useAggregateRateLimits` — REST-seed on mount + WS live updates.
+- `formatResetsCountdown` — pure, 4 tiers (`resetting…` / `Xm Ys` /
+  `Xh Ym` / `Xd Yh`).
+- `systemStatsBands` utils — `bandForBudget` (CPU + rate-limits:
+  green <50, yellow 50-79, orange 80-89, red 90+), `bandForMemory`
+  (green <70, yellow 70-89, red 90+ — no orange tier, OS swap
+  pressure hits earlier), `formatBytes` (GB/MB/KB tiers).
+- `HeaderStatsWidget` — 4-chip glass row, slotted into
+  `TopCommandBar` desktop (≥lg) branch between session tabs and the
+  tunnel/tokens/wifi cluster. Secondary text (`"12.3 GB / 32 GB"`,
+  `"4h 23m"`) gated behind `xl:inline` so the widget stays ~260px on
+  1024px screens. Tablet/mobile layouts untouched (no horizontal
+  budget).
+
+WS channel wiring: `handler.ts` auto-subscribes new clients to both
+`sessions` AND `system` on connect. Docs: `COMMANDER_IDE_RESEARCH.md`
+F15 note updated — Phase O covers the aggregate-budget half; per-
+session tokens-per-minute sparkline still deferred.
+
+Tests: server 99→110 (+11); client 106→128 (+22). Typecheck green.
+
+### Phase P Audit (70 findings across 4 tracks)
+
+Team-lead dispatched 4 parallel specialist agents (`/qa`, `/security`,
+`/ui-expert`, `/e2e-testing`) at HEAD `a42cfb0` (pre-N.2); outputs
+persisted at `audits/PHASE_P_{QA,SECURITY,UI,E2E}.md`. Combined
+distribution: 1 Critical (P.1 C1), 10 High, 25+ Medium, 20+ Low, plus
+info/E2E scaffolding gaps. Remediation split across three phases.
+
+### Phase P.1 — Security hardening (HEAD `1017d8c`, 5 commits)
+
+**C1 (CRITICAL)** — Host-header spoof defeats PIN auth; server binds
+all interfaces by default. Three-layer fix:
+- `server/src/config.ts` — default `host: '127.0.0.1'`. Operator opts
+  into LAN via `bindHost` in `~/.jstudio-commander/config.json` OR
+  `COMMANDER_HOST` env (env wins). Single-source-of-truth
+  `CORS_ORIGINS` + `isLoopbackIp` + `isLoopbackHost` +
+  `refuseBindWithoutPin` predicates exported.
+- `middleware/pin-auth.ts` — `isLocalRequest` now consults
+  `request.ip` (Fastify `trustProxy: false` keeps raw socket peer).
+  Host header can't fake the check.
+- `index.ts` — `refuseBindWithoutPin(host, pin)` boot guard logs +
+  `process.exit(1)` when non-loopback bind carries empty PIN. Same
+  shape as the `tunnelService.start` guard, enforced at server boot.
+
+**H1 (HIGH)** — `/api/hook-event` unauthenticated write surface. Four
+fixes bundled:
+- Loopback `preHandler` on `/api/hook-event`, same shape as
+  `session-tick.routes.ts`.
+- `isAllowedTranscriptPath` predicate — `path.resolve` +
+  `startsWith(config.claudeProjectsDir + '/')`. Rejects `/etc/hosts`,
+  `.ssh/config`, `../../../etc/hosts.jsonl` traversal. Applied before
+  `fs.watch` + `resolveOwner` + `appendTranscriptPath`.
+- `resolveOwner` fast-path: `transcript_paths LIKE '%<json-escaped>%'`
+  → `json_each(transcript_paths).value = ?`. Sidesteps LIKE
+  wildcard-injection (`%` / `_` matching arbitrary rows); same 1
+  parameterized SELECT.
+- `SPECIFIC_WATCHER_CAP = 100` LRU in `file-watcher.watchSpecificFile`
+  — Map insertion order gives oldest at `keys().next()`, close its
+  FD + drop before allocating new. Prevents unbounded fs.watch FD
+  growth from hostile hook streams.
+
+**H2 (HIGH)** — No WebSocket Origin check + wildcard CSP `connect-src`.
+- `ws/index.ts` registers `@fastify/websocket` with
+  `VerifyClientCallbackSync` consulting `isAllowedWsOrigin(info.origin)`
+  against `CORS_ORIGINS`. Non-browser callers (no Origin header) fall
+  through so curl + the hook still work; browser upgrades from a
+  cross-origin page return 401 at handshake. Verified live: forged
+  `Origin: https://evil.com` → HTTP 401.
+- `middleware/security-headers.ts` CSP `connect-src` from wildcard
+  `ws: wss:` → `'self' ws://localhost:* wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:*`.
+
+**H3 + M1** — dep bumps. `fastify ^5.2.2` → `^5.8.5`
+(GHSA-247c-9743-5963 body-validation bypass). `@fastify/static ^8.1.0`
+→ `^9.1.1` (GHSA-pr96-94w5-mx2h path traversal + GHSA-x428-ghpx-8j92
+route-guard bypass). `pnpm audit --prod` → "No known vulnerabilities
+found" (down from 3 advisories).
+
+Tests: server 110→126 (+16) via
+`server/src/services/__tests__/security-hardening.test.ts`. Typecheck
+green. Live verified: `lsof -nP -iTCP:3002` → bound `127.0.0.1` only,
+CSP header tight, hook-event 200 from loopback, WS evil-origin → 401.
+
+### Phase P.2 — UI/UX Criticals (HEAD `4560351`, 5 commits)
+
+**C1** — global `:focus-visible` ring in `index.css` bound to
+`var(--color-accent)`, 2px solid + 2px offset, per-element overrides
+for button/input/select/textarea/a/[role=button]/[tabindex].
+`.outline-none:focus-visible { outline-style: solid }` re-enables the
+ring on the 7 files that used Tailwind's `outline-none` utility.
+
+**C2** — modal a11y. New `useModalA11y({ open, containerRef, onClose,
+skipAutoFocus? })` hook: autofocus first focusable + ESC close +
+Tab/Shift+Tab cycle within container + focus-restore on close.
+Exports `FOCUSABLE_SELECTOR` (WAI-ARIA authoring-practices list).
+Applied to 4 surfaces:
+- CreateSessionModal — `role=dialog` + `aria-modal` +
+  `aria-labelledby="create-session-title"`; useModalA11y replaces
+  ad-hoc ESC handler.
+- MobileOverflowDrawer — role=dialog + `sr-only` title; useModalA11y
+  bound.
+- PinGate — role=dialog + aria-modal + aria-labelledby (no hook —
+  input already autoFocuses, no dismiss action).
+- ContextLowToast — `role=status` + `aria-live=polite` +
+  `aria-atomic` (NOT dialog — correct non-blocking toast semantics).
+All close-X buttons got `aria-label` + 44×44 touch target in the
+same pass.
+
+**C3** — SessionCostTable mobile card fallback. Desktop `<table>` in
+`hidden md:block`; sibling `md:hidden` `<ul>` of glass-themed cards
+with session name + % (top row) + Tokens/Cost key-value grid below.
+Empty state swapped to themed EmptyState (absorbs audit H4 at zero
+cost). Header comment documents the "duplicate per-table" pattern
+for future tables.
+
+**C4** — touch targets ≥44×44 (WCAG 2.5.5 / Apple HIG). 5 buttons +
+`.session-tab` in CSS bumped: min-height 44px; icons unchanged, only
+the clickable surface expands via `minWidth`/`minHeight`.
+
+**H2** — `flex-wrap` on tabs. `TerminalTabs` + SplitChatLayout
+teammate-tab row changed from `overflow-x-auto` to `flex-wrap`;
+fixed-height wrappers relaxed to `min-height` + `py-1` so wrapped
+rows have vertical space.
+
+Tests: client 125→147 (+22) via
+`client/src/utils/__tests__/a11yHardening.test.ts`. Source-level
+static assertions (node --test, no DOM harness).
+
+### Phase P.3 — QA hardening + terminal removal (HEAD `390a7ed`, 7 commits)
+
+Six audit items + 1 follow-up fix caught during end-to-end verification.
+
+**H1** — `readJsonlOrigin` bounded read. `readFileSync('utf-8').slice(0,16K)`
+→ `openSync` + `readSync` + `closeSync` with `statSync`-sized buffer
+cap. A 2 MB fixture reads in <50ms; a 200-byte JSONL no longer
+allocates 16 KB. `fd` closed in `finally`.
+
+**H2** — protect poller yield window. Stripped `updated_at =
+datetime('now')` from `appendTranscriptPath` — append-only mutations
+don't represent status change, and were invalidating the N.0 P2 yield
+window (10s deference after Stop-hook-driven idle). Audited every
+UPDATE: status flips + stopped_at + sentinel resolution + general
+upserts + hook-branches correctly retain the bump; only
+appendTranscriptPath was wrong.
+
+**H3** — Rewrite `commander-hook.sh` as Node. `hooks/commander-hook.js`
+replaces the `/usr/bin/python3`-based `.sh`. Pure-Node fetch +
+AbortSignal.timeout 2s. `buildHookPayload(input)` exported as a pure
+helper. Failure modes write to stderr (visible in Claude's hook log),
+no silent `{"event":"unknown"}` fallback. install-hooks.mjs deploys
+the script to `~/.claude/hooks/commander-hook.js` (+ chmod 755) +
+removes the legacy `.sh` sibling + migrates existing `.sh`
+settings.json matchers to `.js` in place (preserves matcher/timeout/
+user-added siblings). Deploys a sibling `package.json { type: module }`
+so Node treats .js as ESM natively (no `MODULE_TYPELESS_PACKAGE_JSON`
+reparse warning + ~20ms per-fire overhead eliminated).
+
+**H4 + L2 + L3** — REMOVED terminal page + xterm.js/node-pty deps.
+Product decision (Jose + CTO): half-built PTY preview disappoints
+anyone who opens it; a proper xterm.js rebuild is a future sprint.
+Dropped:
+- `server/src/services/terminal.service.ts`
+- `server/src/routes/terminal.routes.ts`
+- `client/src/pages/TerminalPage.tsx`
+- `client/src/hooks/useTerminal.ts`
+- `client/src/components/terminal/{TerminalPanel,TerminalTabs}.tsx`
+- `/terminal` route + Sidebar nav entry + MobileNav tab (replaced
+  with Analytics).
+- `server.node-pty@1.1.0` + `client.@xterm/{xterm@6,addon-fit@0.11,
+  addon-webgl@0.19}` + root pnpm.onlyBuiltDependencies lost `node-pty`.
+- 691 deletions, 19 insertions net.
+
+`COMMANDER_TERMINAL_RENDERING.md` research doc preserved (no code
+refs remain).
+
+**M2** — `sessionService.healOrphanedTeamSessions()` now runs at the
+TOP of `team-config.service` reconcile (every chokidar add/change),
+not only at boot. Catches mid-session team-dir deletion without a
+server restart. Idempotent (retired: prefix + status=stopped guard).
+
+**L1** — `console.log('[ws] Connected')` in `client/src/services/ws.ts`
+wrapped in `if (import.meta.env.DEV)`. Added
+`client/src/vite-env.d.ts` (triple-slash `vite/client`) so tsc
+resolves `import.meta.env.DEV` — Commander's first use of the vite
+env API.
+
+**Hook port follow-up** (`390a7ed`) — end-to-end verification on
+:3002 surfaced that the hardcoded port 11002 default didn't match
+Jose's `~/.jstudio-commander/config.json` `port: 3002` override.
+Fixed by resolving URL via:
+1. `COMMANDER_HOOK_URL` env var
+2. `config.json` port field
+3. Default 11002
+
+Tests: server 126→137 (+11) via
+`server/src/services/__tests__/phase-p3-hardening.test.ts`.
+Client 147→145 (net from TerminalTabs test removal). Typecheck green.
+`pnpm audit --prod` still clean.
+
+### Invariants added in Phases N.2 + O + P.1 + P.2 + P.3 (25-42)
+
+25. **Sentinel resolution gates on team-config existence.**
+    `resolveSentinelTargets` skips rows whose `team_name` points at a
+    missing `~/.claude/teams/<name>/config.json`. Prevents the pane-
+    claim collision class that crashed N.0 boots. Injectable
+    `teamExists` predicate for tests.
+26. **Orphan team rows self-heal on every reconcile.** Post-P.3 M2
+    the boot-time pass runs at the top of reconcile too. Retired
+    rows carry `tmux_session = 'retired:<id>'` + `status='stopped'`
+    + `team_name=NULL`. Idempotent re-runs skip by the prefix guard.
+27. **Host stats sampled 2s cadence.** `systemStatsService` emits
+    `system:stats` on the global `system` WS channel; `cpuLoadPct`
+    capped at CPU_PCT_CAP (999); divide-by-zero guards for
+    totalmem=0 + cores=0. Clients auto-subscribe to `system` on
+    handshake.
+28. **Aggregate rate-limits pick freshest non-null tick.**
+    `sessionTickService.getAggregateRateLimits` ORDER BY updated_at
+    DESC; staleness gate (10 min) forces pcts + resetsAt to null.
+    `system:rate-limits` emit is signature-deduped.
+29. **HeaderStatsWidget band math.** `bandForBudget` (green <50 /
+    yellow 50-79 / orange 80-89 / red 90+) for CPU + rate-limits;
+    `bandForMemory` (green <70 / yellow 70-89 / red 90+, no orange
+    tier) — distinct because OS swap pressure hits earlier than
+    Claude context budget.
+30. **Default bind is loopback.** `config.host` defaults to
+    `127.0.0.1`. `bindHost` in config.json OR `COMMANDER_HOST` env
+    opt in to LAN. Boot refuses a non-loopback bind with empty PIN
+    via `refuseBindWithoutPin`.
+31. **Local-request check is IP-based, not Host-header-based.**
+    `isLocalRequest` consults `request.ip` (Fastify trustProxy off).
+    Host header can't spoof the bypass.
+32. **`/api/hook-event` is loopback-only.** Same preHandler shape as
+    `/api/session-tick`. Rejects non-loopback with 403.
+33. **Hook `transcript_path` must resolve under `config.claudeProjectsDir`.**
+    Enforced by `isAllowedTranscriptPath` before fs.watch +
+    resolveOwner + appendTranscriptPath. Closes FD-leak DoS +
+    arbitrary-file-read amplification.
+34. **`json_each` replaces LIKE in resolveOwner fast path.**
+    Attacker `%` / `_sers_victim_` patterns no longer match arbitrary
+    rows. Exact-string compare against array elements.
+35. **Specific fs.watch cap at 100, LRU eviction.**
+    `SPECIFIC_WATCHER_CAP = 100`. Map iteration order gives oldest at
+    `keys().next().value` — close FD + drop before allocating new.
+36. **WebSocket rejects cross-origin upgrades.** `verifyClient`
+    consults `isAllowedWsOrigin(info.origin)` against `CORS_ORIGINS`.
+    Missing Origin (non-browser callers) allowed; cross-origin
+    browsers → 401.
+37. **CSP `connect-src` is localhost-only.** `'self' ws://localhost:*
+    wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:*`. No
+    wildcard ws/wss.
+38. **`fastify ≥ 5.8.5` + `@fastify/static ≥ 9.1.1`** — pnpm audit
+    --prod must stay clean. Bumping fastify or adding route schemas
+    should re-run audit.
+39. **Global `:focus-visible` ring is mandatory.** Keyboard users
+    see 2px `var(--color-accent)` outline on every focusable element.
+    `outline-none` Tailwind utility is re-enabled by
+    `.outline-none:focus-visible { outline-style: solid }`.
+40. **Modals use `useModalA11y`.** `role=dialog` + `aria-modal` +
+    `aria-labelledby` + focus trap + ESC. Toasts use `role=status`
+    + `aria-live=polite` instead (not dialog).
+41. **Tables degrade to card stacks on mobile.** `hidden md:block`
+    table + `md:hidden` card `<ul>`. Empty state via
+    `<EmptyState>`, never plain text.
+42. **Touch targets ≥44×44.** Enforced on every interactive button
+    via `minWidth/minHeight` OR a CSS class with `min-height: 44px`.
+
+### appendTranscriptPath invariant (post-P.3 H2)
+
+Previously bumped `updated_at` on every call. Post-P.3 H2 it's pure
+append-only: the UPDATE touches `transcript_paths` only. The poller's
+10s yield gate (N.0 P2) now survives mid-yield ticks. Any future
+mutation that claims to be "append-only" should honor this: if it
+doesn't change semantic session state, DO NOT bump `updated_at`.
+
+### Post-compact reconstruction path (5-step cold start — Phase P)
+
+1. `git log --oneline -30` — confirm HEAD is `390a7ed`. You should see
+   the N.2 commit (`c057718`), four Phase O commits (`6a9aa0c`
+   `096c4e8` `3f926aa` `6fc3534`), five P.1 commits (`69f7fa3`
+   `747f490` `1e81c39` `27751c2` `1017d8c`), five P.2 commits
+   (`c4ab101` `d44c830` `d6a29e0` `f59df43` `4560351`), and seven
+   P.3 commits (`f77ad2b` `4a80ec0` `119ba4e` `1f4235f` `06275ea`
+   `73b1669` `390a7ed`) above the pre-phase HEAD `a42cfb0`.
+2. `pnpm -r run typecheck` — clean across shared + server + client.
+3. `pnpm -C server test && pnpm -C client test` — **server 137,
+   client 145, both green**.
+4. `pnpm audit --prod` — "No known vulnerabilities found".
+5. Audit docs live at `audits/PHASE_P_{QA,SECURITY,UI,E2E}.md`.
+   Deferred items (team-lead explicit, NOT scope creep): UI C5
+   (editor layout rewrite), UI H1 (light theme), QA L4
+   (transcript_path column drop), QA L5 (structured logs), QA M1
+   (E2E heartbeat test — Phase P.4), QA M3-M6 (other mediums).
+6. Expect Phase P.4 (E2E buildout) dispatch — Playwright scaffolding +
+   3 real flows (session-creation, hook-stop-flip, statusline-tick)
+   per the E2E audit Top 5. Big phase (~14-16h), so full budget
+   needed — this compact is exactly for that.
+
+---
+
 ## Coder-15 Cold Start Guide (rotation handoff to the next coder)
 
 If you are the coder replacing Coder-15, read this section before touching anything substantive. It collects the invariants, the footguns, and the "here's how the system actually works" context that the per-phase notes above assume you already know.
