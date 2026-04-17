@@ -2,38 +2,13 @@ import { Users, ExternalLink } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { TeammateMessage } from '../../utils/chatMessageParser';
 import { renderTextContent } from '../../utils/text-renderer';
+import { resolveTeammateColor } from '../../utils/teammateColors';
 
 const M = 'Montserrat, sans-serif';
 
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-// Same palette already used by Commander's teammate colors (set in
-// ~/.claude/teams/*/config.json). Keeps the border in sync with the
-// teammate icon/identity across the UI.
-const TEAMMATE_COLOR_HEX: Record<string, string> = {
-  blue: '#3B82F6',
-  purple: '#A855F7',
-  teal: '#14B8A6',
-  green: '#22C55E',
-  yellow: '#EAB308',
-  red: '#EF4444',
-  orange: '#F97316',
-  pink: '#EC4899',
-  cyan: '#06B6D4',
-};
-
-const resolveColor = (raw: string): string => {
-  if (!raw) return 'var(--color-accent)';
-  // Accept named colors from the palette OR a raw hex literal if the PM
-  // ever supplies one. Anything else falls back to the accent so we never
-  // leak an unparseable string into inline CSS.
-  const key = raw.toLowerCase();
-  if (TEAMMATE_COLOR_HEX[key]) return TEAMMATE_COLOR_HEX[key]!;
-  if (/^#[0-9a-f]{3,8}$/i.test(raw)) return raw;
-  return 'var(--color-accent)';
-};
 
 interface TeammateMessageCardProps {
   message: TeammateMessage;
@@ -42,7 +17,7 @@ interface TeammateMessageCardProps {
 
 export const TeammateMessageCard = ({ message, onOpen }: TeammateMessageCardProps) => {
   const { teammateId, color, summary, body } = message;
-  const borderColor = resolveColor(color);
+  const borderColor = resolveTeammateColor(color);
   const reduced = prefersReducedMotion();
 
   const content = (

@@ -12,8 +12,17 @@ import {
   PlanApprovalRequestCard,
   PlanApprovalResponseCard,
 } from './ProtocolMessageCards';
+import { SystemEventChip } from './SystemEventChip';
+import { UnrecognizedProtocolCard } from './UnrecognizedProtocolCard';
 import { formatTime, formatTokens } from '../../utils/format';
-import { parseStructuredUserContent } from '../../utils/chatMessageParser';
+import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
+import {
+  collapseConsecutiveIdles,
+  isSystemEventFragment,
+  useSystemEventsMode,
+  type SystemEventsMode,
+  type CollapsedChatMessage,
+} from '../../utils/systemEvents';
 import {
   buildToolResultMap,
   getActivePlan,
@@ -103,17 +112,123 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
 const LIVE_THINKING_CHARS = 280;
 const LIVE_COMPOSING_CHARS = 320;
 
-// Claude Code occasionally threads structured payloads (<task-notification>,
-// <teammate-message>) through the user role. Detect those so the renderer
-// can show a purpose-built card instead of a raw "JB" user message.
-// Strict mode: the message must have exactly one text block whose entire
-// content is the tag. Mixed content falls back to UserMessage.
-const detectStructured = (msg: ChatMessage) => {
+// Claude Code threads structured payloads (<task-notification>,
+// <teammate-message>, raw JSON protocol) through the user role. Phase K
+// scan now returns a full ordered fragment list so a single user message
+// can surface multiple cards + prose segments in the order they were
+// injected. Empty array → fall through to plain UserMessage rendering.
+const detectFragments = (msg: ChatMessage): ParsedChatMessage[] => {
   const textBlocks = msg.content.filter((b) => b.type === 'text');
-  if (textBlocks.length !== 1) return null;
+  if (textBlocks.length !== 1) return [];
   const first = textBlocks[0];
-  if (first?.type !== 'text') return null;
-  return parseStructuredUserContent(first.text);
+  if (first?.type !== 'text') return [];
+  return parseChatMessage(first.text);
+};
+
+const ProseFragment = ({ text }: { text: string }) => (
+  <div
+    className="text-sm leading-relaxed whitespace-pre-wrap px-3 py-1.5"
+    style={{
+      fontFamily: M,
+      color: 'var(--color-text-secondary)',
+      opacity: 0.9,
+    }}
+  >
+    {text}
+  </div>
+);
+
+// Render a single fragment into its corresponding card/chip. Noise kinds
+// (idle/terminated/approved) honor the caller-provided visibility mode;
+// returning null means "drop this fragment".
+const renderFragment = (
+  frag: CollapsedChatMessage,
+  key: string,
+  mode: SystemEventsMode,
+): React.ReactNode => {
+  switch (frag.kind) {
+    case 'prose':
+      return <ProseFragment key={key} text={frag.text} />;
+    case 'task-notification':
+      return <TaskNotificationCard key={key} notification={frag.notification} />;
+    case 'teammate-message':
+      return <TeammateMessageCard key={key} message={frag.teammate} />;
+    case 'shutdown-request':
+      return <ShutdownRequestCard key={key} request={frag.request} />;
+    case 'shutdown-response':
+      return <ShutdownResponseCard key={key} response={frag.response} />;
+    case 'plan-approval-request':
+      return <PlanApprovalRequestCard key={key} request={frag.request} />;
+    case 'plan-approval-response':
+      return <PlanApprovalResponseCard key={key} response={frag.response} />;
+    case 'idle-notification': {
+      if (mode === 'hide') return null;
+      return (
+        <SystemEventChip
+          key={key}
+          kind="idle"
+          from={frag.notification.from}
+          count={frag.count}
+          color={frag.context?.color}
+          timestamp={frag.notification.timestamp ?? null}
+          extra={frag.notification.idleReason ? frag.notification.idleReason : null}
+          variant={mode === 'cards' ? 'card' : 'chip'}
+        />
+      );
+    }
+    case 'teammate-terminated': {
+      if (mode === 'hide') return null;
+      return (
+        <SystemEventChip
+          key={key}
+          kind="terminated"
+          from={frag.notification.from}
+          color={frag.context?.color}
+          timestamp={frag.notification.timestamp ?? null}
+          variant={mode === 'cards' ? 'card' : 'chip'}
+        />
+      );
+    }
+    case 'shutdown-approved': {
+      if (mode === 'hide') return null;
+      return (
+        <SystemEventChip
+          key={key}
+          kind="approved"
+          from={frag.notification.from}
+          color={frag.context?.color}
+          timestamp={frag.notification.timestamp ?? null}
+          extra={frag.notification.requestId ? `#${frag.notification.requestId.slice(0, 8)}` : null}
+          variant={mode === 'cards' ? 'card' : 'chip'}
+        />
+      );
+    }
+    case 'unrecognized-protocol':
+      return (
+        <UnrecognizedProtocolCard
+          key={key}
+          protocolType={frag.protocolType}
+          raw={frag.raw}
+          context={frag.context}
+        />
+      );
+    default:
+      return null;
+  }
+};
+
+const renderUserFragments = (
+  fragments: ParsedChatMessage[],
+  mode: SystemEventsMode,
+  groupIndex: number,
+): React.ReactNode => {
+  const visible = mode === 'hide' ? fragments.filter((f) => !isSystemEventFragment(f)) : fragments;
+  const collapsed = collapseConsecutiveIdles(visible);
+  return (
+    <div className="flex flex-col gap-1.5">
+      {collapsed.map((frag, idx) => renderFragment(frag, `g${groupIndex}-f${idx}`, mode))}
+    </div>
+  );
 };
 
 interface ChatThreadProps {
@@ -156,6 +271,7 @@ export const ChatThread = ({
 
   const toolResultMap = useMemo(() => buildToolResultMap(messages), [messages]);
   const groups = useMemo<MessageGroup[]>(() => groupMessages(messages), [messages]);
+  const systemEventsMode = useSystemEventsMode();
   // Single session-wide plan — shared by inline AgentPlan and StickyPlanWidget
   // so they can never disagree. The plan's anchor message id tells us which
   // assistant group hosts the inline card.
@@ -344,26 +460,9 @@ export const ChatThread = ({
                 {/* Render the group */}
                 {group.role === 'user' && (() => {
                   const msg = group.messages[0]!;
-                  const structured = detectStructured(msg);
-                  if (structured?.kind === 'task-notification') {
-                    return <TaskNotificationCard notification={structured.notification} />;
-                  }
-                  if (structured?.kind === 'teammate-message') {
-                    return <TeammateMessageCard message={structured.teammate} />;
-                  }
-                  if (structured?.kind === 'shutdown-request') {
-                    return <ShutdownRequestCard request={structured.request} />;
-                  }
-                  if (structured?.kind === 'shutdown-response') {
-                    return <ShutdownResponseCard response={structured.response} />;
-                  }
-                  if (structured?.kind === 'plan-approval-request') {
-                    return <PlanApprovalRequestCard request={structured.request} />;
-                  }
-                  if (structured?.kind === 'plan-approval-response') {
-                    return <PlanApprovalResponseCard response={structured.response} />;
-                  }
-                  return <UserMessage message={msg} />;
+                  const fragments = detectFragments(msg);
+                  if (fragments.length === 0) return <UserMessage message={msg} />;
+                  return renderUserFragments(fragments, systemEventsMode, gi);
                 })()}
 
                 {group.role === 'assistant' && (

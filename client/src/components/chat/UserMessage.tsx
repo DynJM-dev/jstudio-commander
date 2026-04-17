@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import type { ChatMessage } from '@commander/shared';
 import { renderTextContent } from '../../utils/text-renderer';
 import { formatTime } from '../../utils/format';
-import { parseStructuredUserContent } from '../../utils/chatMessageParser';
+import { parseChatMessage } from '../../utils/chatMessageParser';
 import { TaskNotificationCard } from './TaskNotificationCard';
 import { TeammateMessageCard } from './TeammateMessageCard';
 
@@ -31,15 +31,20 @@ export const UserMessage = ({ message }: UserMessageProps) => {
 
   // Belt-and-suspenders: if ChatThread (or a future caller) didn't intercept
   // a structured user payload, suppress the JB header here too and render
-  // the purpose-built card. Never let raw <task-notification> /
-  // <teammate-message> XML leak into the chat.
+  // the first structured fragment. Never let raw <task-notification> /
+  // <teammate-message> XML leak into the chat. Only the first fragment is
+  // rendered here because this belt path only fires when UserMessage is used
+  // outside the Phase-K ChatThread flow; the fragment-array rendering lives
+  // in ChatThread.
   if (textBlocks.length === 1 && textBlocks[0]?.type === 'text') {
-    const structured = parseStructuredUserContent(textBlocks[0].text);
-    if (structured?.kind === 'task-notification') {
-      return <TaskNotificationCard notification={structured.notification} />;
-    }
-    if (structured?.kind === 'teammate-message') {
-      return <TeammateMessageCard message={structured.teammate} />;
+    const fragments = parseChatMessage(textBlocks[0].text);
+    for (const frag of fragments) {
+      if (frag.kind === 'task-notification') {
+        return <TaskNotificationCard notification={frag.notification} />;
+      }
+      if (frag.kind === 'teammate-message') {
+        return <TeammateMessageCard message={frag.teammate} />;
+      }
     }
   }
 
