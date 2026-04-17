@@ -20,6 +20,12 @@ const IDLE_GRACE_MS = 8_000;
 // the "stuck on Thinking..." class of bug observable in server logs.
 const workingSince = new Map<string, number>();
 const STUCK_WORKING_WARN_MS = 3 * 60_000;
+// Phase N.0 Patch 2 — how long the poller defers to a recent hook write.
+// Chosen so 1-2 poll cycles (5s each) comfortably sit inside the window
+// without the yield outlasting real work: if the hook wrote `idle` and
+// Claude starts a fresh turn within 10s, the NEXT hook event (or the
+// poll after the window expires) restores `working`.
+const HOOK_YIELD_MS = 10_000;
 
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
@@ -49,9 +55,17 @@ const poll = (): void => {
   // marked stopped by a prior glitch — if tmux still reports it live, we
   // must re-probe and un-stick it. jsc-* session names stay filtered by
   // status because those are Commander-created and stopping is authoritative.
+  // `ms_since_update` is computed in SQL via julianday diff so we don't
+  // have to worry about SQLite's TEXT `updated_at` format vs JS `Date`
+  // timezone parsing (SQLite emits naïve UTC without a trailing Z, which
+  // `new Date(...)` interprets as local on some platforms and UTC on
+  // others). Integer ms since the row's last write.
   const activeSessions = db.prepare(
-    "SELECT id, tmux_session, status FROM sessions WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'"
-  ).all() as Array<{ id: string; tmux_session: string; status: string }>;
+    `SELECT id, tmux_session, status,
+            CAST((julianday('now') - julianday(updated_at)) * 86400000 AS INTEGER) AS ms_since_update
+     FROM sessions
+     WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
+  ).all() as Array<{ id: string; tmux_session: string; status: string; ms_since_update: number }>;
 
   if (activeSessions.length === 0) return;
 
@@ -88,6 +102,30 @@ const poll = (): void => {
         newStatus = 'idle';
         evidence = 'pane live despite stopped classification';
       }
+    }
+
+    // Phase N.0 — yield to a recent hook write. If the DB row was just
+    // flipped to `idle` by the Stop hook (Patch 1 at `bc9b126`), trust
+    // that signal for HOOK_YIELD_MS and skip re-classifying from pane.
+    // Without this, the pane footer's lingering spinner glyph (`✻ Cooked`
+    // etc.) would flip the row straight back to `working` on the next
+    // 5s tick, defeating the hook-driven correction entirely.
+    //
+    // Gate is ANDed with `status === 'idle'` so a stale `working` row
+    // never gets frozen — the yield is ONLY for the hook-asserted idle
+    // state. Keep activity cache warm (above) regardless so the UI's
+    // live-turn rendering isn't starved.
+    if (
+      session.status === 'idle' &&
+      session.ms_since_update < HOOK_YIELD_MS
+    ) {
+      // Treat this iteration as a no-op: keep the cache in sync with
+      // the hook-written truth so the next poll compares against `idle`
+      // not whatever the pane-regex tried to classify.
+      lastKnownStatus.set(session.id, 'idle');
+      idleSince.delete(session.id);
+      workingSince.delete(session.id);
+      continue;
     }
 
     const cachedStatus = lastKnownStatus.get(session.id) ?? (session.status as SessionStatus);
