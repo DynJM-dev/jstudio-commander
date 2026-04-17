@@ -72,6 +72,21 @@ export const getDb = (): Database.Database => {
     db.exec('ALTER TABLE sessions ADD COLUMN last_hook_at INTEGER NOT NULL DEFAULT 0');
     console.log('[db] Migration: added last_hook_at column to sessions');
   }
+  // Phase U.1 Fix 1 — epoch-ms timestamp of the most recent
+  // stale-activity force-idle (Phase U Patch 2). The status-poller
+  // uses this as a FIRST-IN-TREE cooldown gate: for 60s after a
+  // force-idle the poller skips ALL pane-regex reclassification on
+  // that row, regardless of what the classifier or another hook
+  // says. Defense-in-depth against classifier false-positives that
+  // the chrome exclusion (Fix 2) doesn't catch — any new false-
+  // positive class oscillating between idle and working in that 60s
+  // window is suppressed without requiring an immediate classifier
+  // patch. Defaults to 0 so pre-migration rows start outside any
+  // cooldown window (Date.now() - 0 is huge, fails the `<` gate).
+  if (!cols.some((c) => c.name === 'force_idled_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN force_idled_at INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] Migration: added force_idled_at column to sessions');
+  }
   // Phase R M3 — drop file_watch_state.last_line_count. Nothing
   // reads it and it diverged from reality on truncate-then-rewrite
   // (offset rewound, count kept climbing). Idempotent: once the

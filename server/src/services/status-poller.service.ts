@@ -40,6 +40,15 @@ export const HOOK_YIELD_MS = 60_000;
 // on nearly every tool-use hook, so anything crossing 90s of silence
 // is overwhelmingly a routing/classifier gap rather than a long turn.
 export const STALE_ACTIVITY_MS = 90_000;
+// Phase U.1 Fix 1 — after a stale-activity force-idle, suppress all
+// pane-regex reclassification on that row for this window. Catches
+// any residual classifier false-positive class where the pane briefly
+// reads as "working" again 5s after we force-idled (which is exactly
+// the oscillation shape observed post-Phase-U before Fix 2 shipped).
+// Ordered FIRST in the poller decision tree so a recent hook or a
+// fresh stale-activity fact cannot short-circuit the cooldown. Strict
+// `<` cutoff: at msSinceForceIdle === 60_000 the gate is done.
+export const FORCE_IDLE_COOLDOWN_MS = 60_000;
 
 // Status-flip ring buffer per session. Phase J: debuggers hunting "why is
 // this session stuck" can grep these flips with their evidence strings
@@ -79,7 +88,7 @@ const poll = (): void => {
   // column for other queries; the poller no longer needs it in this
   // SELECT.
   const activeSessions = db.prepare(
-    `SELECT id, tmux_session, status, last_hook_at, last_activity_at
+    `SELECT id, tmux_session, status, last_hook_at, last_activity_at, force_idled_at
      FROM sessions
      WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
   ).all() as Array<{
@@ -88,6 +97,7 @@ const poll = (): void => {
     status: string;
     last_hook_at: number;
     last_activity_at: number;
+    force_idled_at: number;
   }>;
 
   if (activeSessions.length === 0) return;
@@ -127,6 +137,19 @@ const poll = (): void => {
       }
     }
 
+    // Phase U.1 Fix 1 — FIRST-IN-TREE cooldown gate. If we force-idled
+    // this row within FORCE_IDLE_COOLDOWN_MS (60s), skip every
+    // reclassification path for the remainder of the window. Ordered
+    // before the hook-yield so a hook arriving mid-cooldown can't
+    // reset the gate to 'yield' (same suppression effect, but keeps
+    // the cooldown as the single authoritative signal for "just
+    // force-idled — don't touch"). Strict `<` cutoff so at
+    // msSinceForceIdle === 60_000 we exit into the next branch.
+    const msSinceForceIdle = Date.now() - Number(session.force_idled_at ?? 0);
+    if (msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS) {
+      continue;
+    }
+
     // Phase T Patch 2 revision — hook-authoritative yield. If ANY hook
     // event matched this session within HOOK_YIELD_MS (60s), trust the
     // hook cascade entirely and skip pane-regex reclassification. No
@@ -154,10 +177,19 @@ const poll = (): void => {
     // verb the classifier can't distinguish from live work.
     const msSinceActivity = Date.now() - Number(session.last_activity_at ?? 0);
     if (session.status === 'working' && msSinceActivity > STALE_ACTIVITY_MS) {
+      // Phase U.1 Fix 1 — stamp `force_idled_at` in the SAME UPDATE as
+      // the status flip. Single atomic write so the cooldown gate on
+      // the next poll tick cannot see a row whose status is 'idle'
+      // while `force_idled_at` is still the old (0) value. A split
+      // write would race the 5s interval.
+      const forceIdledAt = Date.now();
       const result = db.prepare(
-        `UPDATE sessions SET status = 'idle', updated_at = datetime('now')
+        `UPDATE sessions
+           SET status = 'idle',
+               force_idled_at = ?,
+               updated_at = datetime('now')
          WHERE id = ? AND status = 'working'`,
-      ).run(session.id);
+      ).run(forceIdledAt, session.id);
       if (result.changes > 0) {
         const at = new Date().toISOString();
         const evidence = `stale-activity-force-idle (${Math.round(msSinceActivity / 1000)}s)`;
