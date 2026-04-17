@@ -17,6 +17,7 @@ import { getDb } from '../db/connection.js';
 import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
 import { eventBus } from '../ws/event-bus.js';
+import { isCrossSessionPaneOwner } from './cross-session.js';
 
 const getClaudeEffortLevel = (): string => {
   try {
@@ -531,40 +532,69 @@ export const sessionService = {
     return session;
   },
 
-  // Detect whether `paneId` lives inside another Commander-managed tmux
-  // session (e.g. `jsc-<uuid>`) that's already claimed by a PM row. This
-  // guards the "coder is really the PM's own pane" failure mode the
-  // ovagas-ui team config hit: the orchestrator wrote `tmuxPaneId: '%51'`
-  // for a coder, but %51 is a pane inside jsc-e16a1cb2 which the OvaGas
-  // PM owns. Without this check the coder row would silently send-key
-  // the PM's own pane. Returns the owning PM session, or null.
-  detectCrossSessionPaneOwner(paneId: string, excludeSessionId?: string): Session | null {
+  // Detect whether `paneId` lives inside ANOTHER Commander-managed PM's
+  // tmux session (`jsc-<uuid>`). Used by team-config reconcile + the
+  // boot heal to guard against the "coder is really some other PM's
+  // own pane" failure mode the ovagas-ui team config hit (orchestrator
+  // wrote `tmuxPaneId: '%51'` for a coder, but %51 was a pane inside
+  // jsc-e16a1cb2 which the OvaGas PM owned).
+  //
+  // Critical predicate (Phase G.1 addendum): all of these must hold or
+  // we return null and leave the teammate alone:
+  //   1. paneId is a real `%NN` (not a sentinel)
+  //   2. tmux pane lookup succeeds (pane is alive)
+  //   3. owning tmux session starts with `jsc-`  ← Commander prefix
+  //      (codeman-* / user tmux sessions are NOT cross — those are
+  //      legitimate parent panes for codeman-spawned teammates)
+  //   4. some session row owns that tmux session AND it's session_type='pm'
+  //   5. that PM's id is NOT in excludeIds — pass [teammate.id, parent.id]
+  //      so a coder whose pane lives in its OWN parent's session is NOT
+  //      flagged (same-session, not cross-session)
+  //
+  // Returns the offending owner PM session if all five hold; null otherwise.
+  detectCrossSessionPaneOwner(paneId: string, excludeIds: string[] = []): Session | null {
     if (!paneId.startsWith('%')) return null;
     const pane = tmuxService.listAllPanes().find((p) => p.paneId === paneId);
-    if (!pane) return null;
-    // Only Commander-managed tmux sessions start with `jsc-`. A pane in
-    // a user's own tmux session is fine for a teammate — the user chose
-    // that pane explicitly; we don't second-guess it.
-    if (!pane.sessionName.startsWith('jsc-')) return null;
-    const db = getDb();
-    const row = db.prepare(
-      "SELECT * FROM sessions WHERE tmux_session = ? AND session_type = 'pm' AND id != ? LIMIT 1",
-    ).get(pane.sessionName, excludeSessionId ?? '') as Record<string, unknown> | undefined;
-    return row ? rowToSession(row) : null;
+    const paneFact = { sessionName: pane?.sessionName ?? null };
+
+    let candidate: Session | null = null;
+    if (paneFact.sessionName) {
+      const db = getDb();
+      const row = db.prepare(
+        'SELECT * FROM sessions WHERE tmux_session = ? LIMIT 1',
+      ).get(paneFact.sessionName) as Record<string, unknown> | undefined;
+      if (row) candidate = rowToSession(row);
+    }
+
+    const isCrossSession = isCrossSessionPaneOwner(
+      paneFact,
+      candidate ? { id: candidate.id, sessionType: candidate.sessionType } : null,
+      excludeIds,
+    );
+    return isCrossSession ? candidate : null;
   },
 
   // Boot-time cleanup: any teammate row whose pane actually belongs to
   // another Commander PM's tmux session is a stale cross-session
   // reference — dismiss it so the UI doesn't render a ghost coder that
   // send-keys into the PM's own pane. Idempotent: re-run is free.
+  //
+  // Excludes BOTH the teammate's own id AND its parent's id from the
+  // owning-PM check. Without the parent exclusion, a coder whose pane
+  // legitimately lives in its parent PM's tmux session would be flagged
+  // as cross-session and dismissed on every boot. The Phase G.1
+  // addendum was triggered by exactly this misfire on codeman-managed
+  // teams (which already short-circuit at the `jsc-*` prefix check —
+  // belt-and-suspenders to also exclude same-parent for safety).
   healCrossSessionTeammates(): number {
     const db = getDb();
     const rows = db.prepare(
-      "SELECT id, name, tmux_session FROM sessions WHERE parent_session_id IS NOT NULL AND tmux_session LIKE '\\%%' ESCAPE '\\' AND status != 'stopped'",
-    ).all() as Array<{ id: string; name: string; tmux_session: string }>;
+      "SELECT id, name, tmux_session, parent_session_id FROM sessions WHERE parent_session_id IS NOT NULL AND tmux_session LIKE '\\%%' ESCAPE '\\' AND status != 'stopped'",
+    ).all() as Array<{ id: string; name: string; tmux_session: string; parent_session_id: string | null }>;
     let healed = 0;
     for (const r of rows) {
-      const owner = this.detectCrossSessionPaneOwner(r.tmux_session, r.id);
+      const excludeIds = [r.id, r.parent_session_id].filter((x): x is string => !!x);
+      const owner = this.detectCrossSessionPaneOwner(r.tmux_session, excludeIds);
       if (owner) {
         console.log(`[startup-heal] dismissing ${r.name} (${r.id.slice(0, 20)}) — pane ${r.tmux_session} belongs to PM "${owner.name}"`);
         this.markTeammateDismissed(r.id);

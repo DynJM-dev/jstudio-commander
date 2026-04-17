@@ -247,12 +247,18 @@ const reconcile = (path: string): void => {
     // rather than let send-key target a real PM and corrupt its input.
     // ovagas-ui hit this: coder@ovagas-ui was written with tmuxPaneId=%51,
     // but %51 is a pane inside jsc-e16a1cb2 owned by the OvaGas PM.
+    //
+    // Excludes the teammate's own id AND its parent — a coder whose
+    // pane legitimately lives in its parent PM's tmux session must
+    // NOT be flagged. Codeman-managed teams (`codeman-*` tmux sessions)
+    // are already short-circuited inside detectCrossSessionPaneOwner.
     if (hasRealPane) {
-      const owner = sessionService.detectCrossSessionPaneOwner(member.tmuxPaneId!, member.agentId);
+      const owner = sessionService.detectCrossSessionPaneOwner(
+        member.tmuxPaneId!,
+        [member.agentId, parentSessionId],
+      );
       if (owner) {
         console.log(`[team-config] rejecting cross-session pane for ${member.name}: ${member.tmuxPaneId} belongs to PM "${owner.name}"`);
-        // Ensure the row is stopped + the relationship ended so the UI
-        // stops showing the ghost. Idempotent.
         sessionService.markTeammateDismissed(member.agentId);
         continue;
       }
