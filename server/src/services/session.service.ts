@@ -549,6 +549,9 @@ export const sessionService = {
     db.prepare(`
       UPDATE agent_relationships SET ended_at = ? WHERE child_session_id = ? AND ended_at IS NULL
     `).run(now, sessionId);
+    eventBus.emitTeammateDismissed(sessionId);
+    const fresh = this.getSession(sessionId);
+    if (fresh) eventBus.emitSessionUpdated(fresh);
   },
 
   // The requested ID may be Commander's own session UUID or the Claude Code

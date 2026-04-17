@@ -233,10 +233,27 @@ export const SplitChatLayout = () => {
     };
   }, []);
 
+  // Dismiss the active teammate — ends its agent_relationships edge on the
+  // server and optimistically drops it from local state. Any remaining
+  // teammates stay visible; the split fall-through renders single-pane
+  // automatically when the list empties. Survives reload because the
+  // server-side `ended_at` change is picked up by the teammates endpoint.
   const closeCoderPane = useCallback(() => {
-    setTeammates([]);
-    setSplit({ activeTabId: null, minimized: false, percent });
-  }, [setSplit, percent]);
+    const dismissId = activeTabId;
+    if (!dismissId) return;
+    const remaining = teammates.filter((t) => t.id !== dismissId);
+    setTeammates(remaining);
+    setSplit({
+      activeTabId: remaining[0]?.id ?? null,
+      minimized: false,
+      percent,
+    });
+    void api.post(`/sessions/${encodeURIComponent(dismissId)}/dismiss`)
+      .catch(() => {
+        // Rollback on failure — refetch from server to restore truth.
+        void refreshTeammates({ promote: false });
+      });
+  }, [activeTabId, teammates, setSplit, percent, refreshTeammates]);
 
   const activeTab = useMemo(
     () => teammates.find((t) => t.id === activeTabId) ?? null,

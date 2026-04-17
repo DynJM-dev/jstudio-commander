@@ -40,6 +40,24 @@ export const sessionRoutes = async (app: FastifyInstance) => {
     return session;
   });
 
+  // Soft-dismiss a teammate — ends its agent_relationships edge and marks
+  // the session stopped so it drops out of the parent PM's split view.
+  // Distinct from DELETE /api/sessions/:id which hard-deletes and (for
+  // team-linked rows) modifies the on-disk team config. Dismiss is
+  // non-destructive: the team config stays intact, the session row stays
+  // in history, only its visible team membership ends.
+  app.post<{ Params: { id: string } }>(
+    '/api/sessions/:id/dismiss',
+    async (request, reply) => {
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      sessionService.markTeammateDismissed(request.params.id);
+      return { success: true };
+    },
+  );
+
   // Send command to session
   app.post<{ Params: { id: string }; Body: { command: string } }>(
     '/api/sessions/:id/command',
