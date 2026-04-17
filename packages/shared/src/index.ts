@@ -7,6 +7,7 @@ export type { TerminalSession, TerminalResize } from './types/terminal.js';
 export type { TokenUsageEntry, CostEntry, DailyStats } from './types/analytics.js';
 export type { WSEvent, WSCommand } from './types/ws-events.js';
 export type { SessionTick, StatuslineRawPayload } from './types/session-tick.js';
+export type { SystemStatsPayload, AggregateRateLimitsPayload, RateLimitWindow } from './types/system-stats.js';
 
 // Constants
 export {

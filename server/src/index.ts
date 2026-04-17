@@ -31,6 +31,7 @@ import { securityHeadersMiddleware } from './middleware/security-headers.js';
 import { projectScannerService } from './services/project-scanner.service.js';
 import { fileWatcherService } from './services/file-watcher.service.js';
 import { statusPollerService } from './services/status-poller.service.js';
+import { systemStatsService } from './services/system-stats.service.js';
 import { setupWebSocket, stopWebSocketTimers } from './ws/index.js';
 import { setupWatcherBridge } from './services/watcher-bridge.js';
 
@@ -142,6 +143,10 @@ setupWatcherBridge();
 
 // Start status poller
 statusPollerService.start();
+
+// Phase O — host CPU + memory sampler (2s cadence). Broadcasts
+// `system:stats` on the `system` WS channel for the HeaderStatsWidget.
+systemStatsService.start();
 
 // Phase N.2 boot-time self-heal: retire session rows whose team_name
 // references a team directory that no longer exists on disk. Runs BEFORE
@@ -266,6 +271,7 @@ teamConfigService.start();
 const shutdown = async () => {
   console.log('\n[server] Shutting down...');
   statusPollerService.stop();
+  systemStatsService.stop();
   teamConfigService.stop();
   stopWebSocketTimers();
   fileWatcherService.stop();

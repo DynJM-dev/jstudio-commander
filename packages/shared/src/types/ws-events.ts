@@ -3,6 +3,7 @@ import type { ChatMessage } from './chat.js';
 import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
 import type { SessionTick } from './session-tick.js';
+import type { SystemStatsPayload, AggregateRateLimitsPayload } from './system-stats.js';
 
 export type WSEvent =
   | { type: 'session:created'; session: Session }
@@ -42,7 +43,9 @@ export type WSEvent =
   | { type: 'teammate:spawned'; teammate: Teammate }
   | { type: 'teammate:dismissed'; sessionId: string }
   | { type: 'session:tick'; sessionId: string; tick: SessionTick }
-  | { type: 'session:heartbeat'; sessionId: string; ts: number };
+  | { type: 'session:heartbeat'; sessionId: string; ts: number }
+  | { type: 'system:stats'; stats: SystemStatsPayload }
+  | { type: 'system:rate-limits'; rateLimits: AggregateRateLimitsPayload };
 
 export type WSCommand =
   | { type: 'terminal:input'; sessionId: string; data: string }

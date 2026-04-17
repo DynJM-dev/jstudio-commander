@@ -93,6 +93,17 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('sessions', { type: 'session:heartbeat', sessionId, ts });
   });
 
+  // Phase O — host stats + aggregate rate-limits on the global `system`
+  // channel. The HeaderStatsWidget subscribes here; the payload shapes
+  // are defined in @commander/shared/types/system-stats.
+  eventBus.on('system:stats', (stats) => {
+    rooms.broadcast('system', { type: 'system:stats', stats });
+  });
+
+  eventBus.on('system:rate-limits', (rateLimits) => {
+    rooms.broadcast('system', { type: 'system:rate-limits', rateLimits });
+  });
+
   // Health beacon: a separate cadence from the per-socket protocol
   // heartbeat in handler.ts. Clients use the absence of these for ~10s
   // as a signal that the server is restarting (typical during dev hot

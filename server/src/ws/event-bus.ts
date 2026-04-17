@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick } from '@commander/shared';
+import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick, SystemStatsPayload, AggregateRateLimitsPayload } from '@commander/shared';
 
 export interface StatusEmitExtras {
   from?: SessionStatus;
@@ -79,6 +79,18 @@ class CommanderEventBus extends EventEmitter {
   // without refetching the full session row.
   emitSessionHeartbeat(sessionId: string, ts: number): void {
     this.emit('session:heartbeat', sessionId, ts);
+  }
+
+  // Phase O — host CPU/memory snapshot (2s cadence) and aggregate
+  // rate-limit payload (recomputed on tick ingest). Both broadcast on
+  // the global `system` channel so the HeaderStatsWidget can subscribe
+  // once without per-session fan-out.
+  emitSystemStats(stats: SystemStatsPayload): void {
+    this.emit('system:stats', stats);
+  }
+
+  emitSystemRateLimits(rateLimits: AggregateRateLimitsPayload): void {
+    this.emit('system:rate-limits', rateLimits);
   }
 
   // System events
