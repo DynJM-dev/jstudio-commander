@@ -1,10 +1,10 @@
 import type { Page } from '@playwright/test';
 
-// Most E2E flows depend on the Fastify server being up at :3002. Skip tests
-// cleanly when it isn't — the suite runs alongside `pnpm dev` which may or
-// may not have the server leg alive on a given machine. Better to soft-
-// skip than to flood CI with false-positive failures.
-export const COMMANDER_API = process.env.COMMANDER_API ?? 'http://localhost:3002';
+// Most E2E flows depend on the Fastify server being up at :11002. Skip
+// tests cleanly when it isn't — the suite runs alongside `pnpm dev`
+// which may or may not have the server leg alive on a given machine.
+// Better to soft-skip than to flood CI with false-positive failures.
+export const COMMANDER_API = process.env.COMMANDER_API ?? 'http://localhost:11002';
 
 export async function serverUp(): Promise<boolean> {
   try {

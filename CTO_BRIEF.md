@@ -3,7 +3,7 @@
 **Prepared:** 2026-04-15
 **Status:** v1 shipped + 40+ polish commits + 17 feature commits this week (plan widget, sticky plan, split-screen, PM init system, etc.)
 **Stack:** Fastify 5 + SQLite (better-sqlite3) + React 19 + Vite 7 + Tailwind v4 + WebSockets + chokidar
-**Deployment:** local-first; server on port 3002 (Codeman owns 3001), Vite dev on 5173, optional Cloudflare Quick Tunnel for remote access
+**Deployment:** local-first; server on port 11002 (migrated from 3002 in Phase D — signed health preflight + macOS .app launcher now ship with the repo), Vite dev on 5173, optional Cloudflare Quick Tunnel for remote access
 **Repo:** `~/Desktop/Projects/jstudio-commander`
 
 ---

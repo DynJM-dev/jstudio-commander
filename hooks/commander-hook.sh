@@ -24,7 +24,7 @@ print(json.dumps({
 " "$HOOK_DATA" 2>/dev/null || echo '{"event":"unknown","data":{}}')
 
 # POST to Commander (fire-and-forget, don't block Claude Code)
-curl -s -X POST http://localhost:3002/api/hook-event \
+curl -s -X POST http://localhost:11002/api/hook-event \
   -H "Content-Type: application/json" \
   --data "$PAYLOAD" \
   --connect-timeout 1 \

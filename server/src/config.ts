@@ -21,7 +21,7 @@ const loadFileConfig = (): FileConfig => {
     const defaults = {
       pin: '',
       projectDirs: [join(home, 'Desktop', 'Projects')],
-      port: 3001,
+      port: 11002,
     };
     writeFileSync(configPath, JSON.stringify(defaults, null, 2));
     return defaults;
@@ -37,7 +37,7 @@ const loadFileConfig = (): FileConfig => {
 const fileConfig = loadFileConfig();
 
 export const config = {
-  port: fileConfig.port ?? 3001,
+  port: fileConfig.port ?? 11002,
   host: '0.0.0.0',
 
   // Database

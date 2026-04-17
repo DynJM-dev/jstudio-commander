@@ -16,7 +16,7 @@ interface AppConfig {
 const DEFAULT_CONFIG: AppConfig = {
   pin: '',
   projectDirs: [join(homedir(), 'Desktop', 'Projects')],
-  port: 3001,
+  port: 11002,
 };
 
 export const loadConfig = (): AppConfig => {

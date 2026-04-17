@@ -19,7 +19,7 @@ URL guarded by a PIN you set.
    {
      "pin": "1234",
      "projectDirs": ["/Users/you/Desktop/Projects"],
-     "port": 3002
+     "port": 11002
    }
    ```
 
@@ -27,7 +27,7 @@ URL guarded by a PIN you set.
    tunnel without one** — without a PIN, anyone with the URL could drive your
    sessions and run shell commands.
 
-3. **Restart Commander** so it reads the new PIN: `lsof -ti:3002 | xargs kill -9 && pnpm dev`.
+3. **Restart Commander** so it reads the new PIN: `lsof -ti:11002 | xargs kill -9 && pnpm dev`.
 
 ## Starting the tunnel
 
@@ -37,12 +37,12 @@ From Commander's UI: open the top command bar (or settings) and hit
 
 From the CLI:
 ```bash
-curl -X POST http://localhost:3002/api/tunnel/start
+curl -X POST http://localhost:11002/api/tunnel/start
 ```
 
 Stop it:
 ```bash
-curl -X POST http://localhost:3002/api/tunnel/stop
+curl -X POST http://localhost:11002/api/tunnel/stop
 ```
 
 ## On your phone
