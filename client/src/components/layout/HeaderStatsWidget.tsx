@@ -84,7 +84,7 @@ export const HeaderStatsWidget: React.FC = () => {
         color={bandColor(statsStale ? 'unknown' : bandForBudget(cpuPct))}
         tooltip={
           stats
-            ? `Load avg 1m normalized to ${stats.coreCount} core${stats.coreCount === 1 ? '' : 's'}`
+            ? `Instantaneous CPU usage across ${stats.coreCount} core${stats.coreCount === 1 ? '' : 's'}`
             : 'Awaiting first sample'
         }
       />
@@ -92,7 +92,6 @@ export const HeaderStatsWidget: React.FC = () => {
         icon={<MemoryStick size={12} />}
         label="Mem"
         primary={formatPct(memPct, statsStale)}
-        secondary={memUsed !== null && memTotal !== null ? `${formatBytes(memUsed)} / ${formatBytes(memTotal)}` : undefined}
         color={bandColor(statsStale ? 'unknown' : bandForMemory(memPct))}
         tooltip={
           stats
