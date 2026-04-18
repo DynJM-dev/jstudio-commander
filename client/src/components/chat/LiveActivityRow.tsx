@@ -19,7 +19,13 @@ export const buildLiveActivityParts = (
   const spinner = activity?.spinner ?? '';
   const elapsed = activity?.elapsed ?? null;
   const effort = activity?.effort ?? null;
-  const tokens = tick?.contextWindow.totalInputTokens ?? activity?.tokens ?? null;
+  // Issue 4 — the "tokens" label means per-turn delta (what Codeman +
+  // Claude Code's statusline show), not the cumulative context window
+  // total. activity.tokens is the pane-parsed turn delta, so it owns
+  // this field. tick.totalInputTokens is cumulative (20x inflated) and
+  // belongs to a different counter; refuse to surface it here rather
+  // than mislabel it.
+  const tokens = activity?.tokens ?? null;
   const tokenLabel = tokens !== null ? `${tokens.toLocaleString('en-US')} tokens` : null;
 
   const parts: string[] = [];
