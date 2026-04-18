@@ -9,7 +9,11 @@ import { LoadingSkeleton } from './components/shared/LoadingSkeleton';
 
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })));
-const SplitChatLayout = lazy(() => import('./pages/SplitChatLayout').then(m => ({ default: m.SplitChatLayout })));
+// Phase W — PaneContainer supersedes SplitChatLayout. Generic pin-based
+// layout driven by the global pane-state preference, not PM/Coder
+// agent_relationships. SplitChatLayout is removed from the route table;
+// the file stays on disk for a phase or two as reference.
+const PaneContainer = lazy(() => import('./pages/PaneContainer').then(m => ({ default: m.PaneContainer })));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ default: m.ProjectsPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));
 // Phase P.3 H4 — TerminalPage removed. The half-built xterm preview
@@ -43,7 +47,7 @@ const AnimatedRoutes = () => {
             <Route element={<DashboardLayout />}>
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/chat" element={<ChatPage />} />
-              <Route path="/chat/:sessionId" element={<SplitChatLayout />} />
+              <Route path="/chat/:sessionId" element={<PaneContainer />} />
               <Route path="/projects" element={<ProjectsPage />} />
               <Route path="/projects/:id" element={<ProjectDetailPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
