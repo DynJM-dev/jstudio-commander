@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Terminal, ShieldCheck, ShieldAlert, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Terminal, ShieldCheck, ShieldAlert, CheckCircle, ListChecks, XCircle, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
+import { getPromptActions, type DetectedPrompt } from '../../utils/promptActions';
 
 const M = 'Montserrat, sans-serif';
 
@@ -9,6 +10,13 @@ interface TerminalPrompt {
   message: string;
   options?: string[];
 }
+
+const TITLE_BY_TYPE: Record<string, string> = {
+  trust: 'Workspace Trust',
+  permission: 'Permission Required',
+  choice: 'Choose an option',
+  confirm: 'Confirmation',
+};
 
 interface SessionOutput {
   output: string;
@@ -19,10 +27,9 @@ interface SessionOutput {
 
 interface Props {
   sessionId: string;
-  onSendKeys: (keys: string) => Promise<void>;
 }
 
-export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
+export const SessionTerminalPreview = ({ sessionId }: Props) => {
   const [output, setOutput] = useState<SessionOutput | null>(null);
   const [responding, setResponding] = useState(false);
   // #219 — pause polling when the preview leaves the viewport. Multi-
@@ -67,30 +74,28 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
     return () => { mounted = false; clearInterval(interval); };
   }, [sessionId, isOnscreen]);
 
-  const handlePromptAction = useCallback(async (action: string) => {
-    setResponding(true);
-    try {
-      // For trust prompt and other Enter-confirmable prompts, just send Enter
-      // For y/n prompts, send the key
-      if (action === 'confirm' || action === 'Yes, I trust this folder' || action === 'Allow') {
-        await onSendKeys('');
-      } else if (action === 'deny' || action === 'No, exit' || action === 'Deny') {
-        // For deny actions, we might need to send specific keys
-        if (action === 'No, exit') {
-          // Arrow down to select "No" option, then Enter
-          await onSendKeys('');  // This needs more nuance for multi-select
+  // Dispatch any prompt action through the shared mapper — command vs
+  // key is already resolved by getPromptActions, so the dispatcher is a
+  // thin POST to the right endpoint. Lets SessionTerminalPreview and
+  // PermissionPrompt share the same resolver without duplicating the
+  // per-type button-to-value switch.
+  const dispatchAction = useCallback(
+    async (action: { type: 'command' | 'key'; value: string }) => {
+      setResponding(true);
+      try {
+        if (action.type === 'key') {
+          await api.post(`/sessions/${sessionId}/key`, { key: action.value });
         } else {
-          await onSendKeys('n');
+          await api.post(`/sessions/${sessionId}/command`, { command: action.value });
         }
-      } else {
-        await onSendKeys(action);
+      } catch {
+        // ignore
+      } finally {
+        setTimeout(() => setResponding(false), 1000);
       }
-    } catch {
-      // ignore
-    } finally {
-      setTimeout(() => setResponding(false), 1000);
-    }
-  }, [onSendKeys]);
+    },
+    [sessionId],
+  );
 
   if (!output) {
     return (
@@ -127,122 +132,72 @@ export const SessionTerminalPreview = ({ sessionId, onSendKeys }: Props) => {
   return (
     <div ref={wrapperRef} className="flex flex-col gap-3 px-4 lg:px-6 py-4" style={{ fontFamily: M }}>
 
-      {/* Interactive prompts */}
-      {output.prompts.map((prompt, i) => (
-        <div
-          key={i}
-          className="rounded-xl p-4"
-          style={{
-            background: prompt.type === 'trust'
-              ? 'rgba(14, 124, 123, 0.08)'
-              : prompt.type === 'permission'
-                ? 'rgba(245, 158, 11, 0.08)'
-                : 'rgba(255, 255, 255, 0.04)',
-            border: `1px solid ${
-              prompt.type === 'trust'
-                ? 'rgba(14, 124, 123, 0.2)'
-                : prompt.type === 'permission'
-                  ? 'rgba(245, 158, 11, 0.2)'
-                  : 'rgba(255, 255, 255, 0.08)'
-            }`,
-          }}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            {prompt.type === 'trust' && <ShieldCheck size={18} style={{ color: 'var(--color-accent)' }} />}
-            {prompt.type === 'permission' && <ShieldAlert size={18} style={{ color: 'var(--color-idle)' }} />}
-            {prompt.type === 'confirm' && <CheckCircle size={18} style={{ color: 'var(--color-accent)' }} />}
-            <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              {prompt.type === 'trust' ? 'Workspace Trust' :
-               prompt.type === 'permission' ? 'Permission Required' :
-               'Confirmation'}
-            </span>
-          </div>
+      {/* Interactive prompts — actions come from the shared getPromptActions
+          resolver so a new prompt type gets picked up here and in
+          PermissionPrompt from a single edit. */}
+      {output.prompts.map((prompt, i) => {
+        const actions = getPromptActions(prompt as DetectedPrompt);
+        const title = TITLE_BY_TYPE[prompt.type] ?? 'Claude needs input';
+        const isTrust = prompt.type === 'trust';
+        const isPermission = prompt.type === 'permission';
+        const background = isTrust
+          ? 'rgba(14, 124, 123, 0.08)'
+          : isPermission
+            ? 'rgba(245, 158, 11, 0.08)'
+            : 'rgba(255, 255, 255, 0.04)';
+        const border = `1px solid ${
+          isTrust
+            ? 'rgba(14, 124, 123, 0.2)'
+            : isPermission
+              ? 'rgba(245, 158, 11, 0.2)'
+              : 'rgba(255, 255, 255, 0.08)'
+        }`;
+        return (
+          <div key={i} className="rounded-xl p-4" style={{ background, border }}>
+            <div className="flex items-center gap-2 mb-2">
+              {isTrust && <ShieldCheck size={18} style={{ color: 'var(--color-accent)' }} />}
+              {isPermission && <ShieldAlert size={18} style={{ color: 'var(--color-idle)' }} />}
+              {prompt.type === 'confirm' && <CheckCircle size={18} style={{ color: 'var(--color-accent)' }} />}
+              {prompt.type === 'choice' && <ListChecks size={18} style={{ color: 'var(--color-idle)' }} />}
+              <span className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                {title}
+              </span>
+            </div>
 
-          <p className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-            {prompt.message}
-          </p>
+            <p className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+              {prompt.message}
+            </p>
 
-          <div className="flex items-center gap-2">
-            {prompt.type === 'trust' && (
-              <>
-                <button
-                  onClick={() => handlePromptAction('confirm')}
-                  disabled={responding}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                  style={{
-                    background: 'var(--color-accent)',
-                    color: '#fff',
-                    opacity: responding ? 0.7 : 1,
-                  }}
-                >
-                  {responding ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  Trust & Continue
-                </button>
-                <button
-                  onClick={() => handlePromptAction('deny')}
-                  disabled={responding}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    color: 'var(--color-text-secondary)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
-                >
-                  Exit
-                </button>
-              </>
-            )}
-            {prompt.type === 'permission' && (
-              <>
-                <button
-                  onClick={() => handlePromptAction('Allow')}
-                  disabled={responding}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                  style={{ background: 'var(--color-accent)', color: '#fff', opacity: responding ? 0.7 : 1 }}
-                >
-                  Allow
-                </button>
-                <button
-                  onClick={() => handlePromptAction('Deny')}
-                  disabled={responding}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    color: 'var(--color-text-secondary)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
-                >
-                  Deny
-                </button>
-              </>
-            )}
-            {prompt.type === 'confirm' && (
-              <>
-                <button
-                  onClick={() => handlePromptAction('confirm')}
-                  disabled={responding}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                  style={{ background: 'var(--color-accent)', color: '#fff', opacity: responding ? 0.7 : 1 }}
-                >
-                  Yes
-                </button>
-                <button
-                  onClick={() => handlePromptAction('n')}
-                  disabled={responding}
-                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.04)',
-                    color: 'var(--color-text-secondary)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
-                >
-                  No
-                </button>
-              </>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {actions.map((action, j) => {
+                const isDeny =
+                  /^(deny|no|no, exit|reject|3\.\s*no\b)/i.test(action.label);
+                const primary = j === 0 && !isDeny;
+                return (
+                  <button
+                    key={j}
+                    onClick={() => dispatchAction(action)}
+                    disabled={responding}
+                    className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+                    style={{
+                      background: primary ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.04)',
+                      color: primary ? '#fff' : isDeny ? 'var(--color-error)' : 'var(--color-text-secondary)',
+                      border: primary ? '1px solid transparent' : '1px solid rgba(255, 255, 255, 0.08)',
+                      opacity: responding ? 0.5 : 1,
+                      cursor: responding ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {primary && responding ? (
+                      <Loader2 size={13} className="animate-spin inline mr-1" />
+                    ) : null}
+                    {action.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {/* Terminal output preview */}
       <div

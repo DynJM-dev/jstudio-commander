@@ -2,41 +2,15 @@ import { useState, useCallback } from 'react';
 import { ShieldAlert, SendHorizontal } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { api } from '../../services/api';
+import { getPromptActions, type DetectedPrompt, type PromptAction } from '../../utils/promptActions';
 
 const M = 'Montserrat, sans-serif';
-
-interface DetectedPrompt {
-  type: string;
-  message: string;
-  context?: string;
-  options?: string[];
-}
 
 interface PermissionPromptProps {
   sessionId: string;
   prompt: DetectedPrompt;
   onResponded: () => void;
 }
-
-const getButtonAction = (prompt: DetectedPrompt, option: string, index: number): { type: 'command' | 'key'; value: string } => {
-  if (prompt.type === 'confirm' && !prompt.options) {
-    return option === 'Yes'
-      ? { type: 'key', value: 'Enter' }
-      : { type: 'key', value: 'Escape' };
-  }
-  if (prompt.type === 'choice') {
-    return { type: 'command', value: String(index + 1) };
-  }
-  if (prompt.type === 'trust') {
-    return { type: 'command', value: index === 0 ? 'yes' : 'no' };
-  }
-  if (prompt.type === 'permission') {
-    if (option === 'Allow') return { type: 'command', value: 'y' };
-    if (option === 'Allow always') return { type: 'command', value: 'a' };
-    if (option === 'Deny') return { type: 'command', value: 'n' };
-  }
-  return { type: 'command', value: option };
-};
 
 const TITLE_MAP: Record<string, string> = {
   permission: 'Claude needs permission',
@@ -49,7 +23,7 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
   const [sending, setSending] = useState(false);
   const [customInput, setCustomInput] = useState('');
 
-  const sendAction = useCallback(async (action: { type: 'command' | 'key'; value: string }) => {
+  const sendAction = useCallback(async (action: PromptAction | { type: 'command' | 'key'; value: string }) => {
     if (sending) return;
     setSending(true);
     try {
@@ -64,7 +38,7 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
     }
   }, [sessionId, sending, onResponded]);
 
-  const options = prompt.options ?? (prompt.type === 'confirm' ? ['Yes', 'No'] : []);
+  const actions = getPromptActions(prompt);
   const title = TITLE_MAP[prompt.type] ?? 'Claude needs your input';
 
   // Only show context if it's different from the message and non-empty
@@ -126,8 +100,9 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
 
       {/* Action buttons + custom input on same row */}
       <div className="flex flex-wrap items-center gap-2">
-        {options.map((option, i) => {
-          const isDeny = option === 'Deny' || option === 'No' || option === 'No, exit' || option === 'Reject';
+        {actions.map((action, i) => {
+          const option = action.label;
+          const isDeny = option === 'Deny' || option === 'No' || option === 'No, exit' || option === 'Reject' || /^\s*3\.\s*no\b/i.test(option);
           const isPrimary = i === 0 && !isDeny;
 
           let bg: string;
@@ -156,7 +131,7 @@ export const PermissionPrompt = ({ sessionId, prompt, onResponded }: PermissionP
             <button
               key={i}
               disabled={sending}
-              onClick={() => sendAction(getButtonAction(prompt, option, i))}
+              onClick={() => sendAction(action)}
               className="px-3 py-1.5 rounded-md text-xs font-medium transition-all"
               style={{
                 fontFamily: M,

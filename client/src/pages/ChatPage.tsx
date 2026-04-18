@@ -404,12 +404,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         </div>
       ) : allMessages.length === 0 ? (
         <div className="flex-1 overflow-y-auto">
-          <SessionTerminalPreview
-            sessionId={sessionId}
-            onSendKeys={async (keys) => {
-              await api.post(`/sessions/${sessionId}/command`, { command: keys });
-            }}
-          />
+          <SessionTerminalPreview sessionId={sessionId} />
         </div>
       ) : (
         <ChatThread

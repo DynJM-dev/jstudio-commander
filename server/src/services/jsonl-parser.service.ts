@@ -268,9 +268,16 @@ export const jsonlParserService = {
   },
 
   parseAttachmentRecord(record: RawRecord): ChatMessage | null {
-    // Only show edited_text_file attachments as system notes
-    const subtype = record.subtype as string | undefined;
-    if (subtype === 'edited_text_file') {
+    // The discriminator lives on `record.attachment.type`, not
+    // `record.subtype` (which is always absent on attachment records
+    // written by Claude Code). Reading the wrong field was a silent
+    // drop of every attachment — the fresh-session surface and any
+    // task_reminder the pane showed Claude never reached the chat.
+    const inner = (record as { attachment?: { type?: string; content?: string } }).attachment;
+    const innerType = inner?.type;
+    if (!innerType) return null;
+
+    if (innerType === 'edited_text_file') {
       const filename = (record as Record<string, unknown>).filePath ?? 'unknown file';
       return {
         id: record.uuid ?? uuidv4(),
@@ -281,6 +288,21 @@ export const jsonlParserService = {
         isSidechain: false,
       };
     }
+
+    // The <system-reminder> block the pane shows Claude. Surface the
+    // raw reminder text as a system note so the chat transcript holds
+    // the same cue Claude saw when reasoning about the turn.
+    if (innerType === 'task_reminder' && typeof inner?.content === 'string' && inner.content.trim().length > 0) {
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{ type: 'system_note', text: inner.content.trim() }],
+        isSidechain: false,
+      };
+    }
+
     return null;
   },
 };
