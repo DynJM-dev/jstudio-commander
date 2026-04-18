@@ -13,6 +13,19 @@ export type {
   PreCompactStateChangedEvent,
   PreCompactStatusSnapshot,
 } from './types/pre-compact.js';
+export type { PaneState, SessionUi } from './types/pane-state.js';
+export {
+  DEFAULT_PANE_STATE,
+  PANE_STATE_KEY,
+  MIN_DIVIDER_RATIO,
+  MAX_DIVIDER_RATIO,
+  MIN_PANE_WIDTH_PX,
+  DEFAULT_SESSION_UI,
+  sessionUiKey,
+  MIN_DRAWER_HEIGHT_PX,
+  MAX_DRAWER_HEIGHT_RATIO,
+  DEFAULT_DRAWER_HEIGHT_RATIO,
+} from './types/pane-state.js';
 
 // Constants
 export {
