@@ -134,6 +134,13 @@ acquireInstanceLock();
 // Initialize database
 getDb();
 
+// Phase W — one-shot migration from per-PM `split-state.*` preferences
+// to the single global `pane-state` row. Idempotent after first run.
+// Runs before any route can read/write pane state so clients never see
+// a half-migrated view.
+const { migrateLegacySplitState } = await import('./services/pane-state-migration.js');
+migrateLegacySplitState();
+
 // WebSocket server (must register before routes that need it)
 await setupWebSocket(app);
 
