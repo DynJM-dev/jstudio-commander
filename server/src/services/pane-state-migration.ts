@@ -79,9 +79,25 @@ export const migrateLegacySplitState = (): { outcome: string; migrated: number; 
   let dropped = 0;
   let outcome = 'no-op';
 
-  // Case 1: already Phase W.2. Nothing to migrate; just sweep legacies.
+  // Case 1: already Phase W.2. Nothing to migrate, but if the row
+  // carries stray legacy fields (old client re-wrote left/right over
+  // the migrated shape), normalize to the canonical W.2 keys only
+  // so a future rollback or a new client can't re-hydrate the legacy
+  // interpretation.
   if (isPhaseW2(existing)) {
-    outcome = 'already-w2';
+    const o = existing as Record<string, unknown>;
+    const hasStrayLegacy = 'left' in o || 'right' in o;
+    if (hasStrayLegacy) {
+      const clean: PaneState = {
+        rightSessionId: (o.rightSessionId as string | null) ?? null,
+        dividerRatio: clampRatio(o.dividerRatio as number),
+        focusedSessionId: (o.focusedSessionId as string | null) ?? null,
+      };
+      preferencesService.set(PANE_STATE_KEY, clean);
+      outcome = 'already-w2-stripped';
+    } else {
+      outcome = 'already-w2';
+    }
   }
   // Case 2: Phase W shape — reshape in place.
   else if (isPhaseW(existing)) {

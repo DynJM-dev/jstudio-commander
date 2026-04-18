@@ -20,6 +20,14 @@ const { preferencesService } = await import('../preferences.service.js');
 const { migrateLegacySplitState } = await import('../pane-state-migration.js');
 const { PANE_STATE_KEY } = await import('@commander/shared');
 
+type PaneStateWithLegacy = {
+  left: string | null;
+  right: string | null;
+  rightSessionId: string | null;
+  dividerRatio: number;
+  focusedSessionId: string | null;
+};
+
 describe('Phase W.2 — migrateLegacySplitState', () => {
   before(() => { getDb(); });
   beforeEach(() => { getDb().prepare('DELETE FROM preferences').run(); });
@@ -48,6 +56,27 @@ describe('Phase W.2 — migrateLegacySplitState', () => {
       dividerRatio: 0.42,
       focusedSessionId: 'user-chosen',
     });
+  });
+
+  test('hybrid W.2 + stray legacy left/right fields → stripped to canonical W.2', () => {
+    // An older client that was still writing the W shape re-set the
+    // preference after the initial migration, producing a hybrid row
+    // where `rightSessionId` AND `left/right` coexist. Boot must
+    // strip the dead keys so downstream readers can't misinterpret.
+    preferencesService.set(PANE_STATE_KEY, {
+      left: 'stale-pm',
+      right: 'stale-coder',
+      rightSessionId: 'canonical-right',
+      dividerRatio: 0.5,
+      focusedSessionId: 'canonical-right',
+    } as unknown as PaneStateWithLegacy);
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'already-w2-stripped');
+    const after = preferencesService.get(PANE_STATE_KEY) as Record<string, unknown>;
+    assert.equal(after.rightSessionId, 'canonical-right');
+    assert.equal(after.focusedSessionId, 'canonical-right');
+    assert.equal('left' in after, false);
+    assert.equal('right' in after, false);
   });
 
   test('pane-state in Phase W shape → reshaped to W.2, left dropped', () => {
