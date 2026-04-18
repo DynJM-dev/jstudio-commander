@@ -190,28 +190,41 @@ export const PaneContainer = () => {
     // (shouldn't happen under the current routes, but render a graceful
     // empty state rather than crash).
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}>
+      <div className="h-full flex items-center justify-center" style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}>
         <p className="text-sm">No session selected. Pick one from the sidebar.</p>
       </div>
     );
   }
 
+  // P0 fix: parent `<main>` in DashboardLayout is NOT `flex flex-col`,
+  // it's a block element with `flex-1 overflow-hidden`. So `flex-1` on
+  // our container does NOTHING (no flex parent = no flex-basis). The
+  // container must use `h-full` to inherit main's computed height.
+  // Each column mirrors the pre-W SplitChatLayout pattern
+  // (`h-full min-h-0 overflow-hidden`) so the flex-col inside Pane
+  // can do its min-h-0 trick and the ChatPage scroll region can grow.
+
   if (!isDual) {
     return (
-      <Pane
-        sessionId={leftId}
-        isFocused={true}
-        onFocus={() => paneActions.focus(leftId)}
-        showFocusBorder={false}
-      />
+      <div className="h-full min-h-0 overflow-hidden">
+        <Pane
+          sessionId={leftId}
+          isFocused={true}
+          onFocus={() => paneActions.focus(leftId)}
+          showFocusBorder={false}
+        />
+      </div>
     );
   }
 
   const leftRatio = paneState.dividerRatio;
 
   return (
-    <div ref={containerRef} className="flex-1 flex min-h-0 w-full">
-      <div style={{ width: `${leftRatio * 100}%`, minWidth: MIN_PANE_WIDTH_PX }} className="flex flex-col min-h-0">
+    <div ref={containerRef} className="flex h-full w-full min-h-0">
+      <div
+        style={{ width: `${leftRatio * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
+        className="h-full min-h-0 overflow-hidden"
+      >
         <Pane
           sessionId={leftId!}
           isFocused={focusedId === leftId}
@@ -240,7 +253,10 @@ export const PaneContainer = () => {
         />
       </div>
 
-      <div style={{ width: `${(1 - leftRatio) * 100}%`, minWidth: MIN_PANE_WIDTH_PX }} className="flex flex-col min-h-0">
+      <div
+        style={{ width: `${(1 - leftRatio) * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
+        className="h-full min-h-0 overflow-hidden"
+      >
         <Pane
           sessionId={rightId!}
           isFocused={focusedId === rightId}
