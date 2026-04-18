@@ -3,17 +3,19 @@ import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSyn
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { watch as chokidarWatch } from 'chokidar';
-import type { Session, SessionStatus, EffortLevel } from '@commander/shared';
+import type { Session, SessionStatus, EffortLevel, SessionType } from '@commander/shared';
+import { SESSION_TYPE_EFFORT_DEFAULTS } from '@commander/shared';
 import { config } from '../config.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 
 // Coerce any legacy or malformed effort_level value (pre-migration
-// 'low'/'medium', NULL from a row that pre-dates the column default
-// migration, junk from direct SQL) to a valid EffortLevel. The boot
-// heal migration in connection.ts handles persisted rows; this handles
-// the in-memory read path so a stale row never breaks the typed API.
+// 'low', NULL from a row that pre-dates the column default migration,
+// junk from direct SQL) to a valid EffortLevel. The boot heal migration
+// in connection.ts handles persisted rows; this handles the in-memory
+// read path so a stale row never breaks the typed API. Phase M1: 'medium'
+// is a valid value again (coder / raw default) — preserve it as-is.
 const normalizeEffortLevel = (raw: string | null | undefined): EffortLevel => {
-  if (raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
+  if (raw === 'medium' || raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
   return 'xhigh';
 };
 import { getDb } from '../db/connection.js';
@@ -71,15 +73,30 @@ interface CreateSessionOpts {
   name?: string;
   projectPath?: string;
   model?: string;
-  sessionType?: 'pm' | 'raw';
+  sessionType?: SessionType;
+  // Phase M1 — optional per-call override of the effort level Commander
+  // injects post-boot. Normally `SESSION_TYPE_EFFORT_DEFAULTS` drives it;
+  // supplying this value wins so callers can request a non-default (e.g.
+  // an orchestrator spawning a coder session at xhigh for a hairy phase).
+  effortLevel?: EffortLevel;
 }
 
-const PM_BOOTSTRAP_PATH = join(homedir(), '.claude', 'prompts', 'pm-session-bootstrap.md');
+// Per-session-type bootstrap prompts under ~/.claude/prompts/. Absent
+// files return null — the spawn path logs a warning and continues so
+// missing bootstrap content never blocks session creation. 'raw'
+// intentionally has no bootstrap.
+const BOOTSTRAP_PATHS: Record<SessionType, string | null> = {
+  pm: join(homedir(), '.claude', 'prompts', 'pm-session-bootstrap.md'),
+  coder: join(homedir(), '.claude', 'prompts', 'coder-session-bootstrap.md'),
+  raw: null,
+};
 
-const readPmBootstrap = (): string | null => {
+const readSessionBootstrap = (sessionType: SessionType): string | null => {
+  const path = BOOTSTRAP_PATHS[sessionType];
+  if (!path) return null;
   try {
-    if (!existsSync(PM_BOOTSTRAP_PATH)) return null;
-    return readFileSync(PM_BOOTSTRAP_PATH, 'utf-8').trim();
+    if (!existsSync(path)) return null;
+    return readFileSync(path, 'utf-8').trim();
   } catch {
     return null;
   }
@@ -126,7 +143,7 @@ const rowToSession = (row: Record<string, unknown>): Session => ({
   effortLevel: normalizeEffortLevel(row.effort_level as string | null | undefined),
   parentSessionId: (row.parent_session_id as string | null) ?? null,
   teamName: (row.team_name as string | null) ?? null,
-  sessionType: ((row.session_type as string) ?? 'raw') as 'pm' | 'raw',
+  sessionType: ((row.session_type as string) ?? 'raw') as SessionType,
   transcriptPaths: parseTranscriptPaths(row.transcript_paths),
   lastActivityAt: Number(row.last_activity_at ?? 0),
   // SQLite has no boolean type — the column is INTEGER 0/1. Default
@@ -159,7 +176,7 @@ interface UpsertSessionInput {
   agentRole?: string | null;
   teamName?: string | null;
   parentSessionId?: string | null;
-  sessionType?: 'pm' | 'raw';
+  sessionType?: SessionType;
   transcriptPaths?: string[];
   stationId?: string | null;
   // SQLite stores this as INTEGER 0/1. Callers pass boolean; the
@@ -205,6 +222,38 @@ const SESSION_COL_MAP: Array<{ col: string; key: keyof UpsertSessionInput }> = [
 const CLAUDE_JSONL_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
 const SPAWN_BIND_TIMEOUT_MS = 30_000;
+
+// Issue 6 — produce the canonical absolute cwd for a Commander-spawned
+// session. Two sources: the caller's `opts.projectPath` (may be undefined,
+// empty, or contain a leading `~`) and the tmux pane's actual
+// `pane_current_path` (resolved at spawn). Returns the normalized string
+// to store in `sessions.project_path` AND pass to
+// bindClaudeSessionFromJsonl.
+//
+// Normalization matters because Claude Code's hook events carry `cwd`
+// without a trailing slash, and resolveOwner.cwd-exclusive compares
+// with `project_path = ?` — a stored `/tmp/abc/` would never match a
+// hook's `/tmp/abc`. The helper collapses trailing slashes and expands
+// leading `~` so stored paths are byte-for-byte identical to what
+// Claude sends.
+export const resolveSessionCwd = (
+  userInput: string | undefined | null,
+  paneCwd: string | null,
+): string | null => {
+  const normalize = (s: string): string | null => {
+    const stripped = s.replace(/\/+$/, '');
+    return stripped.length > 0 ? stripped : null;
+  };
+  if (userInput && userInput.trim().length > 0) {
+    const t = userInput.trim();
+    const expanded = t === '~' ? homedir()
+                   : t.startsWith('~/') ? join(homedir(), t.slice(2))
+                   : t;
+    const out = normalize(expanded);
+    if (out) return out;
+  }
+  return paneCwd ? normalize(paneCwd) : null;
+};
 
 // Watch the encoded-cwd directory under ~/.claude/projects/ and bind
 // the first new JSONL file Claude Code creates to this Commander
@@ -357,7 +406,16 @@ export const sessionService = {
     const tmuxName = generateTmuxName(id);
     const model = opts.model || 'claude-opus-4-7';
 
-    // Create tmux session (in project directory if specified)
+    // Issue 6 — canonicalize the cwd NOW so `project_path` stored on the row
+    // equals the `cwd` that Claude Code will later send in every hook event.
+    // resolveSessionCwd expands `~`, trims trailing slashes, and falls back
+    // to the tmux pane's own `pane_current_path` when the caller supplied
+    // nothing. Without this, raw sessions created from the modal (no user-
+    // typed projectPath) had empty `project_path`, bindClaudeSessionFromJsonl
+    // early-returned on null cwd, and resolveOwner's cwd-exclusive strategy
+    // couldn't match the row → transcript_paths stayed empty, chat was blank.
+    // Pass the user input to tmux so it honors an explicit cwd; fall back to
+    // whatever tmux actually put the pane in if we resolve nothing.
     tmuxService.createSession(tmuxName, opts.projectPath);
 
     // Phase S.1 Patch 1 — resolve the first pane id of the just-created
@@ -379,6 +437,20 @@ export const sessionService = {
     }
     const sendTarget = resolvedPaneId ?? tmuxName;
 
+    // Issue 6 — query the pane's real cwd, then let resolveSessionCwd decide:
+    // user input wins when provided (tilde-expanded, slash-normalized), else
+    // pane cwd is the source of truth. Either way, `canonicalCwd` is what we
+    // use for BOTH the watcher and the row's project_path column.
+    const paneCwd = resolvedPaneId ? tmuxService.resolvePaneCwd(resolvedPaneId) : null;
+    const canonicalCwd = resolveSessionCwd(opts.projectPath, paneCwd);
+    if (!canonicalCwd) {
+      console.warn(
+        `[sessions] createSession(${tmuxName}) — could not resolve cwd ` +
+        `(input=${opts.projectPath ?? 'null'} pane=${paneCwd ?? 'null'}); ` +
+        `hook events for this session will not bind via cwd-exclusive strategy.`,
+      );
+    }
+
     // Auto-start Claude Code in the tmux session. The model string can
     // carry brackets (`[1m]` for 1M context) which zsh/bash glob-expand
     // if unquoted — single-quote the value so strict shells don't error.
@@ -390,7 +462,7 @@ export const sessionService = {
     // Claude Code creates `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
     // on first turn; binding on the add-event gives resolveOwner's primary
     // strategy an O(1) claude_session_id hit from the very first hook.
-    bindClaudeSessionFromJsonl(id, opts.projectPath ?? null);
+    bindClaudeSessionFromJsonl(id, canonicalCwd);
 
     // Small delay to let the shell initialize, then send the claude command
     setTimeout(() => {
@@ -412,17 +484,21 @@ export const sessionService = {
     // The row insert and the 'created' event log are wrapped in a
     // transaction so a process crash between them can never produce an
     // orphan row without its audit entry (audit #205 scenario 13).
-    const sessionType: 'pm' | 'raw' = opts.sessionType ?? 'raw';
+    const sessionType: SessionType = opts.sessionType ?? 'raw';
+    // Phase M1 — effort level is per-session-type (pm=high, coder/raw=medium)
+    // unless the caller explicitly overrides. Single source of truth:
+    // SESSION_TYPE_EFFORT_DEFAULTS in @commander/shared.
+    const effortLevel: EffortLevel = opts.effortLevel ?? SESSION_TYPE_EFFORT_DEFAULTS[sessionType];
     try {
       db.transaction(() => {
         this.upsertSession({
           id,
           name: slug,
           tmuxSession: sendTarget,
-          projectPath: opts.projectPath ?? null,
+          projectPath: canonicalCwd,
           status: 'working',
           model,
-          effortLevel: 'xhigh',
+          effortLevel,
           sessionType,
         });
         db.prepare(`
@@ -432,7 +508,7 @@ export const sessionService = {
           name: slug,
           tmuxSession: sendTarget,
           tmuxSessionName: tmuxName,
-          projectPath: opts.projectPath,
+          projectPath: canonicalCwd,
           claudeCmd,
         }));
       })();
@@ -451,14 +527,15 @@ export const sessionService = {
       throw err;
     }
 
-    // Post-boot injection — every new session gets `/effort xhigh` as the first
-    // slash command so both PM and raw sessions run at max effort by default.
-    // PM sessions additionally get their bootstrap prompt sent after the
-    // effort ack renders so `/pm` loads at max.
+    // Post-boot injection — every new session gets `/effort <level>` as its
+    // first slash command, where <level> is sourced from the per-session-type
+    // matrix (Phase M1). PM + Coder sessions additionally get their bootstrap
+    // prompt sent after the effort ack renders.
     const shortId = id.slice(0, 8);
-    const bootstrap = sessionType === 'pm' ? readPmBootstrap() : null;
-    if (sessionType === 'pm' && !bootstrap) {
-      console.warn(`[sessions] ${shortId} PM session requested but ${PM_BOOTSTRAP_PATH} missing`);
+    const bootstrap = readSessionBootstrap(sessionType);
+    const bootstrapPath = BOOTSTRAP_PATHS[sessionType];
+    if (bootstrapPath && !bootstrap) {
+      console.warn(`[sessions] ${shortId} ${sessionType} session requested but ${bootstrapPath} missing`);
     }
 
     (async () => {
@@ -468,10 +545,10 @@ export const sessionService = {
         return;
       }
       try {
-        tmuxService.sendKeys(sendTarget, '/effort xhigh');
-        console.log(`[sessions] ${shortId} effort set to max`);
+        tmuxService.sendKeys(sendTarget, `/effort ${effortLevel}`);
+        console.log(`[sessions] ${shortId} effort set to ${effortLevel} (${sessionType})`);
       } catch (err) {
-        console.warn(`[sessions] ${shortId} /effort xhigh send failed:`, (err as Error).message);
+        console.warn(`[sessions] ${shortId} /effort ${effortLevel} send failed:`, (err as Error).message);
       }
       if (bootstrap) {
         // Wait for Claude to acknowledge the /effort command before firing
@@ -479,9 +556,9 @@ export const sessionService = {
         await new Promise((r) => setTimeout(r, 800));
         try {
           tmuxService.sendKeys(sendTarget, bootstrap);
-          console.log(`[sessions] ${shortId} PM bootstrap injected`);
+          console.log(`[sessions] ${shortId} ${sessionType} bootstrap injected`);
         } catch (err) {
-          console.warn(`[sessions] ${shortId} PM bootstrap send failed:`, (err as Error).message);
+          console.warn(`[sessions] ${shortId} ${sessionType} bootstrap send failed:`, (err as Error).message);
         }
       }
     })().catch(() => {});

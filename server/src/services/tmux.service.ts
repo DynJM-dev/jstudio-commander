@@ -153,6 +153,22 @@ export const tmuxService = {
     return exec(['list-panes', '-t', name, '-F', '#{pane_current_command}']);
   },
 
+  // Issue 6 — resolve a pane's current working directory. Used at session
+  // spawn so Commander can store the real cwd in `sessions.project_path`
+  // when the caller didn't supply one. Without this the spawn-bind
+  // watcher early-returns (no cwd → can't predict Claude's JSONL dir)
+  // and resolveOwner's cwd-exclusive strategy can't match hook events.
+  // Returns null on any tmux error — caller falls back to user input.
+  resolvePaneCwd(target: string): string | null {
+    try {
+      const out = exec(['display-message', '-p', '-t', target, '#{pane_current_path}']);
+      const trimmed = out.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    } catch {
+      return null;
+    }
+  },
+
   // Enumerate every pane across every tmux session. Used to resolve sentinel
   // targets (sessions with no known pane) back to a real pane id by matching
   // on cwd.
