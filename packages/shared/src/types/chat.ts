@@ -21,6 +21,26 @@ export type ContentBlock =
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   | { type: 'system_note'; text: string }
   | { type: 'compact_boundary'; trigger: 'manual' | 'auto'; preTokens: number }
+  // Issue 7 P1 — <system-reminder> attachment rendered as a muted inline
+  // footnote visually attached to the preceding user turn. Was
+  // `system_note` pre-7; the typed variant lets the renderer style it
+  // as a footnote rather than a separator banner.
+  | { type: 'inline_reminder'; text: string }
+  // Issue 7 P1 — user-attached file (drag/drop/paste). Carries the
+  // displayed filename + absolute path + lightweight preview metadata
+  // (numLines/totalLines) + optional content preview for expand.
+  | {
+      type: 'file_attachment';
+      filename: string;
+      displayPath: string;
+      numLines?: number;
+      totalLines?: number;
+      content?: string;
+    }
+  // Issue 7 P2 — post-compaction reference to a file that was in the
+  // pre-compact context. No content (by design — compaction drops it);
+  // UI treats these as historical references with muted styling.
+  | { type: 'compact_file_ref'; filename: string; displayPath: string }
   | { type: 'debug_unmapped'; kind: UnmappedKind; key: string; raw?: string };
 
 export interface ChatMessage {

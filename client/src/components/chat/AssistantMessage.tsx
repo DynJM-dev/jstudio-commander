@@ -107,6 +107,24 @@ const renderBlock = (
         </div>
       );
 
+    // Issue 7 — new typed attachment blocks. These shouldn't appear
+    // inside an assistant message in practice (the parser emits them
+    // as separate system-role records), but the switch is exhaustive
+    // against ContentBlock so we cover them here too. No-op rather
+    // than rendering a misplaced chip.
+    case 'inline_reminder':
+    case 'file_attachment':
+    case 'compact_file_ref':
+      return null;
+
+    case 'tool_result':
+      // tool_result blocks on assistant role are a Claude-side anomaly
+      // (they flow through user role in normal JSONLs). If one shows
+      // up inside an assistant message, skip rather than rendering —
+      // the real result is already attached to the preceding tool_use
+      // via buildToolResultMap.
+      return null;
+
     case 'debug_unmapped':
       // Issue 5 — novel Claude Code record shape that lacks a typed
       // renderer. Surfaces via the explicit debug chip, never silently

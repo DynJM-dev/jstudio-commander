@@ -58,11 +58,17 @@ const getToolPath = (name: string, input: Record<string, unknown>): string => {
   return '';
 };
 
+// Issue 7 — Bash output: line-based truncation (spec: 40 lines), not
+// char-count. Errors take red chrome + warning border; success uses the
+// existing green monospace look.
+const BASH_PREVIEW_LINES = 40;
 const RenderBashContent = ({ input, result, isError }: { input: Record<string, unknown>; result?: string; isError?: boolean }) => {
   const command = typeof input.command === 'string' ? input.command : '';
   const [showFull, setShowFull] = useState(false);
   const resultText = result ?? '';
-  const { text: preview, truncated } = truncate(resultText, 1000);
+  const lines = resultText.split('\n');
+  const overflowing = lines.length > BASH_PREVIEW_LINES;
+  const preview = overflowing ? lines.slice(0, BASH_PREVIEW_LINES).join('\n') : resultText;
 
   return (
     <div className="space-y-2">
@@ -75,20 +81,21 @@ const RenderBashContent = ({ input, result, isError }: { input: Record<string, u
       </div>
       {resultText && (
         <div
-          className="rounded px-3 py-2 font-mono-stats text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap break-all"
+          className="rounded px-3 py-2 font-mono-stats text-xs max-h-[400px] overflow-y-auto whitespace-pre-wrap break-all"
           style={{
-            background: 'rgba(0, 0, 0, 0.2)',
+            background: isError ? 'rgba(239, 68, 68, 0.08)' : 'rgba(0, 0, 0, 0.2)',
+            border: isError ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid transparent',
             color: isError ? 'var(--color-error)' : 'rgba(34, 197, 94, 0.8)',
           }}
         >
           {showFull ? resultText : preview}
-          {truncated && !showFull && (
+          {overflowing && !showFull && (
             <button
               onClick={() => setShowFull(true)}
               className="block mt-1 text-xs"
               style={{ color: 'var(--color-accent-light)', fontFamily: M }}
             >
-              Show more...
+              Show more ({lines.length - BASH_PREVIEW_LINES} more lines)...
             </button>
           )}
         </div>
@@ -143,12 +150,19 @@ const RenderEditContent = ({ input, result }: { input: Record<string, unknown>; 
   );
 };
 
-const RenderGenericContent = ({ input, result }: { input: Record<string, unknown>; result?: string }) => {
+// Issue 7 — generic content: 40-line limit (matches Bash). 3000-char
+// cap as a secondary guard so a single catastrophic line doesn't
+// freeze render.
+const GENERIC_PREVIEW_LINES = 40;
+const GENERIC_PREVIEW_CHARS = 3000;
+const RenderGenericContent = ({ input, result, isError }: { input: Record<string, unknown>; result?: string; isError?: boolean }) => {
   const [showFullResult, setShowFullResult] = useState(false);
   const entries = Object.entries(input).filter(([, v]) => v !== undefined && v !== null);
   const resultText = result ?? '';
   const resultLines = resultText.split('\n');
-  const showPreview = resultLines.length > 10 && !showFullResult;
+  const overflowByLines = resultLines.length > GENERIC_PREVIEW_LINES;
+  const overflowByChars = resultText.length > GENERIC_PREVIEW_CHARS;
+  const showPreview = (overflowByLines || overflowByChars) && !showFullResult;
 
   return (
     <div className="space-y-2">
@@ -171,17 +185,27 @@ const RenderGenericContent = ({ input, result }: { input: Record<string, unknown
       )}
       {resultText && (
         <div
-          className="rounded px-3 py-2 font-mono-stats text-xs max-h-[300px] overflow-y-auto whitespace-pre-wrap break-words"
-          style={{ background: 'rgba(0, 0, 0, 0.2)', color: 'var(--color-text-secondary)' }}
+          className="rounded px-3 py-2 font-mono-stats text-xs max-h-[400px] overflow-y-auto whitespace-pre-wrap break-words"
+          style={{
+            background: isError ? 'rgba(239, 68, 68, 0.08)' : 'rgba(0, 0, 0, 0.2)',
+            border: isError ? '1px solid rgba(239, 68, 68, 0.35)' : '1px solid transparent',
+            color: isError ? 'var(--color-error)' : 'var(--color-text-secondary)',
+          }}
         >
-          {showPreview ? resultLines.slice(0, 10).join('\n') : resultText}
+          {showPreview
+            ? (overflowByChars
+                ? resultText.slice(0, GENERIC_PREVIEW_CHARS)
+                : resultLines.slice(0, GENERIC_PREVIEW_LINES).join('\n'))
+            : resultText}
           {showPreview && (
             <button
               onClick={() => setShowFullResult(true)}
               className="block mt-1 text-xs"
               style={{ color: 'var(--color-accent-light)', fontFamily: M }}
             >
-              Show more ({resultLines.length - 10} more lines)...
+              Show more ({overflowByLines
+                ? `${resultLines.length - GENERIC_PREVIEW_LINES} more lines`
+                : `${resultText.length - GENERIC_PREVIEW_CHARS} more chars`})...
             </button>
           )}
         </div>
@@ -191,7 +215,10 @@ const RenderGenericContent = ({ input, result }: { input: Record<string, unknown
 };
 
 export const ToolCallBlock = ({ name, input, result, isError, duration }: ToolCallBlockProps) => {
-  const [expanded, setExpanded] = useState(false);
+  // Issue 7 — auto-expand errors so the user never has to click
+  // through to see a failure. Success cases still start collapsed for
+  // tidy chat density.
+  const [expanded, setExpanded] = useState<boolean>(isError === true);
   const ToolIcon = TOOL_ICONS[name] ?? Wrench;
   const path = getToolPath(name, input);
   const hasResult = result !== undefined;
@@ -215,7 +242,7 @@ export const ToolCallBlock = ({ name, input, result, isError, duration }: ToolCa
       case 'Edit':
         return <RenderEditContent input={input} result={result} />;
       default:
-        return <RenderGenericContent input={input} result={result} />;
+        return <RenderGenericContent input={input} result={result} isError={isError} />;
     }
   };
 

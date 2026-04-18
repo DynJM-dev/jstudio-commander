@@ -71,10 +71,15 @@ export const DROP_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
   'turn_duration',
 ]);
 
-// `attachment.attachment.type` values that are known noise. Known
-// renderer-mapped types (`edited_text_file`, `task_reminder`) are
-// handled by the parser directly; everything else either surfaces as
-// the debug chip or lands on this list.
+// `attachment.attachment.type` values that are known noise.
+//
+// Issue 7 — typed attachment renderers:
+//   - task_reminder          → inline_reminder   (InlineReminderNote)
+//   - file                   → file_attachment   (FileAttachmentChip)
+//   - compact_file_reference → compact_file_ref  (CompactFileRefChip)
+//   - edited_text_file       → system_note       (banner)
+// Everything else either lands on the denylist below or surfaces as
+// the debug chip.
 export const DROP_ATTACHMENT_TYPES: ReadonlySet<string> = new Set([
   // PostToolUse hook telemetry — 80%+ tail of attachment volume.
   'hook_success',

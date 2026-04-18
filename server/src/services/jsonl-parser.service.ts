@@ -344,16 +344,74 @@ export const jsonlParserService = {
       };
     }
 
-    // The <system-reminder> block the pane shows Claude. Surface the
-    // raw reminder text as a system note so the chat transcript holds
-    // the same cue Claude saw when reasoning about the turn.
+    // Issue 7 P1 — <system-reminder> becomes a typed inline_reminder
+    // block. UI styles it as a muted footnote attached to the preceding
+    // user turn rather than a standalone banner.
     if (innerType === 'task_reminder' && typeof inner?.content === 'string' && inner.content.trim().length > 0) {
       return {
         id: record.uuid ?? uuidv4(),
         parentId: record.parentUuid ?? null,
         role: 'system',
         timestamp: record.timestamp ?? new Date().toISOString(),
-        content: [{ type: 'system_note', text: inner.content.trim() }],
+        content: [{ type: 'inline_reminder', text: inner.content.trim() }],
+        isSidechain: false,
+      };
+    }
+
+    // Issue 7 P1 — user-attached file. The shape is nested:
+    // attachment.content.file.{filePath, content, numLines, totalLines}.
+    // Treat any missing field as absent (UI degrades gracefully) so a
+    // minor shape drift doesn't crash into the debug chip for a
+    // high-frequency attachment.
+    if (innerType === 'file') {
+      const ext = record as Record<string, unknown> & {
+        attachment?: {
+          filename?: string;
+          displayPath?: string;
+          content?: { file?: { filePath?: string; content?: string; numLines?: string | number; totalLines?: string | number } };
+        };
+      };
+      const att = ext.attachment;
+      const file = att?.content?.file;
+      const toNum = (v: string | number | undefined): number | undefined => {
+        if (v === undefined) return undefined;
+        const n = typeof v === 'number' ? v : parseInt(v, 10);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      const filename = att?.filename ?? file?.filePath ?? 'unknown';
+      const displayPath = att?.displayPath ?? filename;
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{
+          type: 'file_attachment',
+          filename,
+          displayPath,
+          ...(toNum(file?.numLines) !== undefined ? { numLines: toNum(file?.numLines) } : {}),
+          ...(toNum(file?.totalLines) !== undefined ? { totalLines: toNum(file?.totalLines) } : {}),
+          ...(typeof file?.content === 'string' && file.content.length > 0 ? { content: file.content } : {}),
+        }],
+        isSidechain: false,
+      };
+    }
+
+    // Issue 7 P2 — post-compaction file reference. No content by
+    // design (compaction drops it); UI treats as historical.
+    if (innerType === 'compact_file_reference') {
+      const ext = record as Record<string, unknown> & {
+        attachment?: { filename?: string; displayPath?: string };
+      };
+      const att = ext.attachment;
+      const filename = att?.filename ?? 'unknown';
+      const displayPath = att?.displayPath ?? filename;
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{ type: 'compact_file_ref', filename, displayPath }],
         isSidechain: false,
       };
     }

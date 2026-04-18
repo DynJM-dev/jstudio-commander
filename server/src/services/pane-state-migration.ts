@@ -85,7 +85,7 @@ export const migrateLegacySplitState = (): { outcome: string; migrated: number; 
   // so a future rollback or a new client can't re-hydrate the legacy
   // interpretation.
   if (isPhaseW2(existing)) {
-    const o = existing as Record<string, unknown>;
+    const o = existing as unknown as Record<string, unknown>;
     const hasStrayLegacy = 'left' in o || 'right' in o;
     if (hasStrayLegacy) {
       const clean: PaneState = {

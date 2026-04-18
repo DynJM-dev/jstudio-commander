@@ -38,10 +38,10 @@ describe('jsonlParserService — attachment discriminator (chat/terminal fidelit
     }
   });
 
-  test('task_reminder attachment surfaces as a system_note carrying the reminder text', () => {
-    // Shape observed in real JSONLs: the reminder sits on
-    // attachment.content. Terminal shows this inline to Claude as a
-    // `<system-reminder>` block; chat previously dropped it entirely.
+  test('task_reminder attachment surfaces as an inline_reminder block (Issue 7 P1)', () => {
+    // Issue 7 typed renderer: task_reminder now emits `inline_reminder`
+    // so the UI can style it as a muted footnote attached to the
+    // preceding user turn instead of a separator banner.
     const record = {
       type: 'attachment',
       uuid: 'a2',
@@ -57,9 +57,68 @@ describe('jsonlParserService — attachment discriminator (chat/terminal fidelit
     assert.ok(parsed, 'task_reminder must parse into a ChatMessage');
     assert.equal(parsed!.role, 'system');
     const block = parsed!.content[0]!;
-    assert.equal(block.type, 'system_note');
-    if (block.type === 'system_note') {
+    assert.equal(block.type, 'inline_reminder');
+    if (block.type === 'inline_reminder') {
       assert.match(block.text, /TaskCreate/);
+    }
+  });
+
+  test('file attachment surfaces as file_attachment block with preview metadata (Issue 7 P1)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a6',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'file',
+        filename: '/Users/x/project/STATE.md',
+        displayPath: 'STATE.md',
+        content: {
+          type: 'file',
+          file: {
+            filePath: '/Users/x/project/STATE.md',
+            content: '# State\n\nline1\nline2\n',
+            numLines: '4',
+            startLine: '1',
+            totalLines: '120',
+          },
+        },
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'file must parse into a ChatMessage');
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'file_attachment');
+    if (block.type === 'file_attachment') {
+      assert.equal(block.displayPath, 'STATE.md');
+      assert.equal(block.filename, '/Users/x/project/STATE.md');
+      // numLines/totalLines come through as numbers even when JSONL
+      // stores them as strings (they're rendered in a counter).
+      assert.equal(block.numLines, 4);
+      assert.equal(block.totalLines, 120);
+      assert.match(block.content ?? '', /# State/);
+    }
+  });
+
+  test('compact_file_reference surfaces as compact_file_ref block (no content by design, Issue 7 P2)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a7',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'compact_file_reference',
+        filename: '/Users/x/project/pre-compact.tsx',
+        displayPath: 'pre-compact.tsx',
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'compact_file_reference must parse into a ChatMessage');
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'compact_file_ref');
+    if (block.type === 'compact_file_ref') {
+      assert.equal(block.displayPath, 'pre-compact.tsx');
+      assert.equal(block.filename, '/Users/x/project/pre-compact.tsx');
     }
   });
 

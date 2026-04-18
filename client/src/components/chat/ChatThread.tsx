@@ -15,6 +15,9 @@ import {
 import { SystemEventChip } from './SystemEventChip';
 import { UnrecognizedProtocolCard } from './UnrecognizedProtocolCard';
 import { UnmappedEventChip } from './UnmappedEventChip';
+import { InlineReminderNote } from './InlineReminderNote';
+import { FileAttachmentChip } from './FileAttachmentChip';
+import { CompactFileRefChip } from './CompactFileRefChip';
 import { LiveActivityRow } from './LiveActivityRow';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
@@ -103,6 +106,34 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
           raw={firstBlock.raw}
         />
       </div>
+    );
+  }
+
+  // Issue 7 — typed attachment renderers. These were unmapped / surfaced
+  // as a generic banner pre-Issue 7; now they render as tight inline
+  // affordances attached to the preceding turn. Zero-gap styling in the
+  // component selves; the group wrapper here just avoids the separator-
+  // stripe chrome the fallback below would apply.
+  if (firstBlock?.type === 'inline_reminder') {
+    return <InlineReminderNote text={firstBlock.text} />;
+  }
+  if (firstBlock?.type === 'file_attachment') {
+    return (
+      <FileAttachmentChip
+        filename={firstBlock.filename}
+        displayPath={firstBlock.displayPath}
+        {...(firstBlock.numLines !== undefined ? { numLines: firstBlock.numLines } : {})}
+        {...(firstBlock.totalLines !== undefined ? { totalLines: firstBlock.totalLines } : {})}
+        {...(firstBlock.content !== undefined ? { content: firstBlock.content } : {})}
+      />
+    );
+  }
+  if (firstBlock?.type === 'compact_file_ref') {
+    return (
+      <CompactFileRefChip
+        filename={firstBlock.filename}
+        displayPath={firstBlock.displayPath}
+      />
     );
   }
 
