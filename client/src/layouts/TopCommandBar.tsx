@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Wifi, WifiOff, ChevronDown, MoreHorizontal, Bot, Pin, PinOff } from 'lucide-react';
-import { usePaneState } from '../hooks/usePaneState';
+import { Wifi, WifiOff, ChevronDown, MoreHorizontal, Bot } from 'lucide-react';
 import type { Session } from '@commander/shared';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { TunnelBadge } from '../components/shared/TunnelBadge';
@@ -26,10 +25,9 @@ export const TopCommandBar = () => {
   // useSessions/useAnalytics elsewhere in the tree.
   const { sessions } = useSessions();
   const { today: stats } = useAnalytics();
-  // Phase W — pane pin actions. Each SessionTab renders a pin toggle
-  // that writes global pane-state via usePaneState. Disabled when two
-  // OTHER sessions are already pinned (max 2 enforced by the hook).
-  const [, paneActions] = usePaneState();
+  // Phase W.2 — pin icon removed from tabs. Split-view is opened via
+  // the dedicated SplitViewButton in the chat header (inside the
+  // focused pane), not per-tab. Tabs are simple name + status again.
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
@@ -138,68 +136,31 @@ export const TopCommandBar = () => {
       isTeammateActive ? 'session-tab--teammate-active' : '',
       isWaiting ? 'waiting-tab-alarm' : '',
     ].filter(Boolean).join(' ');
-    // Phase W pin state for THIS session.
-    const pinned = paneActions.isPinned(s.id);
-    const canToggle = paneActions.canPin(s.id);
-    const pinTitle = pinned
-      ? 'Unpin from pane view'
-      : canToggle
-        ? 'Pin to pane view'
-        : 'Unpin a session first (max 2)';
     return (
-      <div className={`${cls} flex items-center gap-1`} data-session-tab-id={s.id}>
-        <button
-          onClick={() => goToSession(s.id)}
-          className="flex items-center gap-1.5 min-w-0 flex-1"
-          aria-current={isActive ? 'page' : undefined}
-          style={{ background: 'transparent', border: 0, padding: 0 }}
-        >
-          <StatusBadge status={s.status} size="sm" />
-          <span className="truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
-          {teammateCount > 0 && (
-            <span
-              className="flex items-center gap-0.5 shrink-0"
-              style={{
-                color: isActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
-              }}
-              title={`${teammateCount} active teammate${teammateCount === 1 ? '' : 's'}`}
-            >
-              <Bot size={13} />
-              <span className="text-xs font-semibold">{teammateCount}</span>
-            </span>
-          )}
-          {isActive && (
-            <span
-              className="font-mono-stats hidden xl:inline-block"
-              style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}
-            >
-              {s.model?.replace('claude-', '')}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!canToggle) return;
-            if (pinned) paneActions.unpin(s.id);
-            else paneActions.pin(s.id);
-          }}
-          title={pinTitle}
-          aria-label={pinTitle}
-          aria-pressed={pinned}
-          disabled={!canToggle}
-          className="p-1 rounded transition-colors"
-          style={{
-            color: pinned ? 'var(--color-accent-light)' : 'var(--color-text-tertiary)',
-            opacity: canToggle ? 1 : 0.35,
-            cursor: canToggle ? 'pointer' : 'not-allowed',
-          }}
-          onMouseEnter={(e) => { if (canToggle) e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-        >
-          {pinned ? <PinOff size={12} /> : <Pin size={12} />}
-        </button>
-      </div>
+      <button onClick={() => goToSession(s.id)} className={cls} aria-current={isActive ? 'page' : undefined}>
+        <StatusBadge status={s.status} size="sm" />
+        <span className="truncate max-w-[130px]">{displayNames.get(s.id) ?? s.name}</span>
+        {teammateCount > 0 && (
+          <span
+            className="flex items-center gap-0.5 shrink-0"
+            style={{
+              color: isActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
+            }}
+            title={`${teammateCount} active teammate${teammateCount === 1 ? '' : 's'}`}
+          >
+            <Bot size={13} />
+            <span className="text-xs font-semibold">{teammateCount}</span>
+          </span>
+        )}
+        {isActive && (
+          <span
+            className="font-mono-stats hidden xl:inline-block"
+            style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}
+          >
+            {s.model?.replace('claude-', '')}
+          </span>
+        )}
+      </button>
     );
   };
 

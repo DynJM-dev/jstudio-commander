@@ -1,49 +1,111 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { GripVertical } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { GripVertical, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { TerminalDrawer } from '../components/chat/TerminalDrawer';
+import { SplitViewButton } from '../components/chat/SplitViewButton';
 import { usePaneState } from '../hooks/usePaneState';
 import { useSessionUi } from '../hooks/useSessionUi';
-import { MIN_PANE_WIDTH_PX } from '@commander/shared';
+import { useSessions } from '../hooks/useSessions';
+import { useWebSocket } from '../hooks/useWebSocket';
+import { MIN_PANE_WIDTH_PX, type Session } from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
-// Phase W — the generic pane container. Replaces SplitChatLayout's
-// PM/Coder special-case with a simple visual pin model driven by the
-// global `pane-state` preference. Max 2 panes ever; each pane is a
-// self-contained ChatPage with its own terminal drawer. Zero cross-
-// pane state sharing.
+// Phase W.2 — generic pane container. Display rules:
+//   - URL `/chat/:sessionId` is the source of truth for the LEFT pane.
+//   - `paneState.rightSessionId` adds a right pane if set.
+//   - Sessions-page click → `/chat/:id` always opens SINGLE pane.
+//     The url-changed dispatch collapses right if it matches.
+//   - Session termination cascade: lives in usePaneState's WS listener.
+//     When the terminated session was the LEFT pane (URL), the router
+//     navigates to /sessions; toast fires here.
 //
-// Display precedence (documented fallback for team-lead checkpoint):
-//   1. pane-state.left && pane-state.right → 2-pane layout.
-//   2. pane-state.left only → 1-pane on left's session.
-//   3. pane-state empty → fall back to URL :sessionId as a transient
-//      single pane. This keeps `/chat/:id` deep links working when
-//      the user has unpinned everything — no awkward blank view.
-//
-// URL semantics: the URL is a navigation target, not a pin trigger.
-// Pin actions are explicit via the sidebar icon. This matches design
-// call (a) confirmed at the Phase W checkpoint.
+// Close buttons per pane:
+//   - Right pane X → closeRight() only (session stays running).
+//   - Left pane X → navigate to /sessions; if right was set, a
+//     follow-up url-changed fires which collapses right (since the
+//     new URL `/sessions` has no :sessionId → newLeft=null, right
+//     stays intact; user reaches it by clicking in sessions list).
+//     NB: per spec #5, if left X when 2-pane, right promotes to
+//     sole pane + URL updates to it. Implemented explicitly below.
+
+interface PaneHeaderProps {
+  sessionName: string;
+  sessionType?: string;
+  status?: string;
+  showClose: boolean;
+  showSplitView: boolean;
+  onClose?: () => void;
+  splitCandidates?: Session[];
+  splitEnabled?: boolean;
+  onSplitSelect?: (sessionId: string) => void;
+}
+
+const PaneHeader = ({
+  sessionName,
+  sessionType,
+  showClose,
+  showSplitView,
+  onClose,
+  splitCandidates = [],
+  splitEnabled = true,
+  onSplitSelect,
+}: PaneHeaderProps) => (
+  <div
+    className="shrink-0 flex items-center gap-2 px-3 py-1.5"
+    style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', fontFamily: M }}
+  >
+    <span className="text-xs font-semibold truncate" style={{ color: 'var(--color-text-secondary)' }}>
+      {sessionName}
+    </span>
+    {sessionType && (
+      <span
+        className="text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0"
+        style={{ color: 'var(--color-text-tertiary)', background: 'rgba(255,255,255,0.05)' }}
+      >
+        {sessionType}
+      </span>
+    )}
+    <span className="flex-1" />
+    {showSplitView && onSplitSelect && (
+      <SplitViewButton
+        candidates={splitCandidates}
+        enabled={splitEnabled}
+        onSelect={onSplitSelect}
+      />
+    )}
+    {showClose && onClose && (
+      <button
+        onClick={onClose}
+        title="Close pane (session keeps running)"
+        aria-label="Close pane"
+        className="p-1 rounded transition-colors"
+        style={{ color: 'var(--color-text-tertiary)' }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <X size={13} />
+      </button>
+    )}
+  </div>
+);
 
 interface PaneProps {
   sessionId: string;
   isFocused: boolean;
   onFocus: () => void;
-  // When false, this pane is the only one visible and doesn't need a
-  // focus border (nothing to distinguish it from). The click-to-focus
-  // handler still fires but never paints anything.
   showFocusBorder: boolean;
+  sessionMeta: Session | null;
+  header: React.ReactNode;
 }
 
-const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder }: PaneProps) => {
+const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PaneProps) => {
   const [sessionUi, ui] = useSessionUi(sessionId);
   const paneRef = useRef<HTMLDivElement>(null);
   const [paneHeight, setPaneHeight] = useState<number>(0);
 
-  // Track the pane's content height so the drawer's clamp math can
-  // use a live number. Initial read on mount + ResizeObserver for
-  // subsequent divider drags / window resizes.
   useEffect(() => {
     const el = paneRef.current;
     if (!el) return;
@@ -54,20 +116,13 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder }: PaneProps) => 
     return () => ro.disconnect();
   }, []);
 
-  // Cmd+J / Ctrl+J toggles THIS pane's drawer when the pane is
-  // focused. Listener lives on the Pane (not the drawer) so it stays
-  // mounted whether the drawer is open or closed — otherwise the
-  // first Cmd+J couldn't OPEN a closed drawer because its listener
-  // wouldn't exist yet.
+  // Cmd+J / Ctrl+J — toggles THIS pane's drawer when focused.
+  // Skipped when keydown target is an input/textarea (search boxes).
   useEffect(() => {
     if (!isFocused || paneHeight <= 0) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'j' && e.key !== 'J') return;
       if (!(e.metaKey || e.ctrlKey)) return;
-      // Ignore when a text input owns focus — users routinely Cmd+J
-      // in search boxes etc. The pane's focus marker is data-pane-
-      // session-id; if the keydown target is inside a textarea or
-      // input, skip.
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
       e.preventDefault();
@@ -95,8 +150,7 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder }: PaneProps) => 
       }}
       data-pane-session-id={sessionId}
     >
-      {/* Chat content area. Shrinks when the drawer is open so the
-          terminal doesn't overlap the input bar. */}
+      {header}
       <div
         className="flex-1 min-h-0 overflow-hidden"
         style={{
@@ -107,9 +161,6 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder }: PaneProps) => 
         <ChatPage sessionIdOverride={sessionId} />
       </div>
 
-      {/* Per-pane terminal drawer. Mounts only when the pane has
-          measured itself — prevents the initial drawer-height calc
-          from clamping against paneHeight=0. */}
       {paneHeight > 0 && (
         <TerminalDrawer
           sessionId={sessionId}
@@ -123,19 +174,122 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder }: PaneProps) => 
   );
 };
 
+// Simple inline toast surface — used when termination cascade fires.
+// Lives here rather than a shared toast system because W.2 only needs
+// one kind of toast and the existing app doesn't have a toast layer
+// to reuse. A real toast stack can replace this without touching the
+// cascade logic.
+const Toast = ({ message, onDismiss }: { message: string; onDismiss: () => void }) => {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(t);
+  }, [onDismiss]);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.18 }}
+      role="status"
+      className="fixed bottom-5 right-5 z-50 px-3 py-2 rounded-lg text-xs"
+      style={{
+        fontFamily: M,
+        color: 'var(--color-text-primary)',
+        background: 'rgba(12,16,22,0.96)',
+        border: '1px solid rgba(14,124,123,0.35)',
+        backdropFilter: 'blur(24px)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+        maxWidth: 360,
+      }}
+    >
+      {message}
+    </motion.div>
+  );
+};
+
 export const PaneContainer = () => {
   const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
+  const navigate = useNavigate();
   const [paneState, paneActions] = usePaneState();
+  const { sessions } = useSessions();
+  const { lastEvent } = useWebSocket();
 
-  // Display precedence — see header comment for the fallback rule.
-  const leftId = paneState.left ?? urlSessionId ?? null;
-  const rightId = paneState.left ? paneState.right : null;
-  const isDual = Boolean(leftId && rightId);
+  const leftId = urlSessionId ?? null;
+  const rightId = paneState.rightSessionId;
+  // Never paint same session on both sides — reducer normalizes, but
+  // the first render could see a stale pair if the user navigated
+  // into a session that happens to be the current right. Filter here
+  // as a belt-and-suspenders.
+  const effectiveRightId = rightId && rightId !== leftId ? rightId : null;
+  const isDual = Boolean(leftId && effectiveRightId);
 
   const focusedId = paneState.focusedSessionId ?? leftId;
 
-  // Divider drag — reuse the same clientX-delta pattern the old split
-  // used. Clamped so neither pane can shrink below MIN_PANE_WIDTH_PX.
+  const leftMeta = useMemo(
+    () => sessions.find((s) => s.id === leftId) ?? null,
+    [sessions, leftId],
+  );
+  const rightMeta = useMemo(
+    () => sessions.find((s) => s.id === effectiveRightId) ?? null,
+    [sessions, effectiveRightId],
+  );
+
+  // Running-session candidates for the Split View dropdown: anything
+  // not stopped, not the left, not the currently-open right. Exclude
+  // teammate rows without a parent from surfacing twice — but keep
+  // role-agnostic: every non-stopped session is pickable.
+  const splitCandidates = useMemo(
+    () => sessions.filter(
+      (s) => s.status !== 'stopped'
+        && s.id !== leftId
+        && s.id !== effectiveRightId,
+    ),
+    [sessions, leftId, effectiveRightId],
+  );
+
+  // URL changes → tell the reducer so it can collapse right if it
+  // now matches the new URL, normalize focus. Fires on every mount +
+  // every URL param change.
+  useEffect(() => {
+    paneActions.onUrlChanged(leftId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftId]);
+
+  // Termination-cascade toast + left-pane navigation. When the URL-
+  // side session gets terminated, pane-state can't help (URL isn't
+  // its concern); we navigate away so the user never sits on a dead
+  // `/chat/:id`.
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lastEvent) return;
+    const e = lastEvent as { type?: string; session?: { id?: string; status?: string; name?: string }; sessionId?: string };
+    const goneId = e.type === 'session:deleted' ? e.sessionId
+                  : (e.type === 'session:updated' && e.session?.status === 'stopped') ? e.session.id
+                  : null;
+    if (!goneId) return;
+    // A session went away. Compose toast + route actions.
+    if (goneId === leftId) {
+      const name = leftMeta?.name ?? 'Session';
+      setToast(`${name} terminated — returning to Sessions`);
+      // Before navigating, if the right pane was set, promote it to
+      // left via navigation (better UX than dumping the user to the
+      // list when they had another session visible). Spec #5: left X
+      // promotes right; termination-cascade of left gets the same.
+      if (effectiveRightId) {
+        navigate(`/chat/${effectiveRightId}`, { replace: true });
+        paneActions.closeRight();
+      } else {
+        navigate('/sessions', { replace: true });
+      }
+      return;
+    }
+    if (goneId === effectiveRightId) {
+      const name = rightMeta?.name ?? 'Session';
+      setToast(`${name} terminated — closed right pane`);
+    }
+  }, [lastEvent, leftId, effectiveRightId, leftMeta, rightMeta, navigate, paneActions]);
+
+  // Divider drag.
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
@@ -155,7 +309,6 @@ export const PaneContainer = () => {
       const x = e.clientX - rect.left;
       const total = rect.width;
       if (total <= 0) return;
-      // Clamp both ends so neither pane drops below the min width.
       const minRatio = MIN_PANE_WIDTH_PX / total;
       const maxRatio = 1 - minRatio;
       let ratio = x / total;
@@ -177,18 +330,26 @@ export const PaneContainer = () => {
     };
   }, [paneActions]);
 
-  // Cmd+J / Ctrl+J handling lives on each Pane (scoped to isFocused),
-  // not here — the focused pane owns its own listener so it can call
-  // useSessionUi.toggle with live paneHeight. Centralizing the
-  // keydown here would force us to dispatch a CustomEvent across the
-  // tree, which only works when the target drawer is already
-  // mounted. Keeping it on Pane means "closed drawer" also responds
-  // to Cmd+J (the opening press).
+  // Close handlers (per-pane X button).
+  const onLeftClose = useCallback(() => {
+    // Spec #5: left X → right promotes to left; URL updates.
+    if (effectiveRightId) {
+      const promotedTo = effectiveRightId;
+      paneActions.closeRight();
+      navigate(`/chat/${promotedTo}`, { replace: true });
+    } else {
+      navigate('/sessions', { replace: true });
+    }
+  }, [effectiveRightId, paneActions, navigate]);
+
+  const onRightClose = useCallback(() => paneActions.closeRight(), [paneActions]);
+
+  const onSplitSelect = useCallback(
+    (sessionId: string) => paneActions.openRight(sessionId, leftId),
+    [paneActions, leftId],
+  );
 
   if (!leftId) {
-    // No session at all — pane-state empty AND URL has no :sessionId
-    // (shouldn't happen under the current routes, but render a graceful
-    // empty state rather than crash).
     return (
       <div className="h-full flex items-center justify-center" style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}>
         <p className="text-sm">No session selected. Pick one from the sidebar.</p>
@@ -196,74 +357,122 @@ export const PaneContainer = () => {
     );
   }
 
-  // P0 fix: parent `<main>` in DashboardLayout is NOT `flex flex-col`,
-  // it's a block element with `flex-1 overflow-hidden`. So `flex-1` on
-  // our container does NOTHING (no flex parent = no flex-basis). The
-  // container must use `h-full` to inherit main's computed height.
-  // Each column mirrors the pre-W SplitChatLayout pattern
-  // (`h-full min-h-0 overflow-hidden`) so the flex-col inside Pane
-  // can do its min-h-0 trick and the ChatPage scroll region can grow.
+  const typeLabel = (s: Session | null) =>
+    s ? ({ pm: 'PM', coder: 'Coder', raw: 'Raw' } as const)[s.sessionType] : undefined;
+
+  const toastEl = (
+    <AnimatePresence>
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
+    </AnimatePresence>
+  );
 
   if (!isDual) {
+    const singleHeader = (
+      <PaneHeader
+        sessionName={leftMeta?.name ?? 'Session'}
+        sessionType={typeLabel(leftMeta)}
+        status={leftMeta?.status}
+        showClose={false}
+        showSplitView={true}
+        splitCandidates={splitCandidates}
+        splitEnabled={true}
+        onSplitSelect={onSplitSelect}
+      />
+    );
     return (
-      <div className="h-full min-h-0 overflow-hidden">
-        <Pane
-          sessionId={leftId}
-          isFocused={true}
-          onFocus={() => paneActions.focus(leftId)}
-          showFocusBorder={false}
-        />
-      </div>
+      <>
+        <div className="h-full min-h-0 overflow-hidden">
+          <Pane
+            sessionId={leftId}
+            isFocused={true}
+            onFocus={() => paneActions.focus(leftId, leftId)}
+            showFocusBorder={false}
+            sessionMeta={leftMeta}
+            header={singleHeader}
+          />
+        </div>
+        {toastEl}
+      </>
     );
   }
 
   const leftRatio = paneState.dividerRatio;
+  const leftHeader = (
+    <PaneHeader
+      sessionName={leftMeta?.name ?? 'Session'}
+      sessionType={typeLabel(leftMeta)}
+      showClose={true}
+      showSplitView={false}
+      onClose={onLeftClose}
+    />
+  );
+  const rightHeader = (
+    <PaneHeader
+      sessionName={rightMeta?.name ?? 'Session'}
+      sessionType={typeLabel(rightMeta)}
+      showClose={true}
+      // In dual mode, split-view button is disabled (two already) but
+      // still rendered on the FOCUSED pane so the user sees the cap.
+      // Simpler: keep it on the right pane only with enabled=false.
+      showSplitView={true}
+      splitEnabled={false}
+      splitCandidates={[]}
+      onSplitSelect={onSplitSelect}
+      onClose={onRightClose}
+    />
+  );
 
   return (
-    <div ref={containerRef} className="flex h-full w-full min-h-0">
-      <div
-        style={{ width: `${leftRatio * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
-        className="h-full min-h-0 overflow-hidden"
-      >
-        <Pane
-          sessionId={leftId!}
-          isFocused={focusedId === leftId}
-          onFocus={() => paneActions.focus(leftId!)}
-          showFocusBorder={true}
-        />
-      </div>
+    <>
+      <div ref={containerRef} className="flex h-full w-full min-h-0">
+        <div
+          style={{ width: `${leftRatio * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
+          className="h-full min-h-0 overflow-hidden"
+        >
+          <Pane
+            sessionId={leftId}
+            isFocused={focusedId === leftId}
+            onFocus={() => paneActions.focus(leftId, leftId)}
+            showFocusBorder={true}
+            sessionMeta={leftMeta}
+            header={leftHeader}
+          />
+        </div>
 
-      {/* Divider */}
-      <div
-        onMouseDown={onDividerMouseDown}
-        className="shrink-0 flex items-center justify-center cursor-col-resize group"
-        style={{
-          width: 6,
-          background: 'rgba(255, 255, 255, 0.04)',
-          borderLeft: '1px solid rgba(255, 255, 255, 0.06)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.06)',
-        }}
-        role="separator"
-        aria-orientation="vertical"
-      >
-        <GripVertical
-          size={12}
-          style={{ color: 'var(--color-text-tertiary)', opacity: 0.5 }}
-          className="group-hover:opacity-100 transition-opacity"
-        />
-      </div>
+        <div
+          onMouseDown={onDividerMouseDown}
+          className="shrink-0 flex items-center justify-center cursor-col-resize group"
+          style={{
+            width: 6,
+            background: 'rgba(255,255,255,0.04)',
+            borderLeft: '1px solid rgba(255,255,255,0.06)',
+            borderRight: '1px solid rgba(255,255,255,0.06)',
+          }}
+          role="separator"
+          aria-orientation="vertical"
+        >
+          <GripVertical
+            size={12}
+            style={{ color: 'var(--color-text-tertiary)', opacity: 0.5 }}
+            className="group-hover:opacity-100 transition-opacity"
+          />
+        </div>
 
-      <div
-        style={{ width: `${(1 - leftRatio) * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
-        className="h-full min-h-0 overflow-hidden"
-      >
-        <Pane
-          sessionId={rightId!}
-          isFocused={focusedId === rightId}
-          onFocus={() => paneActions.focus(rightId!)}
-          showFocusBorder={true}
-        />
+        <div
+          style={{ width: `${(1 - leftRatio) * 100}%`, minWidth: MIN_PANE_WIDTH_PX }}
+          className="h-full min-h-0 overflow-hidden"
+        >
+          <Pane
+            sessionId={effectiveRightId!}
+            isFocused={focusedId === effectiveRightId}
+            onFocus={() => paneActions.focus(effectiveRightId!, leftId)}
+            showFocusBorder={true}
+            sessionMeta={rightMeta}
+            header={rightHeader}
+          />
+        </div>
       </div>
-    </div>
+      {toastEl}
+    </>
   );
 };

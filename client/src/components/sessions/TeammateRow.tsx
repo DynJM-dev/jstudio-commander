@@ -1,11 +1,8 @@
 import type { Session } from '@commander/shared';
 import { motion } from 'framer-motion';
 import { StatusBadge } from '../shared/StatusBadge';
-import { api } from '../../services/api';
 
 const M = 'Montserrat, sans-serif';
-
-const DEFAULT_PERCENT = 55;
 
 interface TeammateRowProps {
   teammate: Session;
@@ -18,16 +15,10 @@ const shortenPath = (path: string | null): string => {
   return path.replace(/^\/Users\/[^/]+/, '~');
 };
 
-// Prime the split-pane state so clicking a teammate row opens directly to
-// that teammate instead of whichever was previously saved. Writes to the
-// server-backed preference — SplitChatLayout's usePreference hook will
-// pick it up on mount via its in-memory cache → async hydration path.
-const primeSplitState = (parentId: string, teammate: Session): void => {
-  const key = `split-state.${parentId}`;
-  void api.put(`/preferences/${encodeURIComponent(key)}`, {
-    value: { activeTabId: teammate.id, minimized: false, percent: DEFAULT_PERCENT },
-  }).catch(() => { /* banner surfaces server downtime */ });
-};
+// Phase W.2 — split-state preference priming removed. Clicking a
+// teammate row navigates to its /chat/:id single-pane view. If the
+// user wants two sessions side-by-side, they use the Split View
+// button on the chat header.
 
 export const TeammateRow = ({ teammate, parentId, onOpen }: TeammateRowProps) => {
   const isWaiting = teammate.status === 'waiting';
@@ -40,7 +31,7 @@ export const TeammateRow = ({ teammate, parentId, onOpen }: TeammateRowProps) =>
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -8 }}
       transition={{ duration: 0.2, ease: 'easeOut' as const }}
-      onClick={() => { primeSplitState(parentId, teammate); onOpen(teammate); }}
+      onClick={() => { onOpen(teammate); }}
       className={`group flex items-center gap-2 w-full text-left rounded-md px-2 py-1.5 transition-colors ${isWaiting ? 'waiting-glow' : ''}`}
       style={{
         fontFamily: M,

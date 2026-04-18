@@ -4,26 +4,40 @@ import {
   type PaneState,
 } from '@commander/shared';
 
-// Phase W — pure reducer that encodes the invariants the UI promises:
+// Phase W.2 — pure reducer for pane state. URL `/chat/:id` owns the
+// left pane; this reducer mutates only the right pane + divider +
+// focus. Invariants:
 //
-//   1. `right` is only non-null when `left` is non-null. Unpinning
-//      `left` while `right` exists promotes right → left (no orphan
-//      right pane).
-//   2. `focusedSessionId` must equal `left` or `right` (or null when
-//      both are null).
-//   3. `dividerRatio` ∈ [MIN_DIVIDER_RATIO, MAX_DIVIDER_RATIO].
-//   4. Pin is rejected (no-op) when both slots occupied AND the
-//      session isn't already pinned — prevents exceeding max 2.
+//   1. `rightSessionId` never equals the URL left (open-right is a
+//      no-op when sessionId === currentLeft).
+//   2. `focusedSessionId` ∈ {currentLeft, rightSessionId, null}.
+//      Focus on an unknown id → silently ignored.
+//   3. `dividerRatio` ∈ [MIN, MAX]. NaN falls back to 0.5.
+//   4. `closeLeft` is NOT encoded here — closing the left pane is a
+//      navigation concern (URL changes). The `url-changed` action
+//      is how the router tells us about it.
 //
-// Extracted from the React hook so the invariants can be unit-tested
-// without a DOM / usePreference stub. Every action returns a new
-// PaneState; callers compare-by-reference to decide whether to
-// persist.
+// All handlers return the SAME reference on no-op so callers can
+// cheap-compare to skip the persist round-trip.
 
 export type PaneAction =
-  | { type: 'pin'; sessionId: string }
-  | { type: 'unpin'; sessionId: string }
-  | { type: 'focus'; sessionId: string }
+  // Open a session as the right pane. `currentLeft` is the URL's
+  // active session so we can reject open-right-equals-left. When
+  // `currentLeft` is null the open still proceeds — right-without-
+  // left is legal transiently between navigations.
+  | { type: 'open-right'; sessionId: string; currentLeft: string | null }
+  | { type: 'close-right' }
+  // Called when the URL left changes (user navigated away). If the
+  // new URL matches the current right, collapse to single-pane
+  // (can't have same session on both sides). Normalize stale focus.
+  | { type: 'url-changed'; newLeft: string | null }
+  // Called when any session is terminated / deleted. Clears right
+  // and/or focus if they pointed at the gone session. Navigating
+  // away from a terminated left is the router's job.
+  | { type: 'session-gone'; sessionId: string }
+  // Focus a pane. `currentLeft` passed so the reducer validates
+  // focusedSessionId ∈ {currentLeft, rightSessionId}.
+  | { type: 'focus'; sessionId: string; currentLeft: string | null }
   | { type: 'set-divider'; ratio: number };
 
 const clampRatio = (r: number): number => {
@@ -35,38 +49,50 @@ const clampRatio = (r: number): number => {
 
 export const paneStateReducer = (state: PaneState, action: PaneAction): PaneState => {
   switch (action.type) {
-    case 'pin': {
-      const { sessionId } = action;
-      if (state.left === sessionId || state.right === sessionId) return state;
-      if (state.left === null) {
-        return { ...state, left: sessionId, focusedSessionId: sessionId };
-      }
-      if (state.right === null) {
-        return { ...state, right: sessionId, focusedSessionId: sessionId };
-      }
-      return state; // both slots occupied
+    case 'open-right': {
+      const { sessionId, currentLeft } = action;
+      if (sessionId === currentLeft) return state;
+      if (state.rightSessionId === sessionId) return state;
+      return { ...state, rightSessionId: sessionId, focusedSessionId: sessionId };
     }
-    case 'unpin': {
+    case 'close-right': {
+      if (state.rightSessionId === null) return state;
+      const nextFocus = state.focusedSessionId === state.rightSessionId ? null : state.focusedSessionId;
+      return { ...state, rightSessionId: null, focusedSessionId: nextFocus };
+    }
+    case 'url-changed': {
+      const { newLeft } = action;
+      let changed = false;
+      let rightSessionId = state.rightSessionId;
+      let focusedSessionId = state.focusedSessionId;
+      if (rightSessionId !== null && rightSessionId === newLeft) {
+        rightSessionId = null;
+        changed = true;
+      }
+      if (focusedSessionId !== null && focusedSessionId !== newLeft && focusedSessionId !== rightSessionId) {
+        focusedSessionId = null;
+        changed = true;
+      }
+      return changed ? { ...state, rightSessionId, focusedSessionId } : state;
+    }
+    case 'session-gone': {
       const { sessionId } = action;
-      if (state.right === sessionId) {
-        const nextFocus = state.focusedSessionId === sessionId ? state.left : state.focusedSessionId;
-        return { ...state, right: null, focusedSessionId: nextFocus };
+      let changed = false;
+      let rightSessionId = state.rightSessionId;
+      let focusedSessionId = state.focusedSessionId;
+      if (rightSessionId === sessionId) {
+        rightSessionId = null;
+        changed = true;
       }
-      if (state.left === sessionId) {
-        if (state.right) {
-          // Promote right → left so the {left:null, right:X} state
-          // never exists. Divider ratio survives; focus falls to the
-          // remaining pane when the unpinned one was focused.
-          const nextFocus = state.focusedSessionId === sessionId ? state.right : state.focusedSessionId;
-          return { left: state.right, right: null, dividerRatio: state.dividerRatio, focusedSessionId: nextFocus };
-        }
-        return { ...state, left: null, focusedSessionId: null };
+      if (focusedSessionId === sessionId) {
+        focusedSessionId = null;
+        changed = true;
       }
-      return state;
+      return changed ? { ...state, rightSessionId, focusedSessionId } : state;
     }
     case 'focus': {
-      const { sessionId } = action;
-      if (state.left !== sessionId && state.right !== sessionId) return state;
+      const { sessionId, currentLeft } = action;
+      if (sessionId !== currentLeft && sessionId !== state.rightSessionId) return state;
       if (state.focusedSessionId === sessionId) return state;
       return { ...state, focusedSessionId: sessionId };
     }

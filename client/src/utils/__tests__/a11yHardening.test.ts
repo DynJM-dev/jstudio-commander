@@ -129,15 +129,8 @@ describe('P.2 C4 — touch targets bumped to ≥ 44×44', () => {
   });
 });
 
-describe('P.2 H2 — tabs wrap instead of horizontal scroll', () => {
-  // TerminalTabs was removed in Phase P.3 H4; its flex-wrap contract
-  // no longer applies. The SplitChatLayout teammate tab row is the
-  // remaining surface the rule governs.
-
-  test('SplitChatLayout teammate tab row uses flex-wrap', () => {
-    const src = read('src/pages/SplitChatLayout.tsx');
-    // The specific teammate-tabs container — identified by its gap-0.5
-    // wrapper — should carry flex-wrap now.
-    assert.match(src, /flex items-center gap-0\.5 flex-1 min-w-0 flex-wrap/);
-  });
-});
+// P.2 H2 — tabs-wrap contract retired in Phase W.2. SplitChatLayout
+// was deleted (PaneContainer is role-agnostic and doesn't have an
+// inner teammate tab row). TerminalTabs was already gone in P.3 H4.
+// If a new horizontal tab row appears, re-add this check pointing at
+// that new component.

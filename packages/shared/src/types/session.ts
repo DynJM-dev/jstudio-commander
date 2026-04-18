@@ -1,10 +1,22 @@
 export type SessionStatus = 'idle' | 'working' | 'waiting' | 'stopped' | 'error';
 
-// Commander effort matrix per ~/.claude/skills/jstudio-pm/SKILL.md.
-// Legacy rows ('low', 'medium') are healed to 'xhigh' on boot —
-// any fresh write from Commander must land in this union.
-export const EFFORT_LEVELS = ['high', 'xhigh', 'max'] as const;
+// Commander effort matrix. Phase M1 reintroduced 'medium' as a first-
+// class value for `coder` and `raw` session types so token burn drops
+// from the prior blanket xhigh. Legacy 'low' rows are healed to 'xhigh'
+// on boot; 'medium' is now valid and must NOT be healed.
+export const EFFORT_LEVELS = ['medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = typeof EFFORT_LEVELS[number];
+
+// Session-type → default `/effort` level Commander injects post-boot.
+// One source of truth for the spawn path and any caller that wants to
+// preview the effort a new session will start at.
+export type SessionType = 'pm' | 'coder' | 'raw';
+export const SESSION_TYPES = ['pm', 'coder', 'raw'] as const satisfies readonly SessionType[];
+export const SESSION_TYPE_EFFORT_DEFAULTS: Record<SessionType, EffortLevel> = {
+  pm: 'high',
+  coder: 'medium',
+  raw: 'medium',
+};
 
 // Live pane-activity line, parsed from the Claude Code footer. Example:
 //   "✽ Ruminating… (1m 49s · ↓ 430 tokens · thinking with xhigh effort)"
@@ -47,10 +59,11 @@ export interface Session {
   effortLevel: EffortLevel;
   parentSessionId: string | null;
   teamName: string | null;
-  // 'pm' sessions auto-invoke /pm after Claude boots. 'raw' sessions are
-  // plain Claude Code — no bootstrap. Defaults to 'raw' for rows created
-  // before this field existed.
-  sessionType: 'pm' | 'raw';
+  // 'pm' sessions auto-invoke the PM bootstrap post-boot; 'coder' sessions
+  // auto-invoke the coder bootstrap; 'raw' sessions are plain Claude Code
+  // with no bootstrap. Defaults to 'raw' for rows created before this
+  // field existed.
+  sessionType: SessionType;
   // Ordered list of JSONL transcript absolute paths this session owns.
   // Appended once per hook event. Chat rendering concatenates messages
   // across every path in this list in order — so /compact, /clear, model

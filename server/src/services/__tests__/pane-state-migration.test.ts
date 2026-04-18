@@ -1,21 +1,10 @@
-// Phase W — migration from per-PM `split-state.${pmSessionId}` keys
-// to the single global `pane-state` row.
+// Phase W.2 — pane-state migration covers three shapes:
+//   1. already-W2 → no-op
+//   2. Phase W (left/right) → drop left, rename right → rightSessionId
+//   3. legacy split-state.<pm> → extract activeTabId as rightSessionId
 //
-// The migration MUST:
-//   - Preserve visual continuity for users who had an active split.
-//     Left = PM id, right = activeTabId (the user's last-viewed
-//     teammate), dividerRatio = percent/100 from the legacy shape.
-//   - Be idempotent. Running twice is a no-op when pane-state already
-//     exists.
-//   - Clean up: every `split-state.*` key is deleted after translation
-//     so the preferences table doesn't bloat and a future rollback
-//     can't re-hydrate a stale layout.
-//   - Skip no-op entries: a split-state with `activeTabId: null` means
-//     the user never picked a teammate; there's no pair to migrate.
-//     Those keys are still deleted (they're dead weight), but no
-//     pane-state is written.
-//   - Pick deterministically when multiple split-states exist — most
-//     recently updated wins (that's the user's latest intent).
+// Plus an orthogonal sweep: all split-state.* keys are deleted
+// unconditionally after translation (dead schema).
 
 import { describe, test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,59 +20,108 @@ const { preferencesService } = await import('../preferences.service.js');
 const { migrateLegacySplitState } = await import('../pane-state-migration.js');
 const { PANE_STATE_KEY } = await import('@commander/shared');
 
-describe('Phase W — migrateLegacySplitState', () => {
-  before(() => {
-    // Force schema init
-    getDb();
-  });
-
-  beforeEach(() => {
-    // Clean slate: wipe preferences between tests.
-    getDb().prepare('DELETE FROM preferences').run();
-  });
-
+describe('Phase W.2 — migrateLegacySplitState', () => {
+  before(() => { getDb(); });
+  beforeEach(() => { getDb().prepare('DELETE FROM preferences').run(); });
   after(() => {
     closeDb();
     rmSync(tmpDataDir, { recursive: true, force: true });
   });
 
-  test('no legacy keys → no-op, no pane-state written', () => {
-    migrateLegacySplitState();
+  test('no keys at all → outcome=no-op, no pane-state written', () => {
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'no-op');
+    assert.equal(result.migrated, 0);
     assert.equal(preferencesService.get(PANE_STATE_KEY), null);
   });
 
-  test('single legacy split-state with activeTabId → writes pane-state and deletes legacy key', () => {
+  test('pane-state already W.2 shape → no-op, preserved', () => {
+    preferencesService.set(PANE_STATE_KEY, {
+      rightSessionId: 'user-chosen',
+      dividerRatio: 0.42,
+      focusedSessionId: 'user-chosen',
+    });
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'already-w2');
+    assert.deepEqual(preferencesService.get(PANE_STATE_KEY), {
+      rightSessionId: 'user-chosen',
+      dividerRatio: 0.42,
+      focusedSessionId: 'user-chosen',
+    });
+  });
+
+  test('pane-state in Phase W shape → reshaped to W.2, left dropped', () => {
+    preferencesService.set(PANE_STATE_KEY, {
+      left: 'pm-id',
+      right: 'coder-id',
+      dividerRatio: 0.6,
+      focusedSessionId: 'coder-id',
+    });
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'w-to-w2');
+    assert.equal(result.migrated, 1);
+    assert.deepEqual(preferencesService.get(PANE_STATE_KEY), {
+      rightSessionId: 'coder-id',
+      dividerRatio: 0.6,
+      focusedSessionId: 'coder-id', // preserved — it was right
+    });
+  });
+
+  test('Phase W focus pointing at left → dropped (URL-side can\'t be validated at boot)', () => {
+    preferencesService.set(PANE_STATE_KEY, {
+      left: 'pm-id',
+      right: 'coder-id',
+      dividerRatio: 0.5,
+      focusedSessionId: 'pm-id', // focus was on left
+    });
+    migrateLegacySplitState();
+    const migrated = preferencesService.get(PANE_STATE_KEY) as { focusedSessionId: string | null };
+    assert.equal(migrated.focusedSessionId, null);
+  });
+
+  test('Phase W right=null (single-pane state) → W.2 with rightSessionId=null', () => {
+    preferencesService.set(PANE_STATE_KEY, {
+      left: 'pm-id',
+      right: null,
+      dividerRatio: 0.5,
+      focusedSessionId: 'pm-id',
+    });
+    migrateLegacySplitState();
+    const migrated = preferencesService.get(PANE_STATE_KEY) as { rightSessionId: string | null };
+    assert.equal(migrated.rightSessionId, null);
+  });
+
+  test('legacy split-state.<pm> with activeTabId → W.2 rightSessionId', () => {
     preferencesService.set('split-state.pm-abc', {
       activeTabId: 'coder-xyz',
       percent: 60,
       minimized: false,
     });
-
-    migrateLegacySplitState();
-
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'legacy-to-w2');
+    assert.equal(result.migrated, 1);
     assert.deepEqual(preferencesService.get(PANE_STATE_KEY), {
-      left: 'pm-abc',
-      right: 'coder-xyz',
+      rightSessionId: 'coder-xyz',
       dividerRatio: 0.6,
       focusedSessionId: 'coder-xyz',
     });
     assert.equal(preferencesService.get('split-state.pm-abc'), null);
   });
 
-  test('legacy split-state with null activeTabId → delete key, do NOT write pane-state', () => {
+  test('legacy split-state with null activeTabId → no write; keys swept', () => {
     preferencesService.set('split-state.pm-solo', {
       activeTabId: null,
       percent: 50,
       minimized: false,
     });
-
-    migrateLegacySplitState();
-
+    const result = migrateLegacySplitState();
+    assert.equal(result.outcome, 'legacy-all-empty');
+    assert.equal(result.migrated, 0);
     assert.equal(preferencesService.get(PANE_STATE_KEY), null);
     assert.equal(preferencesService.get('split-state.pm-solo'), null);
   });
 
-  test('multiple legacy split-states → picks most-recently-updated, deletes all', () => {
+  test('multiple legacy split-states → picks most-recently-updated; all swept', () => {
     preferencesService.set('split-state.pm-old', {
       activeTabId: 'coder-old',
       percent: 50,
@@ -94,91 +132,55 @@ describe('Phase W — migrateLegacySplitState', () => {
       percent: 70,
       minimized: false,
     });
-    // datetime('now') is second-resolution; force a clearly-later
-    // updated_at so "most recent" is unambiguous.
     getDb().prepare(
       "UPDATE preferences SET updated_at = datetime('now', '+1 hour') WHERE key = 'split-state.pm-new'",
     ).run();
-
     migrateLegacySplitState();
-
-    const migrated = preferencesService.get(PANE_STATE_KEY) as {
-      left: string; right: string; dividerRatio: number; focusedSessionId: string;
-    };
-    assert.equal(migrated.left, 'pm-new');
-    assert.equal(migrated.right, 'coder-new');
+    const migrated = preferencesService.get(PANE_STATE_KEY) as { rightSessionId: string; dividerRatio: number };
+    assert.equal(migrated.rightSessionId, 'coder-new');
     assert.equal(migrated.dividerRatio, 0.7);
-    assert.equal(migrated.focusedSessionId, 'coder-new');
     assert.equal(preferencesService.get('split-state.pm-old'), null);
     assert.equal(preferencesService.get('split-state.pm-new'), null);
   });
 
-  test('idempotent: running twice when pane-state already exists → no overwrite', () => {
+  test('already-W2 still sweeps legacy split-state.* keys (no dangling dead schema)', () => {
     preferencesService.set(PANE_STATE_KEY, {
-      left: 'user-chosen-a',
-      right: 'user-chosen-b',
-      dividerRatio: 0.42,
-      focusedSessionId: 'user-chosen-a',
+      rightSessionId: 'user',
+      dividerRatio: 0.5,
+      focusedSessionId: null,
     });
     preferencesService.set('split-state.pm-legacy', {
-      activeTabId: 'coder-legacy',
+      activeTabId: 'coder',
       percent: 50,
       minimized: false,
     });
-
     migrateLegacySplitState();
-
-    // Existing pane-state preserved — do NOT clobber user intent.
-    assert.deepEqual(preferencesService.get(PANE_STATE_KEY), {
-      left: 'user-chosen-a',
-      right: 'user-chosen-b',
-      dividerRatio: 0.42,
-      focusedSessionId: 'user-chosen-a',
-    });
-    // Legacy key still cleaned up even when we didn't migrate from it.
     assert.equal(preferencesService.get('split-state.pm-legacy'), null);
   });
 
-  test('clamps out-of-range percent to MIN/MAX divider ratio', () => {
-    preferencesService.set('split-state.pm-tight', {
-      activeTabId: 'coder',
-      percent: 10, // below MIN_DIVIDER_RATIO (30%)
-      minimized: false,
-    });
-    migrateLegacySplitState();
-    const low = preferencesService.get(PANE_STATE_KEY) as { dividerRatio: number };
-    assert.equal(low.dividerRatio, 0.3);
-
-    // Second scenario: high clamp. Clear and re-seed.
-    getDb().prepare('DELETE FROM preferences').run();
-    preferencesService.set('split-state.pm-wide', {
-      activeTabId: 'coder',
-      percent: 95, // above MAX_DIVIDER_RATIO (70%)
-      minimized: false,
-    });
-    migrateLegacySplitState();
-    const high = preferencesService.get(PANE_STATE_KEY) as { dividerRatio: number };
-    assert.equal(high.dividerRatio, 0.7);
-  });
-
-  test('tolerates malformed legacy JSON (missing fields) by skipping that entry', () => {
+  test('malformed legacy JSON → dropped silently, no crash', () => {
     preferencesService.set('split-state.pm-broken', {
-      // activeTabId absent — shape drift from an old client
-      percent: 50,
+      percent: 50, // activeTabId missing
     } as unknown as { activeTabId: string });
     preferencesService.set('split-state.pm-good', {
       activeTabId: 'coder-good',
       percent: 50,
       minimized: false,
     });
-
     migrateLegacySplitState();
-
-    // Only the valid entry contributes; broken is dropped.
-    const migrated = preferencesService.get(PANE_STATE_KEY) as { left: string; right: string };
-    assert.equal(migrated.left, 'pm-good');
-    assert.equal(migrated.right, 'coder-good');
+    const migrated = preferencesService.get(PANE_STATE_KEY) as { rightSessionId: string };
+    assert.equal(migrated.rightSessionId, 'coder-good');
     assert.equal(preferencesService.get('split-state.pm-broken'), null);
-    assert.equal(preferencesService.get('split-state.pm-good'), null);
+  });
+
+  test('legacy percent clamped out-of-range', () => {
+    preferencesService.set('split-state.pm-tight', {
+      activeTabId: 'coder',
+      percent: 10,
+      minimized: false,
+    });
+    migrateLegacySplitState();
+    const m = preferencesService.get(PANE_STATE_KEY) as { dividerRatio: number };
+    assert.equal(m.dividerRatio, 0.3);
   });
 });

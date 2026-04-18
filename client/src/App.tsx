@@ -9,10 +9,8 @@ import { LoadingSkeleton } from './components/shared/LoadingSkeleton';
 
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then(m => ({ default: m.SessionsPage })));
 const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })));
-// Phase W — PaneContainer supersedes SplitChatLayout. Generic pin-based
-// layout driven by the global pane-state preference, not PM/Coder
-// agent_relationships. SplitChatLayout is removed from the route table;
-// the file stays on disk for a phase or two as reference.
+// Phase W.2 — PaneContainer is the chat view. URL owns left pane,
+// paneState.rightSessionId owns right. SplitChatLayout was deleted.
 const PaneContainer = lazy(() => import('./pages/PaneContainer').then(m => ({ default: m.PaneContainer })));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ default: m.ProjectsPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));

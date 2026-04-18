@@ -1,34 +1,28 @@
-// Phase W — pane pin model. A single global row decides what the
-// workspace shows: 0, 1, or 2 session panes side-by-side. Replaces the
-// per-PM split-state keys (one per parent session) with a single
-// account-wide pin pair.
+// Phase W.2 — pane model. URL `/chat/:sessionId` owns the LEFT pane.
+// Persisted state carries only the RIGHT pane id + divider + focus.
+// This is the W → W.2 reshape: Phase W persisted both `left` and
+// `right` which duplicated the URL; W.2 drops `left` so clicking a
+// session in Sessions page always opens single-pane (never implicitly
+// pairs with a persisted right).
 //
-// Storage: serialized in the `preferences` table under key `pane-state`.
-// Transport: reuses `GET/PUT /api/preferences/:key` + the `preference:
-// changed` WS broadcast so every tab converges to the same pin state
-// without a bespoke endpoint.
+// Storage: `preferences` table key `pane-state`. Transport: existing
+// `/api/preferences/:key` + `preference:changed` WS broadcast.
 //
-// Field semantics:
-// - `left` / `right` are Commander session ids (not claude_session_id).
-//   `null` means that slot is empty. `right` can only be non-null when
-//   `left` is also non-null — the UI enforces this; server migration
-//   normalizes.
-// - `dividerRatio` is the left pane's fraction of the total width in
-//   the 2-pane layout. Clamped to [0.3, 0.7] client-side so neither
-//   pane can collapse below the 320px min.
-// - `focusedSessionId` must equal `left` or `right` when either is non-
-//   null. `null` only in the 0-pane state. Click-to-focus writes this;
-//   Cmd+J reads it to decide which pane's drawer to toggle.
+// Invariants (enforced by paneStateReducer):
+// - `focusedSessionId` ∈ {urlLeft, rightSessionId, null}; any other
+//   value is normalized to null at read time by consumers.
+// - `dividerRatio` ∈ [0.3, 0.7].
+// - `rightSessionId` must never equal the URL left (enforced by the
+//   reducer's openRight action — a no-op when the id matches the
+//   current left).
 export interface PaneState {
-  left: string | null;
-  right: string | null;
+  rightSessionId: string | null;
   dividerRatio: number;
   focusedSessionId: string | null;
 }
 
 export const DEFAULT_PANE_STATE: PaneState = {
-  left: null,
-  right: null,
+  rightSessionId: null,
   dividerRatio: 0.5,
   focusedSessionId: null,
 };
