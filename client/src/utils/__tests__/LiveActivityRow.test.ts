@@ -50,18 +50,33 @@ describe('buildLiveActivityParts — Phase M Bundle 3', () => {
     assert.equal(ctxPct, null);
   });
 
-  test('tick prefers its own tokens over activity.tokens (authoritative)', () => {
-    const tick = mkTick({ totalInputTokens: 9999 });
-    const { parts } = buildLiveActivityParts(mkActivity({ tokens: 430 }), tick);
-    // 9999 > 430 → tick wins regardless of magnitude.
+  test('activity.tokens wins over tick.totalInputTokens — label means turn delta', () => {
+    // Issue 4: tick.totalInputTokens is cumulative context (20x inflated vs
+    // the "tokens" label, which implies per-turn delta like Codeman shows).
+    // Activity.tokens is the pane-parsed turn delta — that's the one the
+    // label refers to, so it must win even when tick has a bigger number.
+    const tick = mkTick({ totalInputTokens: 44146 });
+    const { parts } = buildLiveActivityParts(mkActivity({ tokens: 2200 }), tick);
     const tokensPart = parts.find((p) => /tokens/.test(p));
-    assert.equal(tokensPart, '9,999 tokens');
+    assert.equal(tokensPart, '2,200 tokens');
   });
 
-  test('tick with null totalInputTokens falls back to activity.tokens', () => {
+  test('activity.tokens present + no tick → still activity.tokens', () => {
     const { parts } = buildLiveActivityParts(mkActivity({ tokens: 430 }), mkTick());
     const tokensPart = parts.find((p) => /tokens/.test(p));
     assert.equal(tokensPart, '430 tokens');
+  });
+
+  test('activity.tokens null → omit segment even when tick has cumulative', () => {
+    // Issue 4: refuse to show tick.totalInputTokens under the "tokens"
+    // label — the cumulative number belongs to a different counter
+    // (HeaderStatsWidget, PHASE_REPORT view). Omitting is the honest
+    // fallback; mislabeling cumulative as turn delta is the original bug.
+    const { parts } = buildLiveActivityParts(
+      mkActivity({ tokens: undefined }),
+      mkTick({ totalInputTokens: 44146 }),
+    );
+    assert.equal(parts.some((p) => /tokens/.test(p)), false);
   });
 
   test('neither source has tokens → token segment omitted', () => {
