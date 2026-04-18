@@ -193,12 +193,12 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
     assert.equal(toolResult!.content[0]?.type, 'tool_result');
   });
 
-  test('unknown top-level record type surfaces as a system_note debug placeholder (default = render)', () => {
+  test('unknown top-level record type surfaces as a debug_unmapped block (default = render)', () => {
     // Before the fix, parseRecord's tail was `return null` for anything
-    // not in {user, assistant, system, attachment, SKIP_TYPES}. A future
-    // Claude Code record shape would silently vanish. New contract:
-    // unknown top-level shapes land as a system_note so "empty chat"
-    // becomes "chat with a muted debug chip I can file an issue on."
+    // not in the denylist. A future Claude Code record shape would
+    // silently vanish. New contract: unknown top-level shapes land as
+    // a debug_unmapped block keyed on the type name so the renderer
+    // can show a muted collapsible chip the user can file an issue on.
     const record = {
       type: 'novel-claude-code-record',
       uuid: 'unk-1',
@@ -208,17 +208,19 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
     const parsed = jsonlParserService.parseRecord(record as never);
     assert.ok(parsed, 'unknown top-level type must surface, not drop');
     assert.equal(parsed!.role, 'system');
-    assert.equal(parsed!.content[0]?.type, 'system_note');
-    if (parsed!.content[0]?.type === 'system_note') {
-      assert.match(parsed!.content[0].text, /novel-claude-code-record/);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'debug_unmapped');
+    if (block.type === 'debug_unmapped') {
+      assert.equal(block.kind, 'record_type');
+      assert.equal(block.key, 'novel-claude-code-record');
     }
   });
 
-  test('unknown system subtype surfaces as a system_note carrying the subtype name', () => {
+  test('unknown system subtype surfaces as a debug_unmapped block carrying the subtype + raw content', () => {
     // Any system record with a subtype we don't recognize (e.g.
     // `scheduled_task_fire`, `away_summary`) used to return null. Now
-    // surfaces so the user can see that the pane said something Claude
-    // Code wanted to share.
+    // surfaces with the subtype as `key` and the record's own content
+    // as `raw` so the collapsible chip can show what Claude Code said.
     const record = {
       type: 'system',
       uuid: 'sys-1',
@@ -230,9 +232,12 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
     const parsed = jsonlParserService.parseRecord(record as never);
     assert.ok(parsed, 'unknown system subtype must surface');
     assert.equal(parsed!.role, 'system');
-    assert.equal(parsed!.content[0]?.type, 'system_note');
-    if (parsed!.content[0]?.type === 'system_note') {
-      assert.match(parsed!.content[0].text, /scheduled/i);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'debug_unmapped');
+    if (block.type === 'debug_unmapped') {
+      assert.equal(block.kind, 'system_subtype');
+      assert.equal(block.key, 'scheduled_task_fire');
+      assert.match(block.raw ?? '', /loop prompt/);
     }
   });
 
@@ -262,32 +267,37 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
     assert.equal(jsonlParserService.parseRecord(record as never), null);
   });
 
-  test('unknown attachment inner type surfaces as a system_note (default = render)', () => {
+  test('unknown attachment inner type surfaces as a debug_unmapped block (default = render)', () => {
     // attachment.type = 'date_change' (or any future Claude Code
-    // attachment we haven't mapped) used to silently drop. Now surfaces
-    // with the inner type name so we know what Claude Code injected.
+    // attachment we haven't mapped) used to silently drop. Now
+    // surfaces as debug_unmapped with the inner type as `key` and
+    // (if present) inner.content as `raw`.
     const record = {
       type: 'attachment',
       uuid: 'att-1',
       parentUuid: null,
       timestamp: '2026-04-18T12:00:00.000Z',
-      attachment: { type: 'date_change', oldDate: '2026-04-17', newDate: '2026-04-18' },
+      attachment: { type: 'date_change', content: 'day changed 2026-04-17 → 2026-04-18' },
     };
     const parsed = jsonlParserService.parseRecord(record as never);
     assert.ok(parsed, 'unknown attachment type must surface');
     assert.equal(parsed!.role, 'system');
-    assert.equal(parsed!.content[0]?.type, 'system_note');
-    if (parsed!.content[0]?.type === 'system_note') {
-      assert.match(parsed!.content[0].text, /date_change/);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'debug_unmapped');
+    if (block.type === 'debug_unmapped') {
+      assert.equal(block.kind, 'attachment_type');
+      assert.equal(block.key, 'date_change');
+      assert.match(block.raw ?? '', /day changed/);
     }
   });
 
-  test('unknown assistant content block type surfaces as a system_note instead of being stripped', () => {
-    // parseAssistantBlocks used to switch over {text, thinking, tool_use}
-    // and drop everything else on the floor. A future Anthropic content
-    // shape (e.g. `server_tool_use`, `redacted_thinking`) would erase
-    // the entire assistant turn if it was the only block. Now: unknown
-    // content blocks surface as system_note so the turn is visible.
+  test('unknown assistant content block type surfaces as a debug_unmapped block instead of being stripped', () => {
+    // parseAssistantBlocks used to switch over {text, thinking,
+    // tool_use} and drop everything else on the floor. A future
+    // Anthropic content shape (e.g. `server_tool_use`,
+    // `redacted_thinking`) would erase the entire assistant turn if
+    // it was the only block. Now: unknown content blocks surface as
+    // debug_unmapped so the turn is visible.
     const record = {
       type: 'assistant',
       uuid: 'a2',
@@ -306,9 +316,11 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
     assert.ok(parsed, 'assistant message with unknown block type must still parse');
     assert.equal(parsed!.content.length, 2);
     assert.equal(parsed!.content[0]?.type, 'text');
-    assert.equal(parsed!.content[1]?.type, 'system_note');
-    if (parsed!.content[1]?.type === 'system_note') {
-      assert.match(parsed!.content[1].text, /server_tool_use/);
+    const debug = parsed!.content[1]!;
+    assert.equal(debug.type, 'debug_unmapped');
+    if (debug.type === 'debug_unmapped') {
+      assert.equal(debug.kind, 'assistant_block');
+      assert.equal(debug.key, 'server_tool_use');
     }
   });
 });

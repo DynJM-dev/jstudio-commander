@@ -14,6 +14,7 @@ import {
 } from './ProtocolMessageCards';
 import { SystemEventChip } from './SystemEventChip';
 import { UnrecognizedProtocolCard } from './UnrecognizedProtocolCard';
+import { UnmappedEventChip } from './UnmappedEventChip';
 import { LiveActivityRow } from './LiveActivityRow';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
@@ -86,6 +87,21 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
           Compacted ({trigger}) — freed {formatTokens(preTokens)} tokens
         </span>
         <div className="flex-1" style={{ borderTop: '1px solid rgba(14, 124, 123, 0.18)' }} />
+      </div>
+    );
+  }
+
+  // Issue 5 — a system group whose lead block is an unmapped event
+  // surfaces the debug chip instead of the plain "System event" stripe
+  // so the user sees the exact discriminator that missed.
+  if (firstBlock?.type === 'debug_unmapped') {
+    return (
+      <div className="px-2 py-1">
+        <UnmappedEventChip
+          kind={firstBlock.kind}
+          eventKey={firstBlock.key}
+          raw={firstBlock.raw}
+        />
       </div>
     );
   }
@@ -215,13 +231,16 @@ const renderFragment = (
         />
       );
     default:
-      // Issue 5 — no silent drops. A new ParsedChatMessage kind the
-      // switch hasn't been updated for still renders a muted debug
-      // placeholder so the user's fragment never vanishes.
+      // Issue 5 — architecture lock: no silent drops. A new
+      // ParsedChatMessage kind the switch hasn't been updated for
+      // surfaces the explicit debug chip (collapsible raw payload)
+      // so the fragment is never invisible and the discriminator is
+      // legible enough to file a ticket on.
       return (
-        <ProseFragment
+        <UnmappedEventChip
           key={key}
-          text={`[unmapped fragment: ${(frag as { kind: string }).kind}]`}
+          kind="record_type"
+          eventKey={(frag as { kind: string }).kind}
         />
       );
   }

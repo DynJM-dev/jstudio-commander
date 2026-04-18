@@ -8,6 +8,7 @@ import { AgentPlan } from './AgentPlan';
 import type { PlanTask } from './AgentPlan';
 import { ActivityChip } from './ActivityChip';
 import { AgentSpawnCard } from './AgentSpawnCard';
+import { UnmappedEventChip } from './UnmappedEventChip';
 import { matchChip } from './activity-chip-registry';
 import { formatTime } from '../../utils/format';
 
@@ -106,20 +107,33 @@ const renderBlock = (
         </div>
       );
 
-    default:
-      // Default = surface, not drop (Issue 5). A ContentBlock shape the
-      // renderer doesn't recognize still earns a muted debug chip so
-      // we never produce a ghost turn. `(block as ContentBlock).type`
-      // keeps the discriminated-union exhaustiveness check happy while
-      // still giving the reader a trail to file an issue from.
+    case 'debug_unmapped':
+      // Issue 5 — novel Claude Code record shape that lacks a typed
+      // renderer. Surfaces via the explicit debug chip, never silently
+      // dropped. If this chip keeps appearing in the wild, that's the
+      // signal to add a typed branch for the shape.
       return (
-        <div
+        <UnmappedEventChip
           key={key}
-          className="text-xs italic py-1"
-          style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
-        >
-          [unmapped block: {(block as ContentBlock).type}]
-        </div>
+          kind={block.kind}
+          eventKey={block.key}
+          raw={block.raw}
+        />
+      );
+
+    default:
+      // Exhaustive — the switch above covers every ContentBlock
+      // variant. If the union gains a new member, TypeScript's
+      // `never` check flags this branch until the switch is updated.
+      // At runtime we still surface a chip rather than returning
+      // null so the "no silent drops" invariant holds even during a
+      // half-deployed schema change.
+      return (
+        <UnmappedEventChip
+          key={key}
+          kind="assistant_block"
+          eventKey={(block as ContentBlock).type}
+        />
       );
   }
 };

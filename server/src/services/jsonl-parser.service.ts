@@ -1,42 +1,32 @@
 import { readFileSync } from 'node:fs';
-import type { ChatMessage, ContentBlock, TokenUsage } from '@commander/shared';
+import type { ChatMessage, ContentBlock, TokenUsage, UnmappedKind } from '@commander/shared';
+import {
+  DROP_RECORD_TYPES,
+  DROP_SYSTEM_SUBTYPES,
+  DROP_ATTACHMENT_TYPES,
+} from '@commander/shared';
 import { v4 as uuidv4 } from 'uuid';
 
-// Top-level record types we explicitly skip. These are either internal
-// Claude Code bookkeeping (permission-mode, queue-operation, titles) or
-// redundant-with-other-records (last-prompt, progress). Anything NOT in
-// this set and not in the known-renderer list falls through to a
-// `system_note` debug placeholder — the chat should never silently drop
-// a JSONL record just because we haven't written a branch for it yet.
-const SKIP_TYPES = new Set([
-  'permission-mode',
-  'file-history-snapshot',
-  'queue-operation',
-  'ai-title',
-  'custom-title',
-  'last-prompt',
-  'progress',
-]);
+// Issue 5 — the chat pipeline's drop invariant.
+//
+//   Default = render. The denylist (sourced from @commander/shared's
+//   event-policy module) is the ONLY drop mechanism — an explicit
+//   noise-suppression list, not an allowlist. Anything that isn't
+//   handled by a dedicated branch AND isn't on the denylist surfaces
+//   as a `debug_unmapped` ContentBlock. The renderer maps that block
+//   to the UnmappedEventChip, a muted collapsible debug placeholder,
+//   so novel Claude Code record shapes show up in the UI immediately
+//   rather than vanishing until someone ships a parser patch.
+//
+// See packages/shared/src/constants/event-policy.ts for the policy
+// statement + rationale per drop entry.
 
-// System subtypes we deliberately suppress. These fire on every turn
-// (stop_hook_summary, turn_duration) or as internal bookkeeping that
-// would paper the chat; surfacing them would bury real content.
-const DROP_SYSTEM_SUBTYPES = new Set([
-  'stop_hook_summary',
-  'turn_duration',
-]);
-
-// Attachment inner types we deliberately suppress. `hook_success` is
-// the high-volume tail (every PostToolUse hook emits one); the others
-// are ambient telemetry Claude injects for the model's context that
-// isn't useful to a reader of the chat transcript.
-const DROP_ATTACHMENT_TYPES = new Set([
-  'hook_success',
-  'skill_listing',
-  'command_permissions',
-  'deferred_tools_delta',
-  'invoked_skills',
-]);
+const unmapped = (kind: UnmappedKind, key: string, raw?: string): ContentBlock => ({
+  type: 'debug_unmapped',
+  kind,
+  key,
+  ...(raw !== undefined ? { raw } : {}),
+});
 
 interface RawRecord {
   type: string;
@@ -137,13 +127,18 @@ const parseAssistantBlocks = (content: RawContentBlock[]): ContentBlock[] => {
           });
         }
         break;
-      default:
+      default: {
         // Default = surface, not drop. A future Anthropic content-block
-        // shape (server_tool_use, redacted_thinking, document, etc.) would
-        // otherwise strip from the turn entirely and — if it was the only
-        // block — collapse the whole assistant message to nothing.
-        blocks.push({ type: 'system_note', text: `[unmapped assistant block: ${block.type}]` });
+        // shape (server_tool_use, redacted_thinking, document, etc.)
+        // would otherwise strip from the turn entirely and — if it was
+        // the only block — collapse the whole assistant message to
+        // nothing. debug_unmapped carries the shape identifier + a
+        // short raw preview so the UnmappedEventChip renderer can show
+        // what was dropped from Claude Code's point of view.
+        const preview = block.text ?? block.thinking ?? (block.name ? `tool: ${block.name}` : undefined);
+        blocks.push(unmapped('assistant_block', block.type, preview));
         break;
+      }
     }
   }
   return blocks;
@@ -214,8 +209,10 @@ export const jsonlParserService = {
 
     const type = record.type;
 
-    // Skip known non-message types
-    if (SKIP_TYPES.has(type)) return null;
+    // Denylist — explicit noise suppression per the Issue 5 policy.
+    // Known-renderer types continue below; anything else falls through
+    // to the debug_unmapped chip.
+    if (DROP_RECORD_TYPES.has(type)) return null;
 
     if (type === 'user') {
       return this.parseUserRecord(record);
@@ -233,16 +230,16 @@ export const jsonlParserService = {
       return this.parseAttachmentRecord(record);
     }
 
-    // Unknown top-level record type — surface as a muted debug placeholder
-    // rather than a silent drop. Future Claude Code record shapes land
-    // here until we wire a dedicated renderer, so "empty chat" is never
-    // the failure mode of an unrecognized record.
+    // Unknown top-level record type — surface as the debug placeholder
+    // block rather than silently dropping. Future Claude Code record
+    // shapes land here until we wire a dedicated renderer, so "empty
+    // chat" is never the failure mode of an unrecognized record.
     return {
       id: record.uuid ?? uuidv4(),
       parentId: record.parentUuid ?? null,
       role: 'system',
       timestamp: record.timestamp ?? new Date().toISOString(),
-      content: [{ type: 'system_note', text: `[unmapped record type: ${type}]` }],
+      content: [unmapped('record_type', type)],
       isSidechain: record.isSidechain ?? false,
     };
   },
@@ -303,25 +300,24 @@ export const jsonlParserService = {
       };
     }
 
-    // Known noise — dropped via the explicit allow-list so intent is
-    // visible at a glance. Anything not here falls through to the
-    // "surface as system_note" branch below.
+    // Denylist — explicit noise suppression. The set is the SSOT in
+    // @commander/shared; see event-policy.ts for rationale per entry.
     if (record.subtype && DROP_SYSTEM_SUBTYPES.has(record.subtype)) return null;
 
-    // Anything else: surface as a system_note. Prefer the record's own
-    // content when present; otherwise emit a debug placeholder keyed on
-    // the subtype so the user can trace what Claude Code injected.
-    const text =
+    // Anything else: surface as the debug placeholder block. The
+    // UnmappedEventChip renderer uses `key` to label the chip and
+    // (when present) `raw` for the collapsed payload preview.
+    const raw =
       typeof record.content === 'string' && record.content.trim().length > 0
         ? record.content.trim()
-        : `[system: ${record.subtype ?? 'unknown'}]`;
+        : undefined;
 
     return {
       id: record.uuid ?? uuidv4(),
       parentId: record.parentUuid ?? null,
       role: 'system',
       timestamp: record.timestamp ?? new Date().toISOString(),
-      content: [{ type: 'system_note', text }],
+      content: [unmapped('system_subtype', record.subtype ?? 'unknown', raw)],
       isSidechain: record.isSidechain ?? false,
     };
   },
@@ -362,24 +358,25 @@ export const jsonlParserService = {
       };
     }
 
-    // Explicit drop list for high-volume / low-signal attachments.
+    // Denylist — high-volume / low-signal attachments. Rationale per
+    // entry lives in @commander/shared's event-policy.ts.
     if (DROP_ATTACHMENT_TYPES.has(innerType)) return null;
 
-    // Unknown attachment — surface so the user sees that Claude Code
-    // injected context we haven't modeled yet. Prefer the inner text
-    // payload when present; otherwise a debug placeholder keyed on
-    // the inner type so the shape is traceable from the UI.
-    const text =
+    // Unknown attachment — surface as the debug placeholder block so
+    // the user sees Claude Code injected something we haven't modeled.
+    // The inner `content` (when present) ships as the raw preview for
+    // the collapsible chip.
+    const raw =
       typeof inner?.content === 'string' && inner.content.trim().length > 0
         ? inner.content.trim()
-        : `[attachment: ${innerType}]`;
+        : undefined;
 
     return {
       id: record.uuid ?? uuidv4(),
       parentId: record.parentUuid ?? null,
       role: 'system',
       timestamp: record.timestamp ?? new Date().toISOString(),
-      content: [{ type: 'system_note', text }],
+      content: [unmapped('attachment_type', innerType, raw)],
       isSidechain: false,
     };
   },
