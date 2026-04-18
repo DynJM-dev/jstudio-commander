@@ -104,3 +104,211 @@ describe('jsonlParserService — attachment discriminator (chat/terminal fidelit
     assert.equal(jsonlParserService.parseRecord(record as never), null);
   });
 });
+
+// Issue 5 — the chat pane was silently dropping most event types.
+// The bug: per-type branches, no default. Every JSONL shape we hadn't
+// hand-mapped was returning null, which in turn caused whole multi-
+// event turns to collapse into ghost turns (user prompt missing,
+// tool_use missing, unknown system notes missing). The remediation is
+// "default = surface; explicit drop list for known noise" so a future
+// Claude Code record shape we haven't seen yet lands as a visible
+// debug placeholder instead of vanishing.
+//
+// These tests pin the contract: a multi-event turn (user text + assistant
+// text + TodoWrite + Bash) survives in full; unknown shapes surface as
+// `system_note` placeholders; and the three known noise types
+// (hook_success, stop_hook_summary, turn_duration) stay dropped.
+
+describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy', () => {
+  test('multi-event turn survives: user text + assistant text + TodoWrite + Bash all render as distinct blocks', () => {
+    // Repro of Jose's test prompt: "Say hello plain text. TodoWrite A/B/C.
+    // Bash echo test." Before the fix, the chat pane rendered nothing —
+    // not even the user's own prompt. This asserts the baseline the UI
+    // depends on: four distinct pieces in parse order.
+    const lines = [
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        parentUuid: null,
+        timestamp: '2026-04-18T12:00:00.000Z',
+        message: {
+          role: 'user',
+          content: 'Say "hello" as plain text. Use TodoWrite with items A/B/C. Run Bash: echo test.',
+        },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        timestamp: '2026-04-18T12:00:01.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-opus-4-7',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'tool_use', id: 'tu_td', name: 'TodoWrite', input: { todos: [{ content: 'A' }, { content: 'B' }, { content: 'C' }] } },
+            { type: 'tool_use', id: 'tu_bash', name: 'Bash', input: { command: 'echo test' } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u2',
+        parentUuid: 'a1',
+        timestamp: '2026-04-18T12:00:02.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tu_bash', content: 'test\n' }],
+        },
+      }),
+    ];
+
+    const parsed = jsonlParserService.parseLines(lines);
+
+    const userPrompt = parsed.find((m) => m.id === 'u1');
+    assert.ok(userPrompt, 'user prompt must be parsed');
+    assert.equal(userPrompt!.role, 'user');
+    assert.equal(userPrompt!.content[0]?.type, 'text');
+    if (userPrompt!.content[0]?.type === 'text') {
+      assert.match(userPrompt!.content[0].text, /hello/i);
+    }
+
+    const assistant = parsed.find((m) => m.id === 'a1');
+    assert.ok(assistant, 'assistant turn must be parsed');
+    assert.equal(assistant!.role, 'assistant');
+    // Must preserve all three blocks in order: text, TodoWrite, Bash.
+    assert.equal(assistant!.content.length, 3);
+    assert.equal(assistant!.content[0]?.type, 'text');
+    assert.equal(assistant!.content[1]?.type, 'tool_use');
+    assert.equal(assistant!.content[2]?.type, 'tool_use');
+    if (assistant!.content[1]?.type === 'tool_use') {
+      assert.equal(assistant!.content[1].name, 'TodoWrite');
+    }
+    if (assistant!.content[2]?.type === 'tool_use') {
+      assert.equal(assistant!.content[2].name, 'Bash');
+    }
+
+    const toolResult = parsed.find((m) => m.id === 'u2');
+    assert.ok(toolResult, 'tool_result message must be parsed');
+    assert.equal(toolResult!.content[0]?.type, 'tool_result');
+  });
+
+  test('unknown top-level record type surfaces as a system_note debug placeholder (default = render)', () => {
+    // Before the fix, parseRecord's tail was `return null` for anything
+    // not in {user, assistant, system, attachment, SKIP_TYPES}. A future
+    // Claude Code record shape would silently vanish. New contract:
+    // unknown top-level shapes land as a system_note so "empty chat"
+    // becomes "chat with a muted debug chip I can file an issue on."
+    const record = {
+      type: 'novel-claude-code-record',
+      uuid: 'unk-1',
+      parentUuid: null,
+      timestamp: '2026-04-18T12:00:00.000Z',
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'unknown top-level type must surface, not drop');
+    assert.equal(parsed!.role, 'system');
+    assert.equal(parsed!.content[0]?.type, 'system_note');
+    if (parsed!.content[0]?.type === 'system_note') {
+      assert.match(parsed!.content[0].text, /novel-claude-code-record/);
+    }
+  });
+
+  test('unknown system subtype surfaces as a system_note carrying the subtype name', () => {
+    // Any system record with a subtype we don't recognize (e.g.
+    // `scheduled_task_fire`, `away_summary`) used to return null. Now
+    // surfaces so the user can see that the pane said something Claude
+    // Code wanted to share.
+    const record = {
+      type: 'system',
+      uuid: 'sys-1',
+      parentUuid: null,
+      timestamp: '2026-04-18T12:00:00.000Z',
+      subtype: 'scheduled_task_fire',
+      content: 'Scheduled task fired: /loop prompt',
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'unknown system subtype must surface');
+    assert.equal(parsed!.role, 'system');
+    assert.equal(parsed!.content[0]?.type, 'system_note');
+    if (parsed!.content[0]?.type === 'system_note') {
+      assert.match(parsed!.content[0].text, /scheduled/i);
+    }
+  });
+
+  test('stop_hook_summary is in the explicit drop list (known noise, stays dropped)', () => {
+    // Stop-hook summaries fire on every pane stop — surfacing them would
+    // paper the chat with "stop hook ran" lines after every turn. Keep
+    // dropped, but drop via the explicit list, not by falling off the
+    // end of the switch.
+    const record = {
+      type: 'system',
+      uuid: 'sys-2',
+      parentUuid: null,
+      subtype: 'stop_hook_summary',
+      content: 'ran 2 hooks',
+    };
+    assert.equal(jsonlParserService.parseRecord(record as never), null);
+  });
+
+  test('turn_duration system record is in the explicit drop list', () => {
+    const record = {
+      type: 'system',
+      uuid: 'sys-3',
+      parentUuid: null,
+      subtype: 'turn_duration',
+      content: '2.4s',
+    };
+    assert.equal(jsonlParserService.parseRecord(record as never), null);
+  });
+
+  test('unknown attachment inner type surfaces as a system_note (default = render)', () => {
+    // attachment.type = 'date_change' (or any future Claude Code
+    // attachment we haven't mapped) used to silently drop. Now surfaces
+    // with the inner type name so we know what Claude Code injected.
+    const record = {
+      type: 'attachment',
+      uuid: 'att-1',
+      parentUuid: null,
+      timestamp: '2026-04-18T12:00:00.000Z',
+      attachment: { type: 'date_change', oldDate: '2026-04-17', newDate: '2026-04-18' },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'unknown attachment type must surface');
+    assert.equal(parsed!.role, 'system');
+    assert.equal(parsed!.content[0]?.type, 'system_note');
+    if (parsed!.content[0]?.type === 'system_note') {
+      assert.match(parsed!.content[0].text, /date_change/);
+    }
+  });
+
+  test('unknown assistant content block type surfaces as a system_note instead of being stripped', () => {
+    // parseAssistantBlocks used to switch over {text, thinking, tool_use}
+    // and drop everything else on the floor. A future Anthropic content
+    // shape (e.g. `server_tool_use`, `redacted_thinking`) would erase
+    // the entire assistant turn if it was the only block. Now: unknown
+    // content blocks surface as system_note so the turn is visible.
+    const record = {
+      type: 'assistant',
+      uuid: 'a2',
+      parentUuid: null,
+      timestamp: '2026-04-18T12:00:00.000Z',
+      message: {
+        role: 'assistant',
+        model: 'claude-opus-4-7',
+        content: [
+          { type: 'text', text: 'visible text' },
+          { type: 'server_tool_use', id: 'stu_1', name: 'web_search', input: { query: 'foo' } },
+        ],
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed, 'assistant message with unknown block type must still parse');
+    assert.equal(parsed!.content.length, 2);
+    assert.equal(parsed!.content[0]?.type, 'text');
+    assert.equal(parsed!.content[1]?.type, 'system_note');
+    if (parsed!.content[1]?.type === 'system_note') {
+      assert.match(parsed!.content[1].text, /server_tool_use/);
+    }
+  });
+});
