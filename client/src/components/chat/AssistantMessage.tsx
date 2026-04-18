@@ -107,7 +107,20 @@ const renderBlock = (
       );
 
     default:
-      return null;
+      // Default = surface, not drop (Issue 5). A ContentBlock shape the
+      // renderer doesn't recognize still earns a muted debug chip so
+      // we never produce a ghost turn. `(block as ContentBlock).type`
+      // keeps the discriminated-union exhaustiveness check happy while
+      // still giving the reader a trail to file an issue from.
+      return (
+        <div
+          key={key}
+          className="text-xs italic py-1"
+          style={{ color: 'var(--color-text-tertiary)', fontFamily: M }}
+        >
+          [unmapped block: {(block as ContentBlock).type}]
+        </div>
+      );
   }
 };
 

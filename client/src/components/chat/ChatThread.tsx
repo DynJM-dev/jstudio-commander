@@ -215,7 +215,15 @@ const renderFragment = (
         />
       );
     default:
-      return null;
+      // Issue 5 — no silent drops. A new ParsedChatMessage kind the
+      // switch hasn't been updated for still renders a muted debug
+      // placeholder so the user's fragment never vanishes.
+      return (
+        <ProseFragment
+          key={key}
+          text={`[unmapped fragment: ${(frag as { kind: string }).kind}]`}
+        />
+      );
   }
 };
 

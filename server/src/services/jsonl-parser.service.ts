@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import type { ChatMessage, ContentBlock, TokenUsage } from '@commander/shared';
 import { v4 as uuidv4 } from 'uuid';
 
-// Record types we explicitly skip
+// Top-level record types we explicitly skip. These are either internal
+// Claude Code bookkeeping (permission-mode, queue-operation, titles) or
+// redundant-with-other-records (last-prompt, progress). Anything NOT in
+// this set and not in the known-renderer list falls through to a
+// `system_note` debug placeholder — the chat should never silently drop
+// a JSONL record just because we haven't written a branch for it yet.
 const SKIP_TYPES = new Set([
   'permission-mode',
   'file-history-snapshot',
@@ -11,6 +16,26 @@ const SKIP_TYPES = new Set([
   'custom-title',
   'last-prompt',
   'progress',
+]);
+
+// System subtypes we deliberately suppress. These fire on every turn
+// (stop_hook_summary, turn_duration) or as internal bookkeeping that
+// would paper the chat; surfacing them would bury real content.
+const DROP_SYSTEM_SUBTYPES = new Set([
+  'stop_hook_summary',
+  'turn_duration',
+]);
+
+// Attachment inner types we deliberately suppress. `hook_success` is
+// the high-volume tail (every PostToolUse hook emits one); the others
+// are ambient telemetry Claude injects for the model's context that
+// isn't useful to a reader of the chat transcript.
+const DROP_ATTACHMENT_TYPES = new Set([
+  'hook_success',
+  'skill_listing',
+  'command_permissions',
+  'deferred_tools_delta',
+  'invoked_skills',
 ]);
 
 interface RawRecord {
@@ -112,6 +137,13 @@ const parseAssistantBlocks = (content: RawContentBlock[]): ContentBlock[] => {
           });
         }
         break;
+      default:
+        // Default = surface, not drop. A future Anthropic content-block
+        // shape (server_tool_use, redacted_thinking, document, etc.) would
+        // otherwise strip from the turn entirely and — if it was the only
+        // block — collapse the whole assistant message to nothing.
+        blocks.push({ type: 'system_note', text: `[unmapped assistant block: ${block.type}]` });
+        break;
     }
   }
   return blocks;
@@ -201,8 +233,18 @@ export const jsonlParserService = {
       return this.parseAttachmentRecord(record);
     }
 
-    // Unknown type — skip
-    return null;
+    // Unknown top-level record type — surface as a muted debug placeholder
+    // rather than a silent drop. Future Claude Code record shapes land
+    // here until we wire a dedicated renderer, so "empty chat" is never
+    // the failure mode of an unrecognized record.
+    return {
+      id: record.uuid ?? uuidv4(),
+      parentId: record.parentUuid ?? null,
+      role: 'system',
+      timestamp: record.timestamp ?? new Date().toISOString(),
+      content: [{ type: 'system_note', text: `[unmapped record type: ${type}]` }],
+      isSidechain: record.isSidechain ?? false,
+    };
   },
 
   parseUserRecord(record: RawRecord): ChatMessage | null {
@@ -261,10 +303,27 @@ export const jsonlParserService = {
       };
     }
 
-    // Other system records need meaningful content to surface at all.
-    if (!record.content || record.isMeta) return null;
+    // Known noise — dropped via the explicit allow-list so intent is
+    // visible at a glance. Anything not here falls through to the
+    // "surface as system_note" branch below.
+    if (record.subtype && DROP_SYSTEM_SUBTYPES.has(record.subtype)) return null;
 
-    return null;
+    // Anything else: surface as a system_note. Prefer the record's own
+    // content when present; otherwise emit a debug placeholder keyed on
+    // the subtype so the user can trace what Claude Code injected.
+    const text =
+      typeof record.content === 'string' && record.content.trim().length > 0
+        ? record.content.trim()
+        : `[system: ${record.subtype ?? 'unknown'}]`;
+
+    return {
+      id: record.uuid ?? uuidv4(),
+      parentId: record.parentUuid ?? null,
+      role: 'system',
+      timestamp: record.timestamp ?? new Date().toISOString(),
+      content: [{ type: 'system_note', text }],
+      isSidechain: record.isSidechain ?? false,
+    };
   },
 
   parseAttachmentRecord(record: RawRecord): ChatMessage | null {
@@ -303,6 +362,25 @@ export const jsonlParserService = {
       };
     }
 
-    return null;
+    // Explicit drop list for high-volume / low-signal attachments.
+    if (DROP_ATTACHMENT_TYPES.has(innerType)) return null;
+
+    // Unknown attachment — surface so the user sees that Claude Code
+    // injected context we haven't modeled yet. Prefer the inner text
+    // payload when present; otherwise a debug placeholder keyed on
+    // the inner type so the shape is traceable from the UI.
+    const text =
+      typeof inner?.content === 'string' && inner.content.trim().length > 0
+        ? inner.content.trim()
+        : `[attachment: ${innerType}]`;
+
+    return {
+      id: record.uuid ?? uuidv4(),
+      parentId: record.parentUuid ?? null,
+      role: 'system',
+      timestamp: record.timestamp ?? new Date().toISOString(),
+      content: [{ type: 'system_note', text }],
+      isSidechain: false,
+    };
   },
 };
