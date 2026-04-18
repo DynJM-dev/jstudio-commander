@@ -97,6 +97,69 @@ describe('classifyStatusFromPane — Phase J.1 IDLE_VERBS override', () => {
     assert.equal(result.evidence, 'active-indicator in tail');
   });
 
+  // Issue 8 Part 3 — Claude Code v2.x uses `⏺` as the REPLY-BULLET glyph
+  // (prefix of every assistant response line). It is NOT a live-spinner
+  // glyph. Treating it as one caused the classifier to extract the
+  // first word of Claude's reply as the "verb" — "Opus", "Model",
+  // "Processing", whatever Claude said first — and lock the session
+  // into a stuck `working` state until the reply scrolled out of the
+  // tail scan (or never, if the session was quiet).
+  //
+  // Fix: remove `⏺` from SPINNER_CHARS so hasActiveInTail no longer
+  // treats it as spinner evidence, AND tighten detectActivity to
+  // require the verb to look active (`-ing` / `-ed` suffix) so a
+  // reply like `⏺ Opus 4.7 (claude-opus-4-7)` never produces a
+  // verb regardless of glyph.
+  test('Issue 8 P3 — Claude reply-bullet line does NOT classify session as working', () => {
+    // Exact repro of Jose's stuck state. Claude's reply-bullet line
+    // plus Commander statusline chrome, no idle-❯ in the tail 8 lines.
+    // Pre-fix this returned working with verb="Opus".
+    const pane = [
+      '❯ what model are you using and your effort level?',
+      '',
+      '⏺ Opus 4.7 (claude-opus-4-7), effort level: medium.',
+      '',
+      'Opus 4.7 │ ctx 15% │ 5h 10% │ 7d 59% │ $0.09',
+    ].join('\n');
+    const result = classifyStatusFromPane(pane);
+    assert.equal(result.status, 'idle', `expected idle, got ${result.status} (${result.evidence})`);
+  });
+
+  test('Issue 8 P3 — reply-bullet line with "Model" first word produces no active-verb activity', () => {
+    const pane = '⏺ Model: Claude Opus 4.7';
+    const activity = detectActivity(pane);
+    // Either null, OR a non-active verb that downstream classifier
+    // will treat as not-working. The key invariant: no false verb
+    // leaks into the UI chip.
+    if (activity) {
+      assert.ok(
+        /ing$|ed$/.test(activity.verb),
+        `expected -ing/-ed verb filter, got verb=${activity.verb}`,
+      );
+    }
+  });
+
+  test('Issue 8 P3 — reply starting with non-verb word → no activity', () => {
+    const pane = '⏺ The answer is yes.';
+    const activity = detectActivity(pane);
+    assert.equal(activity, null, 'junk reply words must not produce activity');
+  });
+
+  test('Issue 8 P3 — genuine live thinking still detected (regression guard)', () => {
+    // The fix must NOT break real active-state detection.
+    const a1 = detectActivity('⏺ Cogitating (3s · 1,234 tokens)');
+    assert.ok(a1, 'Cogitating with meta must still parse');
+    assert.equal(a1!.verb, 'Cogitating');
+
+    const a2 = detectActivity('✻ Ruminating… (1m 49s · ↓ 430 tokens · thinking with xhigh effort)');
+    assert.ok(a2);
+    assert.equal(a2!.verb, 'Ruminating');
+
+    const a3 = detectActivity('✻ Cooked');
+    assert.ok(a3, 'Cooked completion verb must still parse');
+    assert.equal(a3!.verb, 'Cooked');
+  });
+
   test('numbered-choice prompt outranks IDLE_VERBS (waiting wins)', () => {
     // A pane with both `✻ Idle` chrome and a numbered-choice prompt
     // should still classify as waiting — numbered-choice runs above the

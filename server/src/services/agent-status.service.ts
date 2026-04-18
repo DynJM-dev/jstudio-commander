@@ -27,7 +27,7 @@ const ACTIVITY_RE = new RegExp(
 );
 const ELAPSED_RE = /(\d+m\s*\d+s|\d+s|\d+m)/;
 const TOKENS_RE = /(?:↓\s*)?(\d[\d,]*)\s*tokens?/i;
-const EFFORT_RE = /thinking with (high|xhigh|max) effort/i;
+const EFFORT_RE = /thinking with (medium|high|xhigh|max) effort/i;
 
 // Phase L — Claude Code's post-turn footer occasionally splits the verb
 // and the elapsed onto separate lines, with `·` separator lines between:
@@ -70,6 +70,20 @@ export const detectActivity = (paneContent: string): SessionActivity | null => {
     const verb = match[2] ?? '';
     const paren = match[3] ?? '';
 
+    // Issue 8 Part 3 — reject reply-content false positives. Claude Code's
+    // live-spinner verbs are always progressive (-ing: Thinking, Ruminating,
+    // Cogitating, Composing, Brewing, Doodling, Nesting, Pondering,
+    // Hullaballooing, Standing, Waiting) or just-completed (-ed: Cooked,
+    // Crunched, Brewed, Finished, Composed, Ruminated). Claude's replies
+    // start with arbitrary first words ("Opus 4.7…", "Model:…", "The…",
+    // "Processing your request…"). Accept only -ing/-ed verbs OR a small
+    // allowlist of short verb-like tokens Phase J relies on (Idle is the
+    // one that doesn't fit the -ing/-ed rule). Keeps the Phase J IDLE_VERBS
+    // and Phase L COMPLETION_VERBS paths intact while blocking reply
+    // content leaking via the `⏺` reply-bullet glyph.
+    const isKnownAtypicalVerb = verb === 'Idle';
+    if (!isKnownAtypicalVerb && !/ing$|ed$/i.test(verb)) continue;
+
     let elapsed = ELAPSED_RE.exec(paren)?.[1]?.replace(/\s+/g, ' ').trim();
 
     // Multi-line footer: if the verb line had no parenthetical (or the
@@ -92,7 +106,7 @@ export const detectActivity = (paneContent: string): SessionActivity | null => {
     const tokensMatch = TOKENS_RE.exec(paren)?.[1];
     const tokens = tokensMatch ? Number.parseInt(tokensMatch.replace(/,/g, ''), 10) : undefined;
     const effortMatch = EFFORT_RE.exec(paren)?.[1]?.toLowerCase();
-    const effort = (effortMatch === 'high' || effortMatch === 'xhigh' || effortMatch === 'max')
+    const effort = (effortMatch === 'medium' || effortMatch === 'high' || effortMatch === 'xhigh' || effortMatch === 'max')
       ? (effortMatch as EffortLevel)
       : undefined;
 
@@ -108,7 +122,17 @@ export const detectActivity = (paneContent: string): SessionActivity | null => {
   return null;
 };
 
-const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✶⏺';
+// Issue 8 Part 3 — `⏺` deliberately omitted. Claude Code v2.x uses it
+// as the REPLY-BULLET glyph prefixing every assistant response line,
+// NOT as a live-spinner glyph. Leaving it in here caused
+// hasActiveInTail to treat every quiet pane with an echoed reply as
+// "active", locking sessions into a stuck `working` state until the
+// reply scrolled out of the tail (or never). The real live-spinner
+// glyphs are the Braille frames + ✻/✶; `⏺` stays in SPINNER_GLYPHS
+// (for detectActivity) because genuine completion / thinking lines
+// also start with `⏺` (`⏺ Cogitating (3s · 1234 tokens)`), but the
+// verb-filter below guards against reply-content false positives.
+const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✶';
 const ACTIVE_INDICATORS = [
   /Thinking/i, /Nesting/i, /Running \d+/i, /\d+%/,
   /Reading \d+/i, /Searching/i, /Editing/i, /Writing/i,
