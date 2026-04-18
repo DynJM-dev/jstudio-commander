@@ -8,14 +8,15 @@ import { SESSION_TYPE_EFFORT_DEFAULTS } from '@commander/shared';
 import { config } from '../config.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 
-// Coerce any legacy or malformed effort_level value (pre-migration
-// 'low', NULL from a row that pre-dates the column default migration,
-// junk from direct SQL) to a valid EffortLevel. The boot heal migration
-// in connection.ts handles persisted rows; this handles the in-memory
-// read path so a stale row never breaks the typed API. Phase M1: 'medium'
-// is a valid value again (coder / raw default) — preserve it as-is.
+// Coerce any malformed effort_level value (NULL from a row that pre-
+// dates the column default migration, junk from direct SQL) to a valid
+// EffortLevel. The boot heal migration in connection.ts handles
+// persisted rows; this handles the in-memory read path so a stale row
+// never breaks the typed API. Issue 8 Part 2: 'low' is now first-class
+// (the CLI always accepted it; Commander now exposes it) — preserve
+// as-is rather than silently upgrading to xhigh.
 const normalizeEffortLevel = (raw: string | null | undefined): EffortLevel => {
-  if (raw === 'medium' || raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
+  if (raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
   return 'xhigh';
 };
 import { getDb } from '../db/connection.js';

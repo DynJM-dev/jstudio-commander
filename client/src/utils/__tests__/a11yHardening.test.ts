@@ -108,9 +108,14 @@ describe('P.2 C3 — SessionCostTable degrades to card stack on mobile', () => {
 describe('P.2 C4 — touch targets bumped to ≥ 44×44', () => {
   // Phase P.3 H4 — TerminalTabs was removed alongside the half-built
   // Terminal page; its 44×44 bump is no longer a live contract.
+  // Issue 8 Part 4 — `ContextBar refresh button` deliberately removed
+  // from this list. Jose's feedback: Stop + Refresh must read as one
+  // control surface (matching px-2 py-0.5 text-xs sizing). The 44×44
+  // hit-area constraint no longer applies there; Stop itself doesn't
+  // carry one either. If touch-target audit ever returns, it should
+  // cover both buttons together — or neither.
   const targets: Array<{ label: string; path: string }> = [
     { label: 'SessionCard split-view button', path: 'src/components/sessions/SessionCard.tsx' },
-    { label: 'ContextBar refresh button', path: 'src/components/chat/ContextBar.tsx' },
     { label: 'CreateSessionModal close X', path: 'src/components/sessions/CreateSessionModal.tsx' },
     { label: 'MobileOverflowDrawer close X', path: 'src/layouts/MobileOverflowDrawer.tsx' },
   ];

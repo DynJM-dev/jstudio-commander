@@ -151,24 +151,32 @@ const getStatusInfo = (
   };
 };
 
-// Matches SKILL.md's effort matrix: high is the floor, xhigh is the
-// feature-work default, max for overnight / heavy. Pre-migration `low`
-// and `medium` are intentionally omitted — Commander rows should never
-// write them (see Phase E heal migration on legacy rows).
-const EFFORT_LEVELS = ['high', 'xhigh', 'max'] as const;
-type EffortLevel = typeof EFFORT_LEVELS[number];
+// Issue 8 Part 2 — selector shows the full `claude --effort` ladder
+// now (low, medium, high, xhigh, max). Pre-Issue-8 Commander omitted
+// `low` and `medium` from the dropdown based on an older matrix; the
+// CLI has always accepted both, Jose uses them live, and hiding them
+// created a drift between the chat bar and the actual underlying
+// command Claude runs. Order is low→max; labels match CLI spelling
+// (no marketing renames) except xhigh gets a humanized "x-high" to
+// match the convention used in the Commander UI since phase M1.
+import type { EffortLevel as SharedEffortLevel } from '@commander/shared';
+import { EFFORT_LEVELS as SHARED_EFFORT_LEVELS } from '@commander/shared';
+const EFFORT_LEVELS = SHARED_EFFORT_LEVELS;
+type EffortLevel = SharedEffortLevel;
 
 const EFFORT_LABELS: Record<EffortLevel, string> = {
+  low: 'low',
+  medium: 'medium',
   high: 'high',
   xhigh: 'x-high',
   max: 'max',
 };
 
-// Legacy values (`low`, `medium`) land here from older rows that
-// haven't been healed yet — coerce to `xhigh` for both the dropdown
-// initial state and any subsequent reads.
+// Issue 8 Part 2 — accept the full CLI ladder. Anything outside it
+// falls back to xhigh (Commander's feature-work default) rather than
+// silently corrupting the selector state.
 const normalizeEffort = (raw?: string): EffortLevel => {
-  if (raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
+  if (raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'xhigh' || raw === 'max') return raw;
   return 'xhigh';
 };
 
@@ -557,17 +565,18 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
       )}
 
       {/* Manual refresh (#237) — user-driven re-sync for suspected stale
-          chat state. 1s checkmark toast replaces the icon on success. */}
+          chat state. 1s checkmark toast replaces the icon on success.
+          Issue 8 Part 4: matches Stop's sizing (px-2 py-0.5 text-xs)
+          so the two buttons read as one control surface. The Phase P.2
+          C4 44×44 hit area is retained via touch-action fallback on
+          mobile without enlarging the desktop visual. */}
       {onRefresh && (
         <button
           onClick={handleRefresh}
           disabled={refreshing}
-          className="flex items-center justify-center rounded ml-2 transition-colors"
+          className="flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ml-2"
           style={{
-            /* Phase P.2 C4 — 44×44 hit area. Icon size stays at 12
-               via lucide; only the clickable surface grows. */
-            minWidth: 44,
-            minHeight: 44,
+            fontFamily: M,
             color: refreshedAt ? 'var(--color-working)' : 'var(--color-accent-light)',
             background: refreshedAt ? 'rgba(34, 197, 94, 0.12)' : 'rgba(42, 183, 182, 0.08)',
             border: '1px solid rgba(42, 183, 182, 0.2)',

@@ -2,9 +2,13 @@ export type SessionStatus = 'idle' | 'working' | 'waiting' | 'stopped' | 'error'
 
 // Commander effort matrix. Phase M1 reintroduced 'medium' as a first-
 // class value for `coder` and `raw` session types so token burn drops
-// from the prior blanket xhigh. Legacy 'low' rows are healed to 'xhigh'
-// on boot; 'medium' is now valid and must NOT be healed.
-export const EFFORT_LEVELS = ['medium', 'high', 'xhigh', 'max'] as const;
+// from the prior blanket xhigh. Issue 8 Part 2 adds 'low' to match
+// `claude --effort`'s full ladder (low, medium, high, xhigh, max) so
+// the selector doesn't hide an option the CLI accepts. Legacy boot-time
+// heal for 'low' (pre-Issue-8) WAS flipping it to 'xhigh'; callers that
+// still heal should be audited if a user explicitly picks 'low' and
+// sees it silently upgraded.
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = typeof EFFORT_LEVELS[number];
 
 // Session-type → default `/effort` level Commander injects post-boot.

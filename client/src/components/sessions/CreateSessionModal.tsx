@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2, Users, Terminal } from 'lucide-react';
-import type { Project } from '@commander/shared';
+import { X, Loader2, Users, Terminal, Code } from 'lucide-react';
+import type { Project, SessionType } from '@commander/shared';
 import { MODEL_PRICING, MODEL_CONTEXT_LIMITS } from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
@@ -20,24 +20,73 @@ const priceDetail = (modelId: string): string => {
     : `${ctxLabel} ctx`;
 };
 
+// Issue 8 Part 1 — full model roster including 1M-context variants.
+// Claude Code's `--model` accepts the `[1m]` suffix to opt a model
+// into its 1M-token context window. Commander exposed only the
+// standard variants pre-Issue-8, which meant Jose had to manually
+// type `claude-opus-4-7[1m]` to use the 1M window. Ordering: Opus →
+// Sonnet → Haiku, within family newest first, standard before [1m]
+// variant. Labels are distinct — no two items share a display name.
 const MODEL_OPTIONS = [
-  { value: 'claude-opus-4-7',  label: 'Opus 4.7',         detail: priceDetail('claude-opus-4-7'),  tier: 'premium' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6',       detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
-  { value: 'claude-haiku-4-5',  label: 'Haiku 4.5',        detail: priceDetail('claude-haiku-4-5'),  tier: 'fast' },
-  { value: 'claude-opus-4-6',   label: 'Opus 4.6 (legacy)', detail: priceDetail('claude-opus-4-6'),  tier: 'legacy' },
+  { value: 'claude-opus-4-7',       label: 'Opus 4.7',                 detail: priceDetail('claude-opus-4-7'),   tier: 'premium' },
+  { value: 'claude-opus-4-7[1m]',   label: 'Opus 4.7 [1M context]',    detail: priceDetail('claude-opus-4-7'),   tier: 'premium' },
+  { value: 'claude-sonnet-4-6',     label: 'Sonnet 4.6',               detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
+  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 [1M context]',  detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
+  { value: 'claude-haiku-4-5',      label: 'Haiku 4.5',                detail: priceDetail('claude-haiku-4-5'),  tier: 'fast' },
+  { value: 'claude-opus-4-6',       label: 'Opus 4.6 (legacy)',        detail: priceDetail('claude-opus-4-6'),   tier: 'legacy' },
+  { value: 'claude-opus-4-6[1m]',   label: 'Opus 4.6 [1M context] (legacy)', detail: priceDetail('claude-opus-4-6'), tier: 'legacy' },
 ];
 
 interface CreateSessionModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => Promise<void>;
+  onCreate: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }) => Promise<void>;
 }
+
+// Phase M1 — three session kinds. Order matches left-to-right layout and
+// is also the order we cycle radio buttons with arrow keys. PM auto-
+// injects the PM bootstrap at /effort high; Coder auto-injects the Coder
+// bootstrap at /effort medium; Raw is plain Claude Code at /effort medium.
+const SESSION_TYPE_OPTIONS: Array<{
+  value: SessionType;
+  label: string;
+  icon: typeof Users;
+  // Teal = PM (strategic), amber = Coder (execution), neutral = Raw.
+  selectedBg: string;
+  selectedColor: string;
+  selectedBorder: string;
+}> = [
+  {
+    value: 'pm',
+    label: 'PM',
+    icon: Users,
+    selectedBg: 'rgba(14, 124, 123, 0.18)',
+    selectedColor: 'var(--color-accent-light)',
+    selectedBorder: 'var(--color-accent)',
+  },
+  {
+    value: 'coder',
+    label: 'Coder',
+    icon: Code,
+    selectedBg: 'rgba(234, 179, 8, 0.18)',
+    selectedColor: 'rgb(250, 204, 21)',
+    selectedBorder: 'rgba(234, 179, 8, 0.7)',
+  },
+  {
+    value: 'raw',
+    label: 'Raw',
+    icon: Terminal,
+    selectedBg: 'rgba(255, 255, 255, 0.08)',
+    selectedColor: 'var(--color-text-primary)',
+    selectedBorder: 'rgba(255, 255, 255, 0.2)',
+  },
+];
 
 export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionModalProps) => {
   const [name, setName] = useState('');
   const [projectPath, setProjectPath] = useState('');
   const [model, setModel] = useState('claude-opus-4-7');
-  const [sessionType, setSessionType] = useState<'pm' | 'raw'>('pm');
+  const [sessionType, setSessionType] = useState<SessionType>('pm');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -164,7 +213,9 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
             </div>
 
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {/* Session type — PM auto-invokes /pm bootstrap; Raw is plain. */}
+              {/* Session type — PM and Coder auto-inject their bootstrap
+                  post-boot; Raw is plain. See SESSION_TYPE_EFFORT_DEFAULTS
+                  for the /effort level each kind gets. */}
               <div>
                 <label
                   className="block text-sm font-medium mb-1.5"
@@ -172,28 +223,20 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                 >
                   Session type
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['pm', 'raw'] as const).map((kind) => {
-                    const Icon = kind === 'pm' ? Users : Terminal;
-                    const label = kind === 'pm' ? 'PM Session' : 'Raw Session';
-                    const selected = sessionType === kind;
+                <div className="grid grid-cols-3 gap-2">
+                  {SESSION_TYPE_OPTIONS.map(({ value, label, icon: Icon, selectedBg, selectedColor, selectedBorder }) => {
+                    const selected = sessionType === value;
                     return (
                       <button
-                        key={kind}
+                        key={value}
                         type="button"
-                        onClick={() => setSessionType(kind)}
-                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-all"
+                        onClick={() => setSessionType(value)}
+                        className="flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm transition-all"
                         style={{
                           fontFamily: M,
-                          background: selected
-                            ? (kind === 'pm' ? 'rgba(14, 124, 123, 0.18)' : 'rgba(255, 255, 255, 0.08)')
-                            : 'rgba(255, 255, 255, 0.04)',
-                          color: selected
-                            ? (kind === 'pm' ? 'var(--color-accent-light)' : 'var(--color-text-primary)')
-                            : 'var(--color-text-secondary)',
-                          border: `1px solid ${selected
-                            ? (kind === 'pm' ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.2)')
-                            : 'rgba(255, 255, 255, 0.08)'}`,
+                          background: selected ? selectedBg : 'rgba(255, 255, 255, 0.04)',
+                          color: selected ? selectedColor : 'var(--color-text-secondary)',
+                          border: `1px solid ${selected ? selectedBorder : 'rgba(255, 255, 255, 0.08)'}`,
                         }}
                       >
                         <Icon size={14} className="shrink-0" />
@@ -206,7 +249,15 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                   className="text-xs mt-1.5"
                   style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}
                 >
-                  PM sessions auto-invoke <code>/pm</code> with JStudio context. Raw sessions are plain Claude Code.
+                  {sessionType === 'pm' && (
+                    <>PM sessions auto-invoke the PM bootstrap at <code>/effort high</code> — strategic planning + orchestration.</>
+                  )}
+                  {sessionType === 'coder' && (
+                    <>Coder sessions auto-invoke the Coder bootstrap at <code>/effort medium</code> — tactical execution of phase prompts and direct coding work.</>
+                  )}
+                  {sessionType === 'raw' && (
+                    <>Raw sessions are plain Claude Code at <code>/effort medium</code> — no bootstrap.</>
+                  )}
                 </p>
               </div>
 
