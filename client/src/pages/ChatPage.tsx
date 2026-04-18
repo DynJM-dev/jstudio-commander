@@ -249,7 +249,14 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // the user sees WHAT Claude is thinking instead of staring at "Thinking…".
   // Only pull from the very last message, and only while the session is
   // still working, to avoid surfacing stale thinking from earlier turns.
-  const isSessionWorking = session?.status === 'working' || userJustSent;
+  //
+  // Phase V.1 fix — gate on !heartbeatStale so a stale working flag (server
+  // flipped to idle mid-WS-drop, client missed the event, or tick feed went
+  // quiet while pane still carries a "Composing" verb) stops driving liveThinking /
+  // liveActivity / liveComposing + the LiveActivityRow. `userJustSent` wins
+  // over stale-gate so the ~100-500ms window between user send → server
+  // bump → WS heartbeat still renders optimistically.
+  const isSessionWorking = userJustSent || (session?.status === 'working' && !heartbeatStale);
   const liveThinking = useMemo(() => {
     if (!isSessionWorking || allMessages.length === 0) return null;
     const last = allMessages[allMessages.length - 1];
