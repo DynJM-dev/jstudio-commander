@@ -27,13 +27,23 @@ export const DEFAULT_MODEL = 'claude-opus-4-7[1m]';
 // Default context window per model id (tokens). Models can opt into the
 // 1M context window with a `[1m]` suffix on the model field, regardless
 // of the base model's default — see `getContextLimit`.
+//
+// Issue 16.1 — the base-ID entries were previously pinned to 1_000_000
+// for every Opus / Sonnet variant, which contradicted Jose's live M4
+// observation: base `claude-opus-4-7` (no suffix) runs with the 200K
+// window; the `[1m]` suffix is what unlocks the extended one. The old
+// table made `getContextLimit('claude-opus-4-7')` return 1M, causing
+// the ContextBar to under-report ctx% for every session stored without
+// the suffix. Commander-spawned sessions default to `[1m]` since Issue
+// 16 (`DEFAULT_MODEL`), so the fix lands cleanly — only pre-16 rows
+// with base IDs see a correction, and the new number is more accurate.
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  'claude-opus-4-7': 1_000_000,
-  'claude-opus-4-6': 1_000_000,
-  'claude-sonnet-4-6': 1_000_000,
+  'claude-opus-4-7': 200_000,
+  'claude-opus-4-6': 200_000,
+  'claude-sonnet-4-6': 200_000,
   'claude-haiku-4-5': 200_000,
   'claude-haiku-4-5-20251001': 200_000,
-  'claude-opus-4-5-20251101': 1_000_000,
+  'claude-opus-4-5-20251101': 200_000,
   'claude-sonnet-4-5-20241022': 200_000,
 };
 

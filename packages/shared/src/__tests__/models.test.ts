@@ -8,17 +8,25 @@ import {
   getContextLimit,
 } from '../constants/models.js';
 
+// Issue 16.1 — base-ID entries corrected from 1_000_000 to 200_000.
+// The `[1m]` suffix is what unlocks the extended window; base IDs map
+// to the standard 200K context. See `getContextLimit` for the suffix
+// branch that still returns 1M when requested via `[1m]`.
 describe('MODEL_CONTEXT_LIMITS', () => {
-  test('claude-opus-4-7 → 1M context window', () => {
-    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-7'], 1_000_000);
+  test('claude-opus-4-7 → 200k (base; Issue 16.1)', () => {
+    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-7'], 200_000);
   });
 
-  test('claude-opus-4-6 → 1M (backward compat)', () => {
-    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-6'], 1_000_000);
+  test('claude-opus-4-6 → 200k (base; Issue 16.1)', () => {
+    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-6'], 200_000);
   });
 
-  test('claude-sonnet-4-6 → 1M context window', () => {
-    assert.equal(MODEL_CONTEXT_LIMITS['claude-sonnet-4-6'], 1_000_000);
+  test('claude-sonnet-4-6 → 200k (base; Issue 16.1)', () => {
+    assert.equal(MODEL_CONTEXT_LIMITS['claude-sonnet-4-6'], 200_000);
+  });
+
+  test('claude-opus-4-5-20251101 → 200k (legacy base)', () => {
+    assert.equal(MODEL_CONTEXT_LIMITS['claude-opus-4-5-20251101'], 200_000);
   });
 
   test('claude-haiku-4-5 → 200k context window', () => {
@@ -61,24 +69,32 @@ describe('normalizeModelId', () => {
 });
 
 describe('getContextLimit', () => {
-  test('claude-opus-4-7 → 1M', () => {
-    assert.equal(getContextLimit('claude-opus-4-7'), 1_000_000);
+  test('claude-opus-4-7 → 200k (base; Issue 16.1)', () => {
+    assert.equal(getContextLimit('claude-opus-4-7'), 200_000);
+  });
+
+  test('claude-opus-4-7[1m] → 1M (suffix opts in)', () => {
+    assert.equal(getContextLimit('claude-opus-4-7[1m]'), 1_000_000);
   });
 
   test('claude-opus-4-6[1m] → 1M (suffix opts in)', () => {
     assert.equal(getContextLimit('claude-opus-4-6[1m]'), 1_000_000);
   });
 
-  test('claude-opus-4-6 → 1M (backward compat)', () => {
-    assert.equal(getContextLimit('claude-opus-4-6'), 1_000_000);
+  test('claude-opus-4-6 → 200k (base; Issue 16.1)', () => {
+    assert.equal(getContextLimit('claude-opus-4-6'), 200_000);
   });
 
-  test('opus short form → resolves to 4.7 → 1M', () => {
-    assert.equal(getContextLimit('opus'), 1_000_000);
+  test('opus short form → resolves to 4.7 base → 200k (Issue 16.1)', () => {
+    assert.equal(getContextLimit('opus'), 200_000);
   });
 
-  test('claude-sonnet-4-6 → 1M', () => {
-    assert.equal(getContextLimit('claude-sonnet-4-6'), 1_000_000);
+  test('claude-sonnet-4-6 → 200k (base; Issue 16.1)', () => {
+    assert.equal(getContextLimit('claude-sonnet-4-6'), 200_000);
+  });
+
+  test('claude-sonnet-4-6[1m] → 1M (suffix opts in)', () => {
+    assert.equal(getContextLimit('claude-sonnet-4-6[1m]'), 1_000_000);
   });
 
   test('claude-haiku-4-5-20251001 → 200k', () => {
