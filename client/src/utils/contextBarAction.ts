@@ -47,6 +47,37 @@ export const shouldSuppressComposingLabel = (
   return isActivityStale(lastActivityAt, nowMs);
 };
 
+// Issue 15.3 §6.2 — client-side unmatched-tool_use detector. JSONL
+// goes quiet between tool_use dispatch and tool_result return (empirically
+// 10+ seconds for a `sleep 10`). During that window the server status
+// may already say 'working' but heartbeat ticks also have a floor, so
+// the OR-gate uses the ChatMessage tail as an independent signal: if
+// the latest tool_use has no matching tool_result yet, a tool is
+// executing right now, regardless of what heartbeats say.
+//
+// Bounded scan — walks the last `window` messages (default 8) for
+// speed. Matches by tool_use `id` ↔ tool_result `toolUseId` per the
+// parser's verbatim preservation.
+export const hasUnmatchedToolUse = (
+  messages: ChatMessage[],
+  window = 8,
+): boolean => {
+  if (messages.length === 0) return false;
+  const start = Math.max(0, messages.length - window);
+  const toolUseIds = new Set<string>();
+  const resultIds = new Set<string>();
+  for (let i = start; i < messages.length; i++) {
+    const m = messages[i];
+    if (!m) continue;
+    for (const b of m.content) {
+      if (b.type === 'tool_use' && b.id) toolUseIds.add(b.id);
+      else if (b.type === 'tool_result' && b.toolUseId) resultIds.add(b.toolUseId);
+    }
+  }
+  for (const id of toolUseIds) if (!resultIds.has(id)) return true;
+  return false;
+};
+
 // Pure version of ContextBar's `getActionInfo`. Scans backward
 // for the last assistant message and derives an action label from
 // its last content block. Returns null when no assistant message is

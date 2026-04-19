@@ -7,6 +7,7 @@ import {
   shouldSuppressComposingLabel,
   getComposingLabelIfApplicable,
   resolveActionLabel,
+  hasUnmatchedToolUse,
 } from '../contextBarAction.js';
 
 const asstMsg = (lastBlockType: string, text = ''): ChatMessage => ({
@@ -342,5 +343,72 @@ describe('resolveActionLabel — Issue 15.3 typed SessionState path', () => {
       sessionState: { kind: 'Compacting' },
     });
     assert.equal(out, 'Compacting context...');
+  });
+});
+
+// Issue 15.3 §6.2 — the client-side working OR-gate must detect a
+// tool executing right now from the ChatMessage tail alone, so the
+// "Working" indicator stays lit during the JSONL-silent gap between
+// tool_use dispatch and tool_result flush (sleep 10 → Δ≈10s).
+describe('hasUnmatchedToolUse — §6.2 OR-gate signal', () => {
+  const asstWithBlocks = (id: string, blocks: any[]): ChatMessage => ({
+    id, parentId: null, role: 'assistant', timestamp: '2026-04-19T23:47:14.000Z',
+    content: blocks, isSidechain: false,
+  });
+  const userWithResult = (id: string, toolUseId: string): ChatMessage => ({
+    id, parentId: null, role: 'user', timestamp: '2026-04-19T23:47:24.000Z',
+    content: [{ type: 'tool_result', toolUseId, content: 'ok' }],
+    isSidechain: false,
+  });
+
+  test('empty messages → false', () => {
+    assert.equal(hasUnmatchedToolUse([]), false);
+  });
+
+  test('tool_use with matching tool_result → false (tool completed)', () => {
+    const msgs: ChatMessage[] = [
+      asstWithBlocks('m1', [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: {} }]),
+      userWithResult('m2', 'tu1'),
+    ];
+    assert.equal(hasUnmatchedToolUse(msgs), false);
+  });
+
+  test('tool_use without matching tool_result → true (tool in flight)', () => {
+    // User-observable: this is the live state during `sleep 10` —
+    // tool_use has flushed but tool_result has not. The OR-gate must
+    // return true so the ContextBar keeps the indicator lit.
+    const msgs: ChatMessage[] = [
+      asstWithBlocks('m1', [{ type: 'tool_use', id: 'tu_running', name: 'Bash', input: { command: 'sleep 10' } }]),
+    ];
+    assert.equal(hasUnmatchedToolUse(msgs), true);
+  });
+
+  test('multiple tool_uses, one unmatched → true', () => {
+    const msgs: ChatMessage[] = [
+      asstWithBlocks('m1', [{ type: 'tool_use', id: 'tu1', name: 'Read', input: {} }]),
+      userWithResult('m2', 'tu1'),
+      asstWithBlocks('m3', [{ type: 'tool_use', id: 'tu2', name: 'Bash', input: {} }]),
+    ];
+    assert.equal(hasUnmatchedToolUse(msgs), true);
+  });
+
+  test('plain text-only assistant reply → false', () => {
+    const msgs: ChatMessage[] = [
+      asstWithBlocks('m1', [{ type: 'text', text: 'hello' }]),
+    ];
+    assert.equal(hasUnmatchedToolUse(msgs), false);
+  });
+
+  test('bounded window — unmatched tool_use outside window is ignored', () => {
+    // The scan walks only the last N messages so stale tool_uses
+    // from long-ago turns don't falsely force "working" forever.
+    const msgs: ChatMessage[] = [
+      asstWithBlocks('m1', [{ type: 'tool_use', id: 'tu_old', name: 'Bash', input: {} }]),
+    ];
+    for (let i = 2; i <= 20; i++) {
+      msgs.push(asstWithBlocks(`m${i}`, [{ type: 'text', text: 'later turn' }]));
+    }
+    // Default window = 8, so tu_old at index 0 is out of scope.
+    assert.equal(hasUnmatchedToolUse(msgs), false);
   });
 });

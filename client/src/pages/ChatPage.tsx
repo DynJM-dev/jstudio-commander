@@ -21,6 +21,7 @@ import { ContextLowToast } from '../components/shared/ContextLowToast';
 import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
+import { hasUnmatchedToolUse } from '../utils/contextBarAction';
 
 const M = 'Montserrat, sans-serif';
 
@@ -317,7 +318,18 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // liveActivity / liveComposing + the LiveActivityRow. `userJustSent` wins
   // over stale-gate so the ~100-500ms window between user send → server
   // bump → WS heartbeat still renders optimistically.
-  const isSessionWorking = userJustSent || (session?.status === 'working' && !heartbeatStale);
+  // Issue 15.3 §6.2 — OR-gate with client-side unmatched tool_use
+  // detection. Between tool_use dispatch and tool_result flush, JSONL
+  // (and thus session_tick) goes quiet for the full duration of the
+  // tool (empirically 10+s for `sleep 10`). During that window the
+  // server's heartbeat-stale gate can fire and mask a genuinely
+  // working session. The unmatched-tool_use predicate is a pure
+  // ChatMessage-tail signal that doesn't depend on heartbeats.
+  const unmatchedToolUse = useMemo(() => hasUnmatchedToolUse(allMessages), [allMessages]);
+  const isSessionWorking =
+    userJustSent
+    || (session?.status === 'working' && !heartbeatStale)
+    || unmatchedToolUse;
   const liveThinking = useMemo(() => {
     if (!isSessionWorking || allMessages.length === 0) return null;
     const last = allMessages[allMessages.length - 1];
