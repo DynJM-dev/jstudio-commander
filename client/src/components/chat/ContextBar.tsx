@@ -21,6 +21,7 @@ import { api } from '../../services/api';
 import { getContextLimit } from '@commander/shared';
 import { useSessions } from '../../hooks/useSessions';
 import { isActivityStale } from '../../utils/contextBarAction';
+import { bandForPercentage, bandColor } from '../../utils/contextBands';
 
 const M = 'Montserrat, sans-serif';
 
@@ -250,11 +251,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   const compacted = contextTokens !== undefined && contextTokens !== totalTokens;
   const contextPercent = resolveContextPercent(sessionTick, displayTokens, contextLimit);
 
-  const barColor = contextPercent > 85
-    ? 'var(--color-error)'
-    : contextPercent > 60
-      ? 'var(--color-idle)'
-      : 'var(--color-accent)';
+  // Issue 9 Part 1 finish — progress bar removed. Percentage gets the
+  // same tiered color palette HeaderStatsWidget's 5h/7d chips use
+  // (bandForPercentage + bandColor in utils/contextBands). One source
+  // of truth for "how much of a budget have you used" coloring across
+  // the chat bar and the top-bar chip row.
+  const contextBandColor = bandColor(bandForPercentage(contextPercent));
 
   const showWarning = contextPercent > 85;
 
@@ -641,31 +643,23 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
 
-      {/* Context progress bar — Issue 9 Part 1: "Context:" text replaced
-          by Brain lucide icon (matches Issue 8/8.1 lucide-only pattern;
-          no emoji). Icon sits flush with the bar so the cluster reads as
-          one unit. */}
+      {/* Issue 9 Part 1 finish — context indicator collapsed to Brain
+          icon + percentage. Progress bar removed (Jose's feedback: the
+          number is sufficient quick-glance signal, the bar added width
+          without information). Brain is pink (#EC4899, same hex the
+          teammate palette uses) + size 16 so it reads as a peer to
+          adjacent text, not a decorative tick. Percentage adopts the
+          HeaderStatsWidget tier palette via bandForPercentage / bandColor:
+          green <50, yellow <80, orange <90, red ≥90. */}
       <div
         className="flex items-center gap-1.5 shrink-0"
         aria-label={`Context window usage: ${contextPercent}%`}
         title={`Context window usage: ${contextPercent}%`}
       >
-        <Brain size={13} style={{ color: 'var(--color-text-secondary)' }} />
-        <div
-          className="w-16 sm:w-20 h-1.5 rounded-full overflow-hidden"
-          style={{ background: 'rgba(255, 255, 255, 0.06)' }}
-        >
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{
-              width: `${contextPercent}%`,
-              background: barColor,
-            }}
-          />
-        </div>
+        <Brain size={16} style={{ color: '#EC4899' }} />
         <span
           className="font-mono-stats text-xs shrink-0"
-          style={{ color: 'var(--color-text-secondary)' }}
+          style={{ color: contextBandColor }}
         >
           {contextPercent}%
         </span>
