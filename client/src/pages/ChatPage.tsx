@@ -45,7 +45,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // Phase M — live session telemetry from the statusline forwarder.
   // Drives both the context-band color strip (when present) and the
   // context-low toast that fires on upward band crossings.
-  const tick = useSessionTick(sessionId);
+  const { tick, refetch: refetchTick } = useSessionTick(sessionId);
   const ctxPct = tick?.contextWindow.usedPercentage ?? null;
   const ctxBand = bandForPercentage(ctxPct);
   // Phase N.0 Patch 3 — if no heartbeat in 30s, we suppress the
@@ -185,6 +185,35 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
       setUserJustSent(false);
     }
   }, [userJustSent, session?.status]);
+
+  // Issue 15.1-C — on compact_boundary arrival, force-refresh the
+  // sessionTick + chat stats so ContextBar's ctx% and in-window tokens
+  // reflect the post-compact state within ~3s instead of staying stale
+  // until the next natural turn activity pushes a fresh tick. Fires
+  // once per new boundary via a `lastSeenCompactIdRef` gate — switching
+  // sessions resets via sessionId-keyed clear below. Trivially reversible
+  // (1-line revert to the effect + the ref).
+  const lastSeenCompactIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    lastSeenCompactIdRef.current = null;
+  }, [sessionId]);
+  useEffect(() => {
+    if (messages.length === 0) return;
+    // Walk from the end for the most recent compact_boundary.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role !== 'system') continue;
+      if (!m.content.some((b) => b.type === 'compact_boundary')) continue;
+      if (lastSeenCompactIdRef.current === m.id) return;
+      lastSeenCompactIdRef.current = m.id;
+      // Fire-and-forget refreshes. refetchTick pulls the freshest
+      // persisted tick (post-compact ctx%); refetch re-pulls chat +
+      // stats (contextTokens resets past the boundary per chat.routes).
+      void refetchTick();
+      void refetch();
+      return;
+    }
+  }, [messages, refetch, refetchTick]);
 
   // Auto-resize textarea
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
