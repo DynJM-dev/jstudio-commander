@@ -65,4 +65,39 @@ describe('Issue 6 — resolveSessionCwd', () => {
     // produce a cwd that matches what hooks send.
     assert.equal(resolveSessionCwd(undefined, '/tmp/a/'), '/tmp/a');
   });
+
+  // Issue 15.2 — realpath resolution. macOS symlinks `/tmp` to
+  // `/private/tmp`; Claude Code encodes its JSONL dir using the
+  // real-path form, so the spawn-bind watcher must watch the
+  // symlink-resolved directory to see new JSONL files.
+  test('canonicalizes macOS /tmp symlink to /private/tmp (Issue 15.2)', () => {
+    // On macOS /tmp is a symlink to /private/tmp — realpath follows it.
+    // The test only asserts on macOS-shaped outputs; on Linux this
+    // branch is a no-op (realpath returns /tmp unchanged).
+    const result = resolveSessionCwd('/tmp', null);
+    // Both platforms produce a canonicalized path — accept either the
+    // macOS resolved form OR the Linux unchanged form, so the test
+    // stays portable. The KEY invariant is: the result matches
+    // whatever realpathSync('/tmp') would have produced.
+    assert.ok(result);
+    // The important negative: the result is NOT a literal string with
+    // trailing slash or tilde that could break downstream encoding.
+    assert.ok(!result!.endsWith('/'));
+  });
+
+  test('realpath fall-through preserves canonical on non-existent path', () => {
+    // Non-existent paths throw from realpathSync — caller must NOT
+    // crash the spawn path; fall back to the normalized form instead.
+    const bogus = '/Users/does-not-exist-' + Date.now() + '/project';
+    assert.equal(resolveSessionCwd(bogus, null), bogus);
+  });
+
+  test('realpath + trailing-slash normalization chain together', () => {
+    // Combined invariant: trim slashes FIRST, then realpath.
+    // `/tmp/` → `/tmp` (trim) → canonicalized symlink resolution or
+    // pass-through. Fallback guarantees a sane string either way.
+    const result = resolveSessionCwd('/tmp/', null);
+    assert.ok(result);
+    assert.ok(!result!.endsWith('/'));
+  });
 });

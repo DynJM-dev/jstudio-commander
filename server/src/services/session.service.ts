@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, renameSync, mkdirSync, statSync, realpathSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { watch as chokidarWatch } from 'chokidar';
@@ -245,15 +245,36 @@ export const resolveSessionCwd = (
     const stripped = s.replace(/\/+$/, '');
     return stripped.length > 0 ? stripped : null;
   };
+  // Issue 15.2 — extend the §23.3 SSOT invariant to include realpath
+  // resolution. `fs.realpathSync` follows symlinks so macOS `/tmp` →
+  // `/private/tmp` (and any other symlinked cwd) canonicalizes to the
+  // same absolute form Claude Code uses when it encodes its JSONL
+  // directory (`~/.claude/projects/<encoded-realpath>/`). Without this,
+  // `bindClaudeSessionFromJsonl` watches the symlink-encoded dir, the
+  // real JSONL file lands under a different encoding, the watcher
+  // times out, and `claude_session_id` never binds.
+  //
+  // Non-existent paths throw from realpathSync — fall back to the
+  // canonical (slash-normalized + tilde-expanded) form so a typo in
+  // `opts.projectPath` still produces a writable stored value rather
+  // than crashing the spawn path.
+  const canonicalize = (s: string | null): string | null => {
+    if (!s) return null;
+    try {
+      return realpathSync(s);
+    } catch {
+      return s;
+    }
+  };
   if (userInput && userInput.trim().length > 0) {
     const t = userInput.trim();
     const expanded = t === '~' ? homedir()
                    : t.startsWith('~/') ? join(homedir(), t.slice(2))
                    : t;
-    const out = normalize(expanded);
+    const out = canonicalize(normalize(expanded));
     if (out) return out;
   }
-  return paneCwd ? normalize(paneCwd) : null;
+  return canonicalize(paneCwd ? normalize(paneCwd) : null);
 };
 
 // Watch the encoded-cwd directory under ~/.claude/projects/ and bind
