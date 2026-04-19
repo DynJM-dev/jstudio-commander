@@ -617,21 +617,11 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         {formatTokens(displayTokens)} tokens
       </span>
 
-      {/* Streaming token rate — only while working and we've collected at
-          least two samples. Color reflects tone (healthy/neutral/slow). */}
-      {isWorking && tokenRate > 0 && (
-        <span
-          className="font-mono-stats text-xs shrink-0 hidden sm:inline"
-          style={{ color: rateColor }}
-          title={
-            tokenRateTone === 'slow'
-              ? 'Rate has been below 3 tok/s for > 15s — Claude may be stuck'
-              : `${tokenRate} tokens/sec`
-          }
-        >
-          · {tokenRate}/s
-        </span>
-      )}
+      {/* Issue 9.1 Item 2 — streaming token-rate throughput chip removed.
+          Per Jose: not useful; session-total tokens above is the only
+          tokens-related survivor. tokenRate / tokenRateTone / rateColor
+          are still computed (telemetry pipeline untouched) so downstream
+          consumers can adopt them without a re-plumbing. */}
 
       {/* Issue 9 Part 1 refinement — per-session cost display removed
           from ContextBar. Redundant: HeaderStatsWidget already surfaces
