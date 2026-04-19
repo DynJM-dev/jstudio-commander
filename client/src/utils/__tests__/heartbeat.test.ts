@@ -99,3 +99,32 @@ describe('LiveActivityRow visibility gate — Phase N.0 Patch 3', () => {
     assert.equal(liveActivityVisible(false, true), false);
   });
 });
+
+// Issue 15.3 §6.3 — heartbeat-stale tool-exec exemption. ChatPage
+// passes `heartbeatStale && !unmatchedToolUse` down as the effective
+// stale flag. Mirror that composition here so a regression in either
+// half fails the test instead of silently re-hiding LiveActivityRow
+// during a 10s `sleep 10`.
+const effectiveStale = (heartbeatStale: boolean, unmatchedToolUse: boolean): boolean =>
+  heartbeatStale && !unmatchedToolUse;
+
+describe('§6.3 heartbeat-stale tool-exec exemption', () => {
+  test('stale heartbeat + NO unmatched tool_use → effectively stale (hide)', () => {
+    // Genuinely idle stuck session. Keep the old hide behavior.
+    assert.equal(effectiveStale(true, false), true);
+    assert.equal(liveActivityVisible(true, effectiveStale(true, false)), false);
+  });
+
+  test('stale heartbeat + unmatched tool_use → NOT stale (keep visible)', () => {
+    // User-observable: Bash running `sleep 10` — no JSONL in 10s,
+    // heartbeat falls stale, but tool IS in-flight. ContextBar must
+    // keep indicator lit.
+    assert.equal(effectiveStale(true, true), false);
+    assert.equal(liveActivityVisible(true, effectiveStale(true, true)), true);
+  });
+
+  test('fresh heartbeat regardless of tool_use → fresh', () => {
+    assert.equal(effectiveStale(false, false), false);
+    assert.equal(effectiveStale(false, true), false);
+  });
+});

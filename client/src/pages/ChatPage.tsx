@@ -492,7 +492,11 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
           shimmerState={shimmerState}
           sessionActivity={session?.activity ?? null}
           sessionTick={tick}
-          heartbeatStale={heartbeatStale}
+          // Issue 15.3 §6.3 — tool-exec exemption. An unmatched
+          // tool_use in the ChatMessage tail is independent proof that
+          // work is happening right now, so we must NOT flip to stale
+          // just because JSONL went quiet during the tool's runtime.
+          heartbeatStale={heartbeatStale && !unmatchedToolUse}
         />
       )}
 
