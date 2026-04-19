@@ -1,12 +1,31 @@
 import type { SessionStatus, SessionActivity, StatusFlip } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { agentStatusService, applyActivityHints } from './agent-status.service.js';
+import { hasPendingToolUseInTranscript } from './jsonl-parser.service.js';
 import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
 
 const POLL_INTERVAL = 5_000; // 5 seconds
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Issue 15.1-H — parse the sessions.transcript_paths JSON column and
+// return the most recent entry, or null when the row has no transcripts
+// bound yet. Defensive against malformed JSON and empty arrays so a
+// corrupted cell can't crash the poller loop. Most-recent = last entry
+// per Issue 11's append-on-bind semantics (post-rotation paths land at
+// the tail of the array).
+const latestTranscriptPath = (raw: string | null | undefined): string | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const last = parsed[parsed.length - 1];
+    return typeof last === 'string' && last.length > 0 ? last : null;
+  } catch {
+    return null;
+  }
+};
 
 // In-memory cache of last known statuses to avoid unnecessary DB writes
 const lastKnownStatus = new Map<string, SessionStatus>();
@@ -145,7 +164,7 @@ const poll = (): void => {
   // column for other queries; the poller no longer needs it in this
   // SELECT.
   const activeSessions = db.prepare(
-    `SELECT id, tmux_session, status, last_hook_at, last_activity_at, force_idled_at
+    `SELECT id, tmux_session, status, last_hook_at, last_activity_at, force_idled_at, transcript_paths
      FROM sessions
      WHERE status != 'stopped' OR tmux_session LIKE '\\%%' ESCAPE '\\'`,
   ).all() as Array<{
@@ -155,6 +174,7 @@ const poll = (): void => {
     last_hook_at: number;
     last_activity_at: number;
     force_idled_at: number;
+    transcript_paths: string;
   }>;
 
   if (activeSessions.length === 0) return;
@@ -221,6 +241,44 @@ const poll = (): void => {
       continue;
     }
 
+    // Issue 15.1-H — structured signal is authoritative over the pane
+    // for active-tool detection. Placed BEFORE the hook-yield gate
+    // because the yield window is ALWAYS active during tool execution
+    // (Stop hooks fire every time the LLM yields, keeping last_hook_at
+    // fresh for the whole tool run). Without this position the gate
+    // below would skip reclassification for the full tool duration
+    // and status would stay at whatever it was pre-tool.
+    //
+    // Blank-pane tool cases (`sleep 10`, network calls, background
+    // jobs) show `❯` idle prompt while bash is running. The pane
+    // classifier returns `'idle ❯ prompt visible'` — 15.1-D's
+    // allowlist correctly excludes that evidence from the timestamp-
+    // upgrade path. But the SESSION is still doing work: JSONL has
+    // an `assistant tool_use` block with no matching `user tool_result`
+    // yet. `hasPendingToolUseInTranscript` reads a bounded tail and
+    // returns true in exactly that state.
+    //
+    // Per §24.2 activity-event verification: structured tool-pairing
+    // signal outranks pane-text pattern matching. When gate says
+    // pending, force `working`. Pane-idle is wrong in that window.
+    //
+    // Scope:
+    //   - Only upgrades `idle` → `working`. `waiting` untouched — a
+    //     visible approval prompt IS the tool's user-action gate.
+    //     `working` untouched (no-op). `error` / `stopped` untouched.
+    //   - Sessions with no transcript path skip this check — pane +
+    //     timestamp path stays authoritative until JSONL binds.
+    //   - Cooldown gate above still wins: a force-idled session stays
+    //     idle for FORCE_IDLE_COOLDOWN_MS regardless of transcript
+    //     state, preserving 15.1-D's oscillation protection.
+    if (hinted.status === 'idle') {
+      const transcriptPath = latestTranscriptPath(session.transcript_paths);
+      if (transcriptPath && hasPendingToolUseInTranscript(transcriptPath)) {
+        newStatus = 'working';
+        evidence = `pending-tool-use authoritative (over "${hinted.evidence}")`;
+      }
+    }
+
     // Phase T Patch 2 revision — hook-authoritative yield. If ANY hook
     // event matched this session within HOOK_YIELD_MS (60s), trust the
     // hook cascade entirely and skip pane-regex reclassification. No
@@ -231,8 +289,13 @@ const poll = (): void => {
     // long-idle sessions (no hook coverage, e.g. a Claude that died
     // with no SessionEnd) still flip to stopped when tmux confirms the
     // pane is gone.
+    //
+    // Issue 15.1-H exception: if the override above flipped newStatus
+    // to 'working' via pending-tool-use, skip the yield (we want that
+    // upgrade to land even if a recent hook was fired).
     const msSinceHook = Date.now() - Number(session.last_hook_at ?? 0);
-    if (msSinceHook < HOOK_YIELD_MS) {
+    const pendingToolOverrideFired = newStatus === 'working' && evidence.startsWith('pending-tool-use authoritative');
+    if (msSinceHook < HOOK_YIELD_MS && !pendingToolOverrideFired) {
       continue;
     }
 
