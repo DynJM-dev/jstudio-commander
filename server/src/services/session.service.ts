@@ -4,7 +4,7 @@ import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { watch as chokidarWatch } from 'chokidar';
 import type { Session, SessionStatus, EffortLevel, SessionType } from '@commander/shared';
-import { SESSION_TYPE_EFFORT_DEFAULTS } from '@commander/shared';
+import { SESSION_TYPE_EFFORT_DEFAULTS, DEFAULT_MODEL } from '@commander/shared';
 import { config } from '../config.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
 
@@ -371,7 +371,7 @@ export const sessionService = {
     // (getClaudeEffortLevel()) may differ from what Commander sessions want.
     const defaults: Partial<Record<string, unknown>> = {
       status: 'idle',
-      model: 'claude-opus-4-7',
+      model: DEFAULT_MODEL,
       effort_level: 'xhigh',
       session_type: 'raw',
     };
@@ -405,7 +405,7 @@ export const sessionService = {
     const id = uuidv4();
     const slug = opts.name || generateSlug();
     const tmuxName = generateTmuxName(id);
-    const model = opts.model || 'claude-opus-4-7';
+    const model = opts.model || DEFAULT_MODEL;
 
     // Issue 10 — canonicalize user input BEFORE spawning tmux. `tmux
     // new-session -c <cwd>` runs via `execFile` (no shell) so a literal

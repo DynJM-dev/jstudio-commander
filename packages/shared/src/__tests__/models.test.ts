@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MODEL_CONTEXT_LIMITS,
   DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_MODEL,
   normalizeModelId,
   getContextLimit,
 } from '../constants/models.js';
@@ -111,5 +112,16 @@ describe('getContextLimit', () => {
 
   test('case-insensitive [1M] suffix', () => {
     assert.equal(getContextLimit('claude-opus-4-6[1M]'), 1_000_000);
+  });
+});
+
+// Issue 16 — Commander-spawned sessions default to the 1M-context variant.
+describe('DEFAULT_MODEL — Issue 16', () => {
+  test('default id is the [1m] variant of opus 4.7', () => {
+    assert.equal(DEFAULT_MODEL, 'claude-opus-4-7[1m]');
+  });
+
+  test('getContextLimit(DEFAULT_MODEL) → 1M', () => {
+    assert.equal(getContextLimit(DEFAULT_MODEL), 1_000_000);
   });
 });

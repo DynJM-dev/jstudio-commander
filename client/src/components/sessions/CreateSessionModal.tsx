@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal, Code } from 'lucide-react';
 import type { Project, SessionType } from '@commander/shared';
-import { MODEL_PRICING, MODEL_CONTEXT_LIMITS } from '@commander/shared';
+import { MODEL_PRICING, MODEL_CONTEXT_LIMITS, DEFAULT_MODEL } from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -85,7 +85,7 @@ const SESSION_TYPE_OPTIONS: Array<{
 export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionModalProps) => {
   const [name, setName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [model, setModel] = useState('claude-opus-4-7');
+  const [model, setModel] = useState(DEFAULT_MODEL);
   const [sessionType, setSessionType] = useState<SessionType>('pm');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -118,7 +118,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
     if (open) {
       setName('');
       setProjectPath('');
-      setModel('claude-opus-4-7');
+      setModel(DEFAULT_MODEL);
       setSessionType('pm');
       setIsSubmitting(false);
     }

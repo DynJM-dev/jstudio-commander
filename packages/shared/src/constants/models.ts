@@ -18,7 +18,11 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'claude-sonnet-4-5-20241022':   { input: 3.00,  output: 15.00, cacheRead: 0.30, cacheCreation: 3.75 },
 };
 
-export const DEFAULT_MODEL = 'claude-opus-4-7';
+// Commander-spawned sessions default to the 1M-context variant. The base
+// `claude-opus-4-7` id loads the 200K window; the `[1m]` suffix is what
+// unlocks the extended window in Claude Code's --model flag. Jose's live
+// M4 Coder observation drove the flip (Issue 16).
+export const DEFAULT_MODEL = 'claude-opus-4-7[1m]';
 
 // Default context window per model id (tokens). Models can opt into the
 // 1M context window with a `[1m]` suffix on the model field, regardless
