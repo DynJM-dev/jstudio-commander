@@ -18,6 +18,7 @@ import { UnmappedEventChip } from './UnmappedEventChip';
 import { InlineReminderNote } from './InlineReminderNote';
 import { FileAttachmentChip } from './FileAttachmentChip';
 import { CompactFileRefChip } from './CompactFileRefChip';
+import { LocalCommandNote } from './LocalCommandNote';
 import { LiveActivityRow } from './LiveActivityRow';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
@@ -133,6 +134,17 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
       <CompactFileRefChip
         filename={firstBlock.filename}
         displayPath={firstBlock.displayPath}
+      />
+    );
+  }
+  // Issue 9 Part 3 — typed slash-command output renderer. Was falling
+  // through to UnmappedEventChip pre-9.3; now renders a muted inline
+  // chip with stdout / stderr distinction + click-to-expand payload.
+  if (firstBlock?.type === 'local_command') {
+    return (
+      <LocalCommandNote
+        stream={firstBlock.stream}
+        text={firstBlock.text}
       />
     );
   }

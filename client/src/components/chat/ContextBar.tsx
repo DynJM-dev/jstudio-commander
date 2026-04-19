@@ -662,14 +662,16 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
 
-      {/* Context progress bar */}
-      <div className="flex items-center gap-1.5 shrink-0">
-        <span
-          className="text-xs hidden sm:inline-block"
-          style={{ color: 'var(--color-text-secondary)' }}
-        >
-          Context:
-        </span>
+      {/* Context progress bar — Issue 9 Part 1: "Context:" text replaced
+          by Brain lucide icon (matches Issue 8/8.1 lucide-only pattern;
+          no emoji). Icon sits flush with the bar so the cluster reads as
+          one unit. */}
+      <div
+        className="flex items-center gap-1.5 shrink-0"
+        aria-label={`Context window usage: ${contextPercent}%`}
+        title={`Context window usage: ${contextPercent}%`}
+      >
+        <Brain size={13} style={{ color: 'var(--color-text-secondary)' }} />
         <div
           className="w-16 sm:w-20 h-1.5 rounded-full overflow-hidden"
           style={{ background: 'rgba(255, 255, 255, 0.06)' }}

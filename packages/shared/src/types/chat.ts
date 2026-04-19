@@ -41,6 +41,13 @@ export type ContentBlock =
   // pre-compact context. No content (by design — compaction drops it);
   // UI treats these as historical references with muted styling.
   | { type: 'compact_file_ref'; filename: string; displayPath: string }
+  // Issue 9 Part 3 — output from Claude Code slash commands
+  // (`/status`, `/compact`, `/login`, etc.) that Claude Code emits
+  // as `system.subtype: local_command`. Payload is stdout or stderr
+  // wrapped in `<local-command-stdout>` / `<local-command-stderr>`
+  // tags. The tag kind drives chrome (error-red for stderr, muted
+  // for stdout); the body is click-to-expand.
+  | { type: 'local_command'; stream: 'stdout' | 'stderr'; text: string }
   | { type: 'debug_unmapped'; kind: UnmappedKind; key: string; raw?: string };
 
 export interface ChatMessage {

@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import type { SessionType } from '@commander/shared';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
 import { statusPollerService } from '../services/status-poller.service.js';
+import { detectPrompts } from '../services/prompt-detector.service.js';
 
 export const sessionRoutes = async (app: FastifyInstance) => {
   // List all sessions (polled frequently — suppress logs)
@@ -44,7 +46,7 @@ export const sessionRoutes = async (app: FastifyInstance) => {
   );
 
   // Create session
-  app.post<{ Body: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' } }>(
+  app.post<{ Body: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType } }>(
     '/api/sessions',
     async (request, reply) => {
       try {
@@ -188,155 +190,16 @@ export const sessionRoutes = async (app: FastifyInstance) => {
       const raw = tmuxService.capturePane(session.tmuxSession, lines);
       const outputLines = raw.split('\n');
 
-      // Only check the last 3 non-empty lines for prompts — active prompts are always at the bottom.
-      // Old prompt text scrolled up in the pane must NOT trigger detection.
-      const bottomLines = outputLines.slice(-5).filter((l) => l.trim().length > 0).slice(-3);
-      const bottomRaw = bottomLines.join('\n');
-
-      // Detect interactive prompts
-      const prompts: { type: string; message: string; context?: string; options?: string[] }[] = [];
-
-      // Kill-switches — footer states that CONCLUSIVELY mean "no
-      // permission/confirm prompt can be active right now". They run before
-      // any detection so stray prompt-shaped characters elsewhere in the
-      // pane (a `?` in a user message, a "Continue?" from chat prose)
-      // don't misfire a popup the user then has to dismiss.
-      //
-      // 1. `⏵⏵ bypass permissions on` — Claude Code's bypass-permissions
-      //    mode is active. No permission prompt can fire in this mode by
-      //    design; anything that looks like one is chrome or chat content.
-      // 2. `N teammate` in footer + "Waiting on input" status — this is
-      //    the team-lead-waiting-on-teammate idle state, not a user-facing
-      //    prompt. The team lead is paused for a teammate reply, not for
-      //    a click.
-      const footerTail = outputLines.slice(-15).join('\n');
-      const hasBypassPermissions = /⏵⏵\s*bypass permissions on/i.test(footerTail);
-      const waitingOnTeammate =
-        /\b\d+\s+teammates?\b/i.test(footerTail) &&
-        /Waiting on input/i.test(footerTail);
-      if (hasBypassPermissions || waitingOnTeammate) {
-        return {
-          output: raw,
-          lines: outputLines,
-          alive: true,
-          prompts,
-        };
-      }
-
-      // Helper: extract tool call context from terminal output
-      // Looks for the block between ─── separator and the prompt options
-      const extractToolContext = (): string | undefined => {
-        // Find the separator line (────)
-        let sepIdx = -1;
-        for (let k = outputLines.length - 1; k >= 0; k--) {
-          if (/^─{4,}/.test((outputLines[k] ?? '').trim())) { sepIdx = k; break; }
-        }
-        if (sepIdx < 0) return undefined;
-
-        // Collect lines from separator to the question/options
-        const contextLines: string[] = [];
-        for (let j = sepIdx + 1; j < outputLines.length; j++) {
-          const line = outputLines[j]?.trim() ?? '';
-          // Stop at the question line or option markers
-          if (/^\s*[❯>]\s*\d+\./.test(outputLines[j] ?? '')) break;
-          if (line.startsWith('Esc to cancel')) break;
-          if (/^Do you want/.test(line)) break;
-          if (line === '') continue;
-          contextLines.push(line);
-        }
-        return contextLines.length > 0 ? contextLines.join('\n') : undefined;
-      };
-
-      // Trust prompt
-      if (bottomRaw.includes('trust this folder') || bottomRaw.includes('Yes, I trust')) {
-        prompts.push({
-          type: 'trust',
-          message: 'Claude Code is asking if you trust this workspace folder.',
-          options: ['Yes, I trust this folder', 'No, exit'],
-        });
-      }
-
-      // Numbered choice prompts — look for ❯ marker on a numbered option (Claude's interactive UI)
-      // Only search the last 10 lines to avoid matching numbered content in the conversation
-      const tailLines = outputLines.slice(-10);
-      const markerIdx = tailLines.findIndex((l) => /^\s*❯\s*\d+\./.test(l));
-      if (markerIdx >= 0) {
-        // Collect all numbered options from the tail
-        const options = tailLines
-          .filter((l) => /^\s*[❯ ]\s*\d+\./.test(l))
-          .map((l) => l.replace(/^\s*[❯ ]\s*/, '').trim());
-        if (options.length > 1) {
-          // Find the question text: walk backwards from the marker in the FULL output
-          const fullMarkerIdx = outputLines.length - 10 + markerIdx;
-          let contextMsg = 'Choose an option';
-          for (let j = fullMarkerIdx - 1; j >= Math.max(0, fullMarkerIdx - 5); j--) {
-            const line = outputLines[j]?.trim();
-            if (line && line.length > 5 && !line.startsWith('─') && !line.startsWith('⎿') && !/^\s*[❯ ]\s*\d+\./.test(line)) {
-              contextMsg = line;
-              break;
-            }
-          }
-          prompts.push({ type: 'choice', message: contextMsg, context: extractToolContext(), options });
-        }
-      }
-
-      // Allow/Deny permission prompts (tool approval)
-      if (!prompts.some((p) => p.type === 'choice') && (bottomRaw.includes('Allow') && (bottomRaw.includes('Deny') || bottomRaw.includes('allow always')))) {
-        const contextLine = outputLines.find((l) =>
-          l.includes('Allow') && (l.includes('run:') || l.includes('to run') || l.includes('to execute'))
-        );
-        const actionLine = outputLines.find((l) =>
-          l.includes('Allow') && !l.includes('run:') && !l.includes('to run')
-        );
-        const message = contextLine?.trim() ?? actionLine?.trim() ?? 'Permission requested';
-        const hasAlwaysOpt = bottomRaw.includes('always') || bottomRaw.includes('Allow always');
-        prompts.push({
-          type: 'permission',
-          message,
-          context: extractToolContext(),
-          options: hasAlwaysOpt ? ['Allow', 'Allow always', 'Deny'] : ['Allow', 'Deny'],
-        });
-      }
-
-      // NOTE: ⏵⏵ accept edits on is a persistent MODE INDICATOR, not a prompt.
-      // It shows Claude Code's edit acceptance mode. NOT actionable — do not detect as prompt.
-
-      // Y/N prompts
-      if (prompts.length === 0 && /\(y\/n\)/i.test(bottomRaw)) {
-        const lastYn = bottomLines.filter((l) => /\(y\/n\)/i.test(l)).pop();
-        if (lastYn) {
-          prompts.push({ type: 'confirm', message: lastYn.trim(), context: extractToolContext() });
-        }
-      }
-
-      // Generic "Esc to cancel" / "Enter to confirm" — catch-all for unknown prompt types
-      if (prompts.length === 0 && (bottomRaw.includes('Esc to cancel') || bottomRaw.includes('Enter to confirm'))) {
-        prompts.push({
-          type: 'confirm',
-          message: 'Waiting for confirmation',
-          context: extractToolContext(),
-        });
-      }
-
-      // Final fallback — only when the LAST non-empty line itself looks
-      // like an actionable prompt. Previously we matched `?` anywhere in
-      // the last 10 lines, which regularly fired on chat content
-      // containing a question mark. A real Claude Code prompt always ends
-      // right above the input cursor, so the last non-empty line is the
-      // right surface to probe.
-      if (prompts.length === 0 && bottomLines.length > 0) {
-        const lastLine = bottomLines[bottomLines.length - 1]!.trim();
-        const lastLineIsQuestion =
-          /\?\s*$/.test(lastLine) || /\?\s*\(/.test(lastLine);
-        const lastLineIsNumberedOption = /^[❯ ]?\s*\d+\)\s+/.test(lastLine);
-        if (lastLineIsQuestion || lastLineIsNumberedOption) {
-          prompts.push({
-            type: 'confirm',
-            message: 'Waiting on input — see terminal',
-            context: extractToolContext(),
-          });
-        }
-      }
+      // Issue 9 Part 2 — prompt detection extracted to
+      // prompt-detector.service.ts so the match rules are unit-testable.
+      // The previous inline implementation had two broad fallbacks
+      // (Esc to cancel / Enter to confirm + trailing-?/numbered-rows)
+      // that false-fired on Claude Code viewer modals (`/status`,
+      // `/compact` preview, etc.). The service keeps only the explicit
+      // approval-token branches (trust, numbered ❯ 1., Allow/Deny,
+      // y/n) and cites the PATTERN-MATCHING CONSTRAINT docblock at
+      // agent-status.service.ts.
+      const prompts = detectPrompts(outputLines);
 
       return {
         output: raw,

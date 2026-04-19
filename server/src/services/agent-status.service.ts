@@ -2,7 +2,7 @@ import type { SessionStatus, SessionActivity, EffortLevel } from '@commander/sha
 import { tmuxService } from './tmux.service.js';
 
 // ─────────────────────────────────────────────────────────────────────
-// PATTERN-MATCHING CONSTRAINT (Issue 8 P0, 8.1)
+// PATTERN-MATCHING CONSTRAINT (Issue 8 P0, 8.1, 9 P2)
 //
 // External tool output — Claude Code pane content, stdout, JSONL
 // record fields — may change semantics between versions. Character-
@@ -26,6 +26,14 @@ import { tmuxService } from './tmux.service.js';
 //   - SPINNER_CHARS vs SPINNER_GLYPHS — the former gates the tail-
 //     scanner's "active evidence" heuristic (narrow), the latter
 //     scopes the verb-extraction regex (broad, filtered downstream).
+//   - Approval-prompt classifiers MUST match on explicit option
+//     tokens (numbered list with `.` suffix, literal `(y/n)`, exact
+//     `Allow` + `Deny` pair, `trust this folder` phrase). NOT on
+//     tabular shape, broad trailing `?`, or `Esc to cancel` /
+//     `Enter to confirm` alone — Claude Code prints those in every
+//     viewer modal (`/status`, `/compact` preview, …). See
+//     `prompt-detector.service.ts` for the full detection rules
+//     and the Issue 9 P2 rationale.
 //
 // When adding a new pattern match: state its semantic shape
 // constraint inline. Not doing so is how Issue 8 P0 was possible.

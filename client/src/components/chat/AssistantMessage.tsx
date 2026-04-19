@@ -115,6 +115,7 @@ const renderBlock = (
     case 'inline_reminder':
     case 'file_attachment':
     case 'compact_file_ref':
+    case 'local_command':
       return null;
 
     case 'tool_result':

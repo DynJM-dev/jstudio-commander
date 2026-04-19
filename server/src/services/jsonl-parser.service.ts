@@ -304,6 +304,42 @@ export const jsonlParserService = {
     // @commander/shared; see event-policy.ts for rationale per entry.
     if (record.subtype && DROP_SYSTEM_SUBTYPES.has(record.subtype)) return null;
 
+    // Issue 9 Part 3 — slash-command local output (`/status`,
+    // `/compact`, etc.). Claude Code wraps the stream in
+    // `<local-command-stdout>` / `<local-command-stderr>` tags; we
+    // surface as a typed `local_command` block so the renderer can
+    // show an expandable chip with the correct chrome (stderr →
+    // error-red, stdout → muted). The content body is extracted
+    // from inside the tag; when the shape drifts, we fall through
+    // to the debug chip via the default branch below.
+    if (record.subtype === 'local_command' && typeof record.content === 'string') {
+      const raw = record.content;
+      const stdoutMatch = /^<local-command-stdout>([\s\S]*?)<\/local-command-stdout>$/.exec(raw);
+      const stderrMatch = /^<local-command-stderr>([\s\S]*?)<\/local-command-stderr>$/.exec(raw);
+      if (stdoutMatch) {
+        return {
+          id: record.uuid ?? uuidv4(),
+          parentId: record.parentUuid ?? null,
+          role: 'system',
+          timestamp: record.timestamp ?? new Date().toISOString(),
+          content: [{ type: 'local_command', stream: 'stdout', text: stdoutMatch[1]!.trim() }],
+          isSidechain: record.isSidechain ?? false,
+        };
+      }
+      if (stderrMatch) {
+        return {
+          id: record.uuid ?? uuidv4(),
+          parentId: record.parentUuid ?? null,
+          role: 'system',
+          timestamp: record.timestamp ?? new Date().toISOString(),
+          content: [{ type: 'local_command', stream: 'stderr', text: stderrMatch[1]!.trim() }],
+          isSidechain: record.isSidechain ?? false,
+        };
+      }
+      // Shape drift → fall through to debug chip so the novel form
+      // surfaces instead of silently dropping.
+    }
+
     // Anything else: surface as the debug placeholder block. The
     // UnmappedEventChip renderer uses `key` to label the chip and
     // (when present) `raw` for the collapsed payload preview.
