@@ -5,17 +5,46 @@ import { tmuxService } from '../services/tmux.service.js';
 import { statusPollerService } from '../services/status-poller.service.js';
 import { detectPrompts } from '../services/prompt-detector.service.js';
 
+// Issue 13 — default-list archive threshold. Stopped rows younger
+// than this stay visible in `/api/sessions`; older rows surface only
+// on `?includeArchived=true`. 24h matches Jose's spec so that recent
+// kills are still inspectable without a toggle.
+const ARCHIVE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
 export const sessionRoutes = async (app: FastifyInstance) => {
   // List all sessions (polled frequently — suppress logs)
-  app.get('/api/sessions', { logLevel: 'warn' as const }, async () => {
-    // Phase J — attach the poller's cached activity per row. Cache lookup
-    // only (no tmux shell-outs) so the cost per request is a Map lookup
-    // per session, which is negligible even at hundreds of sessions.
-    return sessionService.listSessions().map((s) => ({
-      ...s,
-      activity: statusPollerService.getCachedActivity(s.id) ?? null,
-    }));
-  });
+  app.get<{ Querystring: { includeArchived?: string } }>(
+    '/api/sessions',
+    { logLevel: 'warn' as const },
+    async (request) => {
+      // Phase J — attach the poller's cached activity per row. Cache lookup
+      // only (no tmux shell-outs) so the cost per request is a Map lookup
+      // per session, which is negligible even at hundreds of sessions.
+      //
+      // Issue 13 — default response excludes stopped sessions whose
+      // `stopped_at` is older than ARCHIVE_THRESHOLD_HOURS. Recent (<24h)
+      // stopped rows stay visible so a user who just ended a session can
+      // still see it in the list without flipping any toggle. Older
+      // stopped rows (archived) surface only on `?includeArchived=true`.
+      // Active (non-stopped) sessions always visible regardless.
+      const includeArchived =
+        request.query.includeArchived === 'true' ||
+        request.query.includeArchived === '1';
+
+      const all = sessionService.listSessions();
+      const filtered = includeArchived ? all : all.filter((s) => {
+        if (s.status !== 'stopped') return true;
+        if (!s.stoppedAt) return true; // defensive — missing timestamp keeps the row visible
+        const age = Date.now() - new Date(s.stoppedAt).getTime();
+        return age < ARCHIVE_THRESHOLD_MS;
+      });
+
+      return filtered.map((s) => ({
+        ...s,
+        activity: statusPollerService.getCachedActivity(s.id) ?? null,
+      }));
+    },
+  );
 
   // Get single session (polled frequently — suppress logs)
   app.get<{ Params: { id: string } }>('/api/sessions/:id', { logLevel: 'warn' as const }, async (request, reply) => {

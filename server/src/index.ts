@@ -303,6 +303,19 @@ teamConfigService.start();
   // is long gone.
   const removed = sessionService.cleanupStaleTeammates();
   if (removed > 0) console.log(`[cleanup] removed ${removed} stale teammate rows`);
+
+  // Issue 13 — boot-time retention purge of top-level stopped sessions
+  // older than COMMANDER_RETENTION_DAYS (default 30). Separate from the
+  // teammate sweep above: different cadence (30d vs 7d), different
+  // targets (top-level vs child rows), different safety story (backup
+  // NDJSON before delete; dry-run gated by COMMANDER_RETENTION_DRY_RUN=1).
+  const { retentionService } = await import('./services/retention.service.js');
+  retentionService.runScheduled();
+
+  // Re-run every 24h. Long-running Commander instances that never
+  // restart would otherwise accrete stopped rows indefinitely.
+  const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  setInterval(() => retentionService.runScheduled(), RETENTION_INTERVAL_MS).unref();
 }
 
 // Graceful shutdown

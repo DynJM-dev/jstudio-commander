@@ -7,6 +7,11 @@ interface UseSessionsReturn {
   sessions: Session[];
   loading: boolean;
   error: string | null;
+  // Issue 13 — controls whether the initial fetch includes archived
+  // (stopped >24h) rows. Default false: the UI starts on the active +
+  // recent view; a "Show archived" toggle flips it per-mount.
+  includeArchived: boolean;
+  setIncludeArchived: (v: boolean) => void;
   createSession: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }) => Promise<Session>;
   deleteSession: (id: string) => Promise<Session>;
   sendCommand: (id: string, command: string) => Promise<void>;
@@ -17,15 +22,17 @@ export const useSessions = (): UseSessionsReturn => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [includeArchived, setIncludeArchived] = useState(false);
   const { subscribe, unsubscribe, lastEvent } = useWebSocket();
   const mountedRef = useRef(true);
 
-  // Fetch initial sessions
+  // Fetch sessions whenever the archived toggle changes.
   useEffect(() => {
     mountedRef.current = true;
     const fetchSessions = async () => {
       try {
-        const data = await api.get<Session[]>('/sessions');
+        const qs = includeArchived ? '?includeArchived=true' : '';
+        const data = await api.get<Session[]>(`/sessions${qs}`);
         if (mountedRef.current) {
           setSessions(data);
           setLoading(false);
@@ -40,7 +47,7 @@ export const useSessions = (): UseSessionsReturn => {
 
     fetchSessions();
     return () => { mountedRef.current = false; };
-  }, []);
+  }, [includeArchived]);
 
   // Subscribe to sessions channel
   useEffect(() => {
@@ -110,5 +117,15 @@ export const useSessions = (): UseSessionsReturn => {
     []
   );
 
-  return { sessions, loading, error, createSession, deleteSession, sendCommand, updateSession };
+  return {
+    sessions,
+    loading,
+    error,
+    includeArchived,
+    setIncludeArchived,
+    createSession,
+    deleteSession,
+    sendCommand,
+    updateSession,
+  };
 };

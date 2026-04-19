@@ -12,7 +12,17 @@ import { buildDisplayNameMap } from '../utils/sessionDisplay';
 const M = 'Montserrat, sans-serif';
 
 export const SessionsPage = () => {
-  const { sessions, loading, error, createSession, deleteSession, sendCommand, updateSession } = useSessions();
+  const {
+    sessions,
+    loading,
+    error,
+    includeArchived,
+    setIncludeArchived,
+    createSession,
+    deleteSession,
+    sendCommand,
+    updateSession,
+  } = useSessions();
   const [modalOpen, setModalOpen] = useState(false);
   const [stoppedOpen, setStoppedOpen] = useState(false);
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
@@ -136,6 +146,7 @@ export const SessionsPage = () => {
           demanding attention. */}
       {stoppedSessions.length > 0 && (
         <div className="mt-8">
+          <div className="flex items-center gap-3">
           <button
             onClick={() => setStoppedOpen((v) => !v)}
             className="flex items-center gap-2 text-sm font-semibold"
@@ -153,6 +164,25 @@ export const SessionsPage = () => {
               {stoppedSessions.length}
             </span>
           </button>
+          {/* Issue 13 — archived-session toggle. When off (default) the
+              list excludes stopped rows older than 24h; when on, the
+              API returns the full history. Per-session-mount state;
+              does not persist across reloads. */}
+          <button
+            onClick={() => setIncludeArchived(!includeArchived)}
+            className="text-xs px-2 py-0.5 rounded-md transition-colors"
+            style={{
+              fontFamily: M,
+              background: includeArchived ? 'rgba(14,124,123,0.1)' : 'transparent',
+              color: includeArchived ? 'var(--color-accent-light)' : 'var(--color-text-tertiary)',
+              border: '1px solid rgba(14,124,123,0.2)',
+            }}
+            title={includeArchived ? 'Hide stopped sessions older than 24h' : 'Show stopped sessions older than 24h'}
+            aria-pressed={includeArchived}
+          >
+            {includeArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          </div>
           {stoppedOpen && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
               {stoppedSessions.map((session) => (
