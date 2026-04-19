@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import type { ChatMessage, ContentBlock, TokenUsage, UnmappedKind } from '@commander/shared';
 import {
   DROP_RECORD_TYPES,
@@ -564,4 +564,102 @@ export const jsonlParserService = {
       isSidechain: false,
     };
   },
+};
+
+// Issue 15 — tool-use / tool-result pairing probe for the Stop-hook gate.
+//
+// Claude Code fires the Stop hook every time the LLM yields, which
+// includes the gap between an `assistant tool_use` record and the
+// matching `user tool_result`. The LLM IS idle during tool execution,
+// but the session is still doing work. Commander's Stop handler was
+// slamming status='idle' in that gap, activating the 60s hook-yield
+// gate in the poller and locking in the false-idle for the duration
+// of the tool call.
+//
+// The JSONL is the authoritative structured signal: every tool_use
+// block carries a unique `id`; the matching tool_result block carries
+// the same id in its `tool_use_id`. An unmatched tool_use means the
+// tool call is still in flight.
+//
+// PATTERN-MATCHING CONSTRAINT (agent-status.service.ts §24): this
+// probe is explicit-semantic — it pairs on the Claude Code JSONL
+// contract (tool_use.id ↔ tool_result.tool_use_id). Not a character
+// match, not a pane-text scan.
+//
+// Performance: we read a bounded tail of the file (last TAIL_BYTES),
+// not the full transcript. Claude Code's tool_use/tool_result records
+// are typically < 1 KB each, so 64 KB covers the last few dozen
+// records — more than enough for the "last turn" resolution needed.
+// Infrequent caller (Stop hook fires at turn boundaries, not per-token),
+// so even a few-ms disk read per call is negligible.
+const PENDING_TOOL_TAIL_BYTES = 64 * 1024;
+
+// Exposed for unit testing — pure function over lines, no I/O.
+export const hasUnmatchedToolUseInLines = (lines: string[]): boolean => {
+  const toolUseIds = new Set<string>();
+  const toolResultIds = new Set<string>();
+  for (const line of lines) {
+    if (!line || line[0] !== '{') continue;
+    let rec: RawRecord;
+    try {
+      rec = JSON.parse(line) as RawRecord;
+    } catch {
+      continue;
+    }
+    const content = rec.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block.type === 'tool_use' && typeof block.id === 'string' && block.id.length > 0) {
+        toolUseIds.add(block.id);
+      } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string' && block.tool_use_id.length > 0) {
+        toolResultIds.add(block.tool_use_id);
+      }
+    }
+  }
+  // Any tool_use id without a matching tool_result means the tool call
+  // has not yet returned. Within a bounded tail read the reverse case
+  // (tool_result without a tool_use in the window) is tolerated — the
+  // originating tool_use likely lives earlier in the transcript.
+  for (const id of toolUseIds) {
+    if (!toolResultIds.has(id)) return true;
+  }
+  return false;
+};
+
+// Read the last PENDING_TOOL_TAIL_BYTES of a JSONL and return true iff
+// its records contain an unmatched tool_use. Missing / unreadable files
+// return false (the Stop handler should behave as before — flip idle).
+// Malformed JSONL lines are skipped per `hasUnmatchedToolUseInLines`.
+export const hasPendingToolUseInTranscript = (transcriptPath: string): boolean => {
+  let fd: number;
+  try {
+    fd = openSync(transcriptPath, 'r');
+  } catch {
+    return false;
+  }
+  try {
+    let size: number;
+    try {
+      size = statSync(transcriptPath).size;
+    } catch {
+      return false;
+    }
+    if (size === 0) return false;
+    const toRead = Math.min(size, PENDING_TOOL_TAIL_BYTES);
+    const start = size - toRead;
+    const buf = Buffer.alloc(toRead);
+    const bytesRead = readSync(fd, buf, 0, toRead, start);
+    const tail = buf.toString('utf-8', 0, bytesRead);
+    // Drop the first (possibly partial) line when we didn't start at
+    // file head — splitting a JSON record mid-way yields garbage that
+    // would false-positive as an unparseable line. When start === 0
+    // the first line is guaranteed whole.
+    const rawLines = tail.split('\n').filter((l) => l.length > 0);
+    const lines = start === 0 ? rawLines : rawLines.slice(1);
+    return hasUnmatchedToolUseInLines(lines);
+  } catch {
+    return false;
+  } finally {
+    try { closeSync(fd); } catch { /* already closed */ }
+  }
 };

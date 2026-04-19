@@ -1,6 +1,13 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { jsonlParserService } from '../jsonl-parser.service.js';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  jsonlParserService,
+  hasUnmatchedToolUseInLines,
+  hasPendingToolUseInTranscript,
+} from '../jsonl-parser.service.js';
 
 // Chat-fidelity regression — the attachment-record discriminator.
 //
@@ -482,5 +489,137 @@ describe('jsonlParserService — Issue 5 multi-event turn + silent-drop policy',
       assert.equal(debug.kind, 'assistant_block');
       assert.equal(debug.key, 'server_tool_use');
     }
+  });
+});
+
+// Issue 15 — tool_use / tool_result pairing probe. Drives the Stop-hook
+// gate that prevents false-idle during tool execution.
+describe('hasUnmatchedToolUseInLines — pure pairing logic', () => {
+  const toolUseLine = (id: string, name = 'Bash'): string => JSON.stringify({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input: {} }] },
+  });
+  const toolResultLine = (toolUseId: string): string => JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
+  });
+  const textLine = (role: 'user' | 'assistant', text: string): string => JSON.stringify({
+    type: role,
+    message: { role, content: [{ type: 'text', text }] },
+  });
+
+  test('tool_use with matching tool_result → no pending', () => {
+    const lines = [
+      textLine('user', 'do the thing'),
+      toolUseLine('toolu_01'),
+      toolResultLine('toolu_01'),
+      textLine('assistant', 'done'),
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), false);
+  });
+
+  test('tool_use with NO matching tool_result → pending (canonical Issue 15 case)', () => {
+    const lines = [
+      textLine('user', 'run sleep 30'),
+      toolUseLine('toolu_02'),
+      // Stop hook fires here while bash is sleeping. No tool_result yet.
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), true);
+  });
+
+  test('multiple tool_use, one still pending → pending', () => {
+    const lines = [
+      toolUseLine('toolu_03'),
+      toolResultLine('toolu_03'),
+      toolUseLine('toolu_04'),
+      // second tool_result missing
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), true);
+  });
+
+  test('multiple tool_use, all matched → not pending', () => {
+    const lines = [
+      toolUseLine('toolu_05'),
+      toolResultLine('toolu_05'),
+      toolUseLine('toolu_06'),
+      toolResultLine('toolu_06'),
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), false);
+  });
+
+  test('no tool blocks at all → not pending', () => {
+    const lines = [
+      textLine('user', 'hi'),
+      textLine('assistant', 'hello'),
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), false);
+  });
+
+  test('tool_result without originating tool_use (bounded-tail edge) → not pending', () => {
+    // Bounded tail read may start after the tool_use that precedes
+    // a tool_result in the window. Tolerate — do not flip idle.
+    const lines = [toolResultLine('toolu_99')];
+    assert.equal(hasUnmatchedToolUseInLines(lines), false);
+  });
+
+  test('malformed line skipped — valid pairing around it still resolves', () => {
+    const lines = [
+      toolUseLine('toolu_07'),
+      'not-json',
+      toolResultLine('toolu_07'),
+    ];
+    assert.equal(hasUnmatchedToolUseInLines(lines), false);
+  });
+
+  test('empty input → not pending', () => {
+    assert.equal(hasUnmatchedToolUseInLines([]), false);
+  });
+
+  test('tool_use missing id → ignored (malformed record)', () => {
+    const badToolUse = JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash' }] },
+    });
+    assert.equal(hasUnmatchedToolUseInLines([badToolUse]), false);
+  });
+});
+
+describe('hasPendingToolUseInTranscript — bounded file tail', () => {
+  let dir: string;
+  const write = (name: string, content: string): string => {
+    const p = join(dir, name);
+    writeFileSync(p, content);
+    return p;
+  };
+
+  test.before(() => { dir = mkdtempSync(join(tmpdir(), 'issue15-')); });
+  test.after(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test('pending tool_use at tail → true', () => {
+    const content = [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_a', name: 'Bash', input: {} }] } }),
+    ].join('\n') + '\n';
+    const p = write('pending.jsonl', content);
+    assert.equal(hasPendingToolUseInTranscript(p), true);
+  });
+
+  test('matched pair at tail → false', () => {
+    const content = [
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_b', name: 'Bash', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_b', content: 'ok' }] } }),
+    ].join('\n') + '\n';
+    const p = write('matched.jsonl', content);
+    assert.equal(hasPendingToolUseInTranscript(p), false);
+  });
+
+  test('missing file → false (fall-through to legacy Stop behavior)', () => {
+    const p = join(dir, 'does-not-exist.jsonl');
+    assert.equal(hasPendingToolUseInTranscript(p), false);
+  });
+
+  test('empty file → false', () => {
+    const p = write('empty.jsonl', '');
+    assert.equal(hasPendingToolUseInTranscript(p), false);
   });
 });

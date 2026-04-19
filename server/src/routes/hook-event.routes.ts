@@ -6,6 +6,7 @@ import { getDb } from '../db/connection.js';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
 import { readJsonlOrigin, isCoderJsonl, type JsonlOrigin } from '../services/jsonl-origin.service.js';
+import { hasPendingToolUseInTranscript } from '../services/jsonl-parser.service.js';
 import { config, isLoopbackIp } from '../config.js';
 
 interface HookEventBody {
@@ -322,21 +323,51 @@ const processHook = async (body: HookEventBody): Promise<{ ok: true }> => {
   if (event === 'Stop') {
     const match = resolveOwner(body);
     if (match?.id) {
-      const db = getDb();
-      db.prepare(
-        "UPDATE sessions SET status = 'idle', updated_at = datetime('now') WHERE id = ?",
-      ).run(match.id);
-      eventBus.emitSessionStatus(match.id, 'idle', {
-        to: 'idle',
-        evidence: 'stop-hook',
-        at: new Date().toISOString(),
-      });
-      // Phase N.0 Patch 3 — Stop is the single most important heartbeat
-      // because it's the signal the 5s poller can miss entirely. Bumping
-      // here guarantees the "Xs ago" counter resets at turn boundary.
-      sessionService.bumpLastActivity(match.id);
-      sessionService.bumpLastHookAt(match.id);
-      console.log(`[hook:Stop] session=${match.id.slice(0, 30)} → idle (via ${match.strategy})`);
+      // Issue 15 — gate the idle-flip on the JSONL tool_use / tool_result
+      // pairing. Claude Code fires Stop every time the LLM yields, which
+      // includes the gap between an `assistant tool_use` and its matching
+      // `user tool_result`. The LLM is idle during tool execution but
+      // the session is still doing work (Bash sleeping, Edit writing,
+      // Plan step running). Previously the handler slammed status='idle'
+      // in that gap, activating the 60s hook-yield gate in the poller
+      // and locking in the false-idle for the duration of the tool call.
+      //
+      // `hasPendingToolUseInTranscript` reads a bounded tail and returns
+      // true iff the transcript contains a tool_use with no matching
+      // tool_result. Missing/unreadable transcript falls through to the
+      // original behavior (flip idle), preserving Phase N.0's frozen-
+      // footer override for transcript-less Stop events (legacy rows).
+      //
+      // §24 PATTERN-MATCHING CONSTRAINT: explicit-semantic gate on the
+      // Claude Code JSONL contract (tool_use.id ↔ tool_result.tool_use_id).
+      // Preserves Phase N.0 intent for TRUE turn-ends.
+      const pendingTool = transcriptPath ? hasPendingToolUseInTranscript(transcriptPath) : false;
+      if (pendingTool) {
+        // LLM yielded mid-turn. Do NOT flip to idle. Still bump the
+        // heartbeats so downstream gates see proof-of-life — the
+        // session is active even though the LLM is waiting.
+        sessionService.bumpLastActivity(match.id);
+        sessionService.bumpLastHookAt(match.id);
+        console.log(
+          `[hook:Stop] session=${match.id.slice(0, 30)} deferred — pending tool_use (via ${match.strategy})`,
+        );
+      } else {
+        const db = getDb();
+        db.prepare(
+          "UPDATE sessions SET status = 'idle', updated_at = datetime('now') WHERE id = ?",
+        ).run(match.id);
+        eventBus.emitSessionStatus(match.id, 'idle', {
+          to: 'idle',
+          evidence: 'stop-hook',
+          at: new Date().toISOString(),
+        });
+        // Phase N.0 Patch 3 — Stop is the single most important heartbeat
+        // because it's the signal the 5s poller can miss entirely. Bumping
+        // here guarantees the "Xs ago" counter resets at turn boundary.
+        sessionService.bumpLastActivity(match.id);
+        sessionService.bumpLastHookAt(match.id);
+        console.log(`[hook:Stop] session=${match.id.slice(0, 30)} → idle (via ${match.strategy})`);
+      }
     }
   }
 
