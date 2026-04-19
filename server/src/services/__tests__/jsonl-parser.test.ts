@@ -623,3 +623,110 @@ describe('hasPendingToolUseInTranscript — bounded file tail', () => {
     assert.equal(hasPendingToolUseInTranscript(p), false);
   });
 });
+
+// Issue 15.1-G — post-compact synthetic summary routing.
+// Claude Code emits the summary with `type: 'user'` + `isCompactSummary:
+// true`. The parser must route via the structured discriminator (NOT
+// text-prose matching) to a system-role `compact_summary` block so the
+// renderer can distinguish it from real user turns.
+describe('jsonlParserService — Issue 15.1-G compact_summary routing', () => {
+  test('isCompactSummary=true user record → system role + compact_summary block', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      uuid: 'summary-uuid-1',
+      parentUuid: 'prev-1',
+      timestamp: '2026-04-19T10:00:00Z',
+      isCompactSummary: true,
+      isVisibleInTranscriptOnly: true,
+      message: {
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: 'This session is being continued from a previous conversation...',
+        }],
+      },
+    });
+    const messages = jsonlParserService.parseLines([line]);
+    assert.equal(messages.length, 1);
+    const m = messages[0]!;
+    assert.equal(m.role, 'system');
+    assert.equal(m.content.length, 1);
+    const block = m.content[0]!;
+    assert.equal(block.type, 'compact_summary');
+    if (block.type === 'compact_summary') {
+      assert.match(block.text, /This session is being continued/);
+    }
+  });
+
+  test('isCompactSummary=true with multiple text blocks → concatenates', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      uuid: 'summary-uuid-2',
+      isCompactSummary: true,
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Part A' },
+          { type: 'text', text: 'Part B' },
+        ],
+      },
+    });
+    const messages = jsonlParserService.parseLines([line]);
+    const block = messages[0]!.content[0]!;
+    if (block.type === 'compact_summary') {
+      assert.match(block.text, /Part A/);
+      assert.match(block.text, /Part B/);
+    } else {
+      assert.fail(`expected compact_summary block, got ${block.type}`);
+    }
+  });
+
+  test('regular user record (no isCompactSummary) → stays user role', () => {
+    // Regression guard — the discriminator must not false-fire on
+    // ordinary user turns. Absence of the flag means "real user".
+    const line = JSON.stringify({
+      type: 'user',
+      uuid: 'real-user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'hi Claude' }],
+      },
+    });
+    const messages = jsonlParserService.parseLines([line]);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]!.role, 'user');
+    assert.equal(messages[0]!.content[0]!.type, 'text');
+  });
+
+  test('isCompactSummary=false → treated as ordinary user turn', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      uuid: 'explicit-false',
+      isCompactSummary: false,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'hey' }],
+      },
+    });
+    const messages = jsonlParserService.parseLines([line]);
+    assert.equal(messages[0]!.role, 'user');
+  });
+
+  test('string-content isCompactSummary → flattens to compact_summary text', () => {
+    // Defensive against Claude Code emitting the summary as a bare
+    // string rather than a content-block array.
+    const line = JSON.stringify({
+      type: 'user',
+      uuid: 'string-content',
+      isCompactSummary: true,
+      message: { role: 'user', content: 'summary as a string' },
+    });
+    const messages = jsonlParserService.parseLines([line]);
+    const block = messages[0]!.content[0]!;
+    if (block.type === 'compact_summary') {
+      assert.equal(block.text, 'summary as a string');
+    } else {
+      assert.fail(`expected compact_summary block, got ${block.type}`);
+    }
+  });
+});

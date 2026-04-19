@@ -52,6 +52,12 @@ interface RawRecord {
     trigger?: 'manual' | 'auto';
     preTokens?: number;
   };
+  // Issue 15.1-G — Claude Code writes post-compact synthetic summaries
+  // with `type: 'user'` + `isCompactSummary: true`. The parser routes
+  // those to a system-role compact_summary block so the renderer can
+  // visually distinguish them from real user turns.
+  isCompactSummary?: boolean;
+  isVisibleInTranscriptOnly?: boolean;
   [key: string]: unknown;
 }
 
@@ -247,6 +253,36 @@ export const jsonlParserService = {
   parseUserRecord(record: RawRecord): ChatMessage | null {
     const content = record.message?.content;
     if (content === undefined || content === null) return null;
+
+    // Issue 15.1-G — Claude Code's post-compact synthetic summary is
+    // shaped as `type: 'user'` + `role: 'user'` + `isCompactSummary:
+    // true`. Without this branch it rendered with the JB crown icon
+    // as if the user sent it. Route via structured metadata (NOT by
+    // matching the "This session is being continued..." prose —
+    // string-shape is brittle; `isCompactSummary` is the authoritative
+    // signal per §24.2).
+    //
+    // The summary text lives in the usual user message content — flatten
+    // to a single string + emit as a system-role `compact_summary`
+    // block. The renderer picks it up in SystemNote variant.
+    if (record.isCompactSummary === true) {
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((b) => b.type === 'text' && typeof b.text === 'string')
+              .map((b) => b.text!)
+              .join('\n\n')
+          : '';
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{ type: 'compact_summary', text }],
+        isSidechain: record.isSidechain ?? false,
+      };
+    }
 
     const blocks = parseUserContent(content);
     if (blocks.length === 0) return null;

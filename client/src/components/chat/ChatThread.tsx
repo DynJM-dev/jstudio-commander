@@ -18,6 +18,7 @@ import { UnmappedEventChip } from './UnmappedEventChip';
 import { InlineReminderNote } from './InlineReminderNote';
 import { FileAttachmentChip } from './FileAttachmentChip';
 import { CompactFileRefChip } from './CompactFileRefChip';
+import { CompactSummaryNote } from './CompactSummaryNote';
 import { LocalCommandNote } from './LocalCommandNote';
 import { FileEditNote } from './FileEditNote';
 import { SessionSkillsChip } from './SessionSkillsChip';
@@ -76,6 +77,17 @@ const TimestampSeparator = ({ timestamp }: { timestamp: string }) => (
 
 const SystemNote = ({ group }: { group: MessageGroup }) => {
   const firstBlock = group.messages[0]?.content[0];
+
+  // Issue 15.1-G — post-compact synthetic summary. Claude Code writes
+  // this as `type: 'user'` + `isCompactSummary: true` after every
+  // compaction; pre-fix it rendered with the JB crown icon as if Jose
+  // sent it. The parser routes to a system-role compact_summary block;
+  // render here as a click-to-expand SystemNote variant with the
+  // compact accent color so it's visually tied to the adjacent
+  // compact_boundary separator.
+  if (firstBlock?.type === 'compact_summary') {
+    return <CompactSummaryNote text={firstBlock.text} />;
+  }
 
   // Compact boundary — dedicated banner with trigger + freed-token count
   if (firstBlock?.type === 'compact_boundary') {

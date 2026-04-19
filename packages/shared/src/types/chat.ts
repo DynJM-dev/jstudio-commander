@@ -72,6 +72,15 @@ export type ContentBlock =
   // `commandMode` distinguishes prompt vs. other modes ('prompt' in
   // all observed records).
   | { type: 'queued_command'; prompt: string; commandMode?: string }
+  // Issue 15.1-G — post-compact synthetic summary Claude Code injects
+  // after every compaction. Raw JSONL shape: `type: 'user'`,
+  // `role: 'user'`, `isCompactSummary: true`, `isVisibleInTranscriptOnly:
+  // true`. Pre-fix it rendered with the JB crown icon (as if Jose sent
+  // it); this typed variant lets the renderer route it to SystemNote so
+  // it's visually distinct from real user turns. `text` is the summary
+  // body; the structured-metadata discriminator (isCompactSummary) is
+  // the §24 authoritative signal, NOT text-prose matching.
+  | { type: 'compact_summary'; text: string }
   | { type: 'debug_unmapped'; kind: UnmappedKind; key: string; raw?: string };
 
 export interface ChatMessage {
