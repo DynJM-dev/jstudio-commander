@@ -116,6 +116,14 @@ const renderBlock = (
     case 'file_attachment':
     case 'compact_file_ref':
     case 'local_command':
+    // Issue 7.1 — new system-level block types flow through
+    // ChatThread's SystemNote branch (role='system' records); the
+    // assistant-message renderer skips them rather than rendering
+    // out-of-place.
+    case 'file_edit_note':
+    case 'skill_listing':
+    case 'invoked_skills':
+    case 'queued_command':
       return null;
 
     case 'tool_result':

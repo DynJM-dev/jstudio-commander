@@ -19,6 +19,10 @@ import { InlineReminderNote } from './InlineReminderNote';
 import { FileAttachmentChip } from './FileAttachmentChip';
 import { CompactFileRefChip } from './CompactFileRefChip';
 import { LocalCommandNote } from './LocalCommandNote';
+import { FileEditNote } from './FileEditNote';
+import { SessionSkillsChip } from './SessionSkillsChip';
+import { InvokedSkillChip } from './InvokedSkillChip';
+import { QueuedCommandChip } from './QueuedCommandChip';
 import { LiveActivityRow } from './LiveActivityRow';
 import { formatTime, formatTokens } from '../../utils/format';
 import { parseChatMessage, type ParsedChatMessage } from '../../utils/chatMessageParser';
@@ -145,6 +149,38 @@ const SystemNote = ({ group }: { group: MessageGroup }) => {
       <LocalCommandNote
         stream={firstBlock.stream}
         text={firstBlock.text}
+      />
+    );
+  }
+  // Issue 7.1 — upgraded typed renderers. Each was either a
+  // system_note banner (edited_text_file pre-7.1) or an
+  // UnmappedEventChip (skill_listing / invoked_skills /
+  // queued_command) before this issue. Parser emits the typed
+  // variants; render layer picks them up here.
+  if (firstBlock?.type === 'file_edit_note') {
+    return (
+      <FileEditNote
+        filename={firstBlock.filename}
+        {...(firstBlock.snippet !== undefined ? { snippet: firstBlock.snippet } : {})}
+      />
+    );
+  }
+  if (firstBlock?.type === 'skill_listing') {
+    return (
+      <SessionSkillsChip
+        skills={firstBlock.skills}
+        isInitial={firstBlock.isInitial}
+      />
+    );
+  }
+  if (firstBlock?.type === 'invoked_skills') {
+    return <InvokedSkillChip skills={firstBlock.skills} />;
+  }
+  if (firstBlock?.type === 'queued_command') {
+    return (
+      <QueuedCommandChip
+        prompt={firstBlock.prompt}
+        {...(firstBlock.commandMode !== undefined ? { commandMode: firstBlock.commandMode } : {})}
       />
     );
   }

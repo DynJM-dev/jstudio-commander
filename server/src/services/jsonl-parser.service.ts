@@ -368,14 +368,104 @@ export const jsonlParserService = {
     const innerType = inner?.type;
     if (!innerType) return null;
 
+    // Issue 7.1 — upgrade from system_note banner to file_edit_note
+    // block. Shape inventory: attachment.{filename, snippet}. snippet
+    // is a numbered post-edit view (no old/new diff pair present in
+    // the JSONL record; a synthesized diff would require the preceding
+    // file state which we don't have). Renderer shows filename +
+    // click-to-expand snippet.
     if (innerType === 'edited_text_file') {
-      const filename = (record as Record<string, unknown>).filePath ?? 'unknown file';
+      const att = (record as Record<string, unknown>).attachment as
+        | { filename?: string; snippet?: string }
+        | undefined;
+      const topLevelPath = (record as Record<string, unknown>).filePath;
+      const filename =
+        (typeof att?.filename === 'string' && att.filename) ||
+        (typeof topLevelPath === 'string' && topLevelPath) ||
+        'unknown file';
+      const snippet = typeof att?.snippet === 'string' ? att.snippet : undefined;
       return {
         id: record.uuid ?? uuidv4(),
         parentId: record.parentUuid ?? null,
         role: 'system',
         timestamp: record.timestamp ?? new Date().toISOString(),
-        content: [{ type: 'system_note', text: `Edited: ${filename}` }],
+        content: [{
+          type: 'file_edit_note',
+          filename,
+          ...(snippet !== undefined ? { snippet } : {}),
+        }],
+        isSidechain: false,
+      };
+    }
+
+    // Issue 7.1 — skill_listing / invoked_skills / queued_command.
+    // Each parses attachment.* fields into the typed ContentBlock so
+    // the renderer has structured data; shape drift falls through to
+    // the debug chip via the tail branch of this function.
+    if (innerType === 'skill_listing') {
+      const att = (record as Record<string, unknown>).attachment as
+        | { content?: string; isInitial?: boolean }
+        | undefined;
+      const raw = typeof att?.content === 'string' ? att.content : '';
+      // Each line: `- skill-name: description`. Tolerate description
+      // absent; skip lines that don't start with `- `.
+      const skills: Array<{ name: string; description?: string }> = [];
+      for (const line of raw.split('\n')) {
+        const m = /^-\s+([\w./:-]+)\s*:\s*(.*)$/.exec(line.trim());
+        if (!m) {
+          const nameOnly = /^-\s+([\w./:-]+)\s*$/.exec(line.trim());
+          if (nameOnly) skills.push({ name: nameOnly[1]! });
+          continue;
+        }
+        const description = m[2]!.trim();
+        skills.push(description ? { name: m[1]!, description } : { name: m[1]! });
+      }
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{
+          type: 'skill_listing',
+          skills,
+          isInitial: att?.isInitial === true,
+        }],
+        isSidechain: false,
+      };
+    }
+
+    if (innerType === 'invoked_skills') {
+      const att = (record as Record<string, unknown>).attachment as
+        | { skills?: Array<{ name?: string; path?: string }> }
+        | undefined;
+      const skills = (att?.skills ?? [])
+        .filter((s): s is { name: string; path?: string } => typeof s?.name === 'string')
+        .map((s) => (s.path ? { name: s.name, path: s.path } : { name: s.name }));
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{ type: 'invoked_skills', skills }],
+        isSidechain: false,
+      };
+    }
+
+    if (innerType === 'queued_command') {
+      const att = (record as Record<string, unknown>).attachment as
+        | { prompt?: string; commandMode?: string }
+        | undefined;
+      const prompt = typeof att?.prompt === 'string' ? att.prompt : '';
+      return {
+        id: record.uuid ?? uuidv4(),
+        parentId: record.parentUuid ?? null,
+        role: 'system',
+        timestamp: record.timestamp ?? new Date().toISOString(),
+        content: [{
+          type: 'queued_command',
+          prompt,
+          ...(typeof att?.commandMode === 'string' ? { commandMode: att.commandMode } : {}),
+        }],
         isSidechain: false,
       };
     }

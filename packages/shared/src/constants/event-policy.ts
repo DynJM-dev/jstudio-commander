@@ -77,20 +77,24 @@ export const DROP_SYSTEM_SUBTYPES: ReadonlySet<string> = new Set([
 //   - task_reminder          → inline_reminder   (InlineReminderNote)
 //   - file                   → file_attachment   (FileAttachmentChip)
 //   - compact_file_reference → compact_file_ref  (CompactFileRefChip)
-//   - edited_text_file       → system_note       (banner)
-// Everything else either lands on the denylist below or surfaces as
-// the debug chip.
+//   - edited_text_file       → file_edit_note    (FileEditNote — upgraded from banner in Issue 7.1)
+//
+// Issue 7.1 — typed attachment renderers (upgraded from denylist /
+// debug chip):
+//   - skill_listing          → skill_listing     (SessionSkillsChip)
+//   - invoked_skills         → invoked_skills    (InvokedSkillChip)
+//   - queued_command         → queued_command    (QueuedCommandChip)
+//
+// The parser branches for all typed renderers fire BEFORE the
+// denylist below, so entries here represent the "still noise" tail —
+// a narrower set after Issue 7.1. Everything not listed below and
+// not typed above falls through to UnmappedEventChip.
 export const DROP_ATTACHMENT_TYPES: ReadonlySet<string> = new Set([
   // PostToolUse hook telemetry — 80%+ tail of attachment volume.
   'hook_success',
-  // The skill-loading manifest Claude reads on session start; not
-  // meaningful in the conversation view.
-  'skill_listing',
   // Per-tool permission declarations; the permission prompt UI
   // handles the user-facing piece.
   'command_permissions',
   // Deferred-tool schema deltas; internal plumbing for tool search.
   'deferred_tools_delta',
-  // Skills-invoked summary; implicit in tool_use blocks that follow.
-  'invoked_skills',
 ]);

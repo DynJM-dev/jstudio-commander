@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import type { SessionType } from '@commander/shared';
 import { Monitor, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { EmptyState } from '../components/shared/EmptyState';
 import { LoadingSkeleton } from '../components/shared/LoadingSkeleton';
@@ -29,7 +30,7 @@ export const SessionsPage = () => {
   // SessionsPage and CityScene share one memoization per session list.
   const { topLevel, teammatesByParent } = useSessionTree(activeSessions);
 
-  const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: 'pm' | 'raw' }) => {
+  const handleCreate = useCallback(async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }) => {
     await createSession(opts);
   }, [createSession]);
 

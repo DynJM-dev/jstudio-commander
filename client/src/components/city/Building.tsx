@@ -27,7 +27,11 @@ const windowPattern = (id: string): boolean[] => {
 export const Building = ({ session, teammates, speech }: BuildingProps) => {
   const navigate = useNavigate();
   const role = roleFor(session.agentRole);
-  const buildingRole: CharacterRole = session.sessionType === 'pm' ? 'pm' : role;
+  const buildingRole: CharacterRole = session.sessionType === 'pm'
+    ? 'pm'
+    : session.sessionType === 'coder'
+      ? 'coder'
+      : role;
   const windows = windowPattern(session.id);
   const isStopped = session.status === 'stopped';
   const isWorking = session.status === 'working';
@@ -43,7 +47,11 @@ export const Building = ({ session, teammates, speech }: BuildingProps) => {
     isWorking ? 'city-building--working' : '',
   ].filter(Boolean).join(' ');
 
-  const roleLabel = session.sessionType === 'pm' ? 'PM' : (session.agentRole ?? 'session').toUpperCase();
+  const roleLabel = session.sessionType === 'pm'
+    ? 'PM'
+    : session.sessionType === 'coder'
+      ? 'CODER'
+      : (session.agentRole ?? 'session').toUpperCase();
 
   return (
     <div

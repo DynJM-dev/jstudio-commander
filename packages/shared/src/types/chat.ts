@@ -48,6 +48,30 @@ export type ContentBlock =
   // tags. The tag kind drives chrome (error-red for stderr, muted
   // for stdout); the body is click-to-expand.
   | { type: 'local_command'; stream: 'stdout' | 'stderr'; text: string }
+  // Issue 7.1 — post-edit file snapshot emitted by Claude Code as
+  // `attachment.type: edited_text_file`. Upgrades the Issue 7 era
+  // system_note banner. Shape from pane inventory:
+  //   {filename, snippet}
+  // `snippet` is the numbered post-edit view (no old/new diff pair);
+  // this variant doesn't attempt to synthesize a diff from a single
+  // snapshot. Renderer shows filename + click-to-expand snippet.
+  | { type: 'file_edit_note'; filename: string; snippet?: string }
+  // Issue 7.1 — list of skills available to this session, emitted as
+  // `attachment.type: skill_listing` on session start. Content is a
+  // newline-separated `- name: description` block the parser splits
+  // into structured entries; `isInitial` flags session-start vs.
+  // mid-session reload.
+  | { type: 'skill_listing'; skills: Array<{ name: string; description?: string }>; isInitial: boolean }
+  // Issue 7.1 — skills actually invoked at a specific point in the
+  // turn, emitted as `attachment.type: invoked_skills`. Parser keeps
+  // just the name + path from the (potentially large) skills list
+  // so the chip stays light.
+  | { type: 'invoked_skills'; skills: Array<{ name: string; path?: string }> }
+  // Issue 7.1 — command queued for dispatch, emitted as
+  // `attachment.type: queued_command`. `prompt` is the queued text;
+  // `commandMode` distinguishes prompt vs. other modes ('prompt' in
+  // all observed records).
+  | { type: 'queued_command'; prompt: string; commandMode?: string }
   | { type: 'debug_unmapped'; kind: UnmappedKind; key: string; raw?: string };
 
 export interface ChatMessage {

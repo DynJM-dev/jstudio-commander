@@ -18,7 +18,11 @@ import { jsonlParserService } from '../jsonl-parser.service.js';
 // the pane shows the model.
 
 describe('jsonlParserService — attachment discriminator (chat/terminal fidelity)', () => {
-  test('edited_text_file attachment surfaces as a system_note', () => {
+  test('edited_text_file (top-level filePath, no snippet) falls back to top-level filename', () => {
+    // Issue 7.1 — older shape the tests originally pinned: top-level
+    // `record.filePath` rather than inner `attachment.filename`. Parser
+    // tolerates both. `filename` populates from whichever source is
+    // present; snippet absent is fine (expand-on-click just disables).
     const record = {
       type: 'attachment',
       uuid: 'a1',
@@ -31,10 +35,10 @@ describe('jsonlParserService — attachment discriminator (chat/terminal fidelit
     assert.ok(parsed, 'edited_text_file must parse into a ChatMessage');
     assert.equal(parsed!.role, 'system');
     const block = parsed!.content[0]!;
-    assert.equal(block.type, 'system_note');
-    if (block.type === 'system_note') {
-      assert.match(block.text, /Edited:/);
-      assert.match(block.text, /foo\.ts/);
+    assert.equal(block.type, 'file_edit_note');
+    if (block.type === 'file_edit_note') {
+      assert.equal(block.filename, '/Users/x/src/foo.ts');
+      assert.equal(block.snippet, undefined);
     }
   });
 
@@ -97,6 +101,103 @@ describe('jsonlParserService — attachment discriminator (chat/terminal fidelit
       assert.equal(block.numLines, 4);
       assert.equal(block.totalLines, 120);
       assert.match(block.content ?? '', /# State/);
+    }
+  });
+
+  test('edited_text_file surfaces as typed file_edit_note (Issue 7.1 upgrade)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a8',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'edited_text_file',
+        filename: '/Users/x/proj/foo.ts',
+        snippet: '1\texport const foo = 1;\n2\texport const bar = 2;\n',
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'file_edit_note');
+    if (block.type === 'file_edit_note') {
+      assert.equal(block.filename, '/Users/x/proj/foo.ts');
+      assert.match(block.snippet ?? '', /export const foo/);
+    }
+  });
+
+  test('skill_listing surfaces as typed skill_listing block, content parsed (Issue 7.1)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a9',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'skill_listing',
+        isInitial: true,
+        skillCount: 3,
+        content: '- pm: Project manager skill.\n- db-architect: Schema expert.\n- ui-expert',
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'skill_listing');
+    if (block.type === 'skill_listing') {
+      assert.equal(block.isInitial, true);
+      assert.equal(block.skills.length, 3);
+      assert.equal(block.skills[0]!.name, 'pm');
+      assert.match(block.skills[0]!.description ?? '', /Project manager/);
+      assert.equal(block.skills[2]!.name, 'ui-expert');
+      // name-only line → description absent, not empty
+      assert.equal(block.skills[2]!.description, undefined);
+    }
+  });
+
+  test('invoked_skills surfaces as typed invoked_skills block (Issue 7.1)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a10',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'invoked_skills',
+        skills: [
+          { name: 'ui-expert', path: 'userSettings:ui-expert', content: 'long body...' },
+          { name: 'qa', path: 'userSettings:qa' },
+        ],
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'invoked_skills');
+    if (block.type === 'invoked_skills') {
+      assert.equal(block.skills.length, 2);
+      assert.equal(block.skills[0]!.name, 'ui-expert');
+      assert.equal(block.skills[0]!.path, 'userSettings:ui-expert');
+    }
+  });
+
+  test('queued_command surfaces as typed queued_command block (Issue 7.1)', () => {
+    const record = {
+      type: 'attachment',
+      uuid: 'a11',
+      parentUuid: null,
+      timestamp: '2026-04-17T05:26:17.746Z',
+      attachment: {
+        type: 'queued_command',
+        prompt: 'I have a vercel account, do I need to login?',
+        commandMode: 'prompt',
+      },
+    };
+    const parsed = jsonlParserService.parseRecord(record as never);
+    assert.ok(parsed);
+    const block = parsed!.content[0]!;
+    assert.equal(block.type, 'queued_command');
+    if (block.type === 'queued_command') {
+      assert.match(block.prompt, /vercel/);
+      assert.equal(block.commandMode, 'prompt');
     }
   });
 

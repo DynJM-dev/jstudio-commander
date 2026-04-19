@@ -153,17 +153,16 @@ export const getDb = (): Database.Database => {
     console.log('[db] Migration: added recent_commits_json column to projects');
   }
 
-  // Phase E heal: promote ALL sessions whose effort is still at the
-  // pre-migration 'low' / 'medium' to 'xhigh' — SKILL.md's effort
-  // matrix is now high|xhigh|max, and the narrowed EffortLevel type
-  // can't represent the legacy values. Earlier 24h-bounded heal was
-  // superseded; any remaining rows from that era get swept here.
-  // Idempotent: once a row is flipped it won't match the predicate
-  // on subsequent boots.
+  // Phase E heal (narrowed in M1): promote sessions whose effort is
+  // 'low' or NULL to 'xhigh'. Phase M1 re-introduced 'medium' as a
+  // first-class effort level (coder / raw default) — it MUST NOT be
+  // healed, or fresh coder sessions would get bumped back to xhigh on
+  // every boot and the token-burn win from M1 would vanish silently.
+  // Idempotent: once flipped, rows don't re-match the predicate.
   const healed = db.prepare(
     `UPDATE sessions
      SET effort_level = 'xhigh'
-     WHERE effort_level IN ('medium','low')
+     WHERE effort_level = 'low'
         OR effort_level IS NULL`,
   ).run();
   if (healed.changes > 0) {

@@ -281,6 +281,20 @@ export const SessionCard = ({
                     PM
                   </span>
                 )}
+                {session.sessionType === 'coder' && (
+                  <span
+                    className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full align-middle"
+                    style={{
+                      fontFamily: M,
+                      color: 'rgb(250, 204, 21)',
+                      background: 'rgba(234, 179, 8, 0.14)',
+                      border: '1px solid rgba(234, 179, 8, 0.3)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    CODER
+                  </span>
+                )}
                 {session.teamName && (
                   <span
                     className="ml-1.5 font-normal text-sm"

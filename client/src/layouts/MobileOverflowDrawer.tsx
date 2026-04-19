@@ -58,7 +58,7 @@ export const MobileOverflowDrawer = ({ open, onClose }: MobileOverflowDrawerProp
   const activeSessions = sessions.filter(
     (s) => s.status !== 'stopped'
       && !s.parentSessionId
-      && (s.sessionType === 'pm' || s.sessionType === 'raw'),
+      && (s.sessionType === 'pm' || s.sessionType === 'coder' || s.sessionType === 'raw'),
   );
   const totalTokens = stats ? (stats.totalInputTokens ?? 0) + (stats.totalOutputTokens ?? 0) : 0;
   const totalCost = stats?.totalCostUsd ?? 0;
