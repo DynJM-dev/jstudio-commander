@@ -515,26 +515,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         >
           {status.label}
         </span>
-        {/* Live pane-activity verb + metadata — swaps in for the generic
-            status string when the footer parsed something, so the user
-            sees the same "✽ Ruminating 1m 49s · 430 tokens" that the pane
-            shows. Renders a dot separator between it and the status label
-            so they read as one line without a layout jump. */}
-        {isWorking && activity && (
-          <>
-            <span className="text-xs shrink-0" style={{ color: 'var(--color-text-tertiary)' }}>·</span>
-            <span
-              className="text-xs shrink-0 truncate max-w-[260px]"
-              style={{ color: 'var(--color-accent-light)', fontFamily: M }}
-              title={activity.raw}
-            >
-              {activity.spinner ? `${activity.spinner} ` : ''}
-              {activity.verb}
-              {activity.elapsed ? ` ${activity.elapsed}` : ''}
-              {typeof activity.tokens === 'number' ? ` · ${activity.tokens.toLocaleString('en-US')} tokens` : ''}
-            </span>
-          </>
-        )}
+        {/* Issue 9 Part 1 clarification — mid-bar live-activity verb +
+            total-elapsed (e.g. "· ✻ Gesticulating 10m 18s · 430 tokens")
+            removed. It duplicated the verb+elapsed that already renders
+            in the chat bubble under Claude's name. The short quick-
+            glance elapsed timer below still renders. Chat bubble's
+            LiveActivityRow is NOT touched. */}
       </div>
 
       {/* Elapsed timer — only once we've seen a working transition */}
