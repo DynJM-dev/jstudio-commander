@@ -1,6 +1,6 @@
 import type { SessionStatus, SessionActivity, StatusFlip } from '@commander/shared';
 import { getDb } from '../db/connection.js';
-import { agentStatusService } from './agent-status.service.js';
+import { agentStatusService, applyActivityHints } from './agent-status.service.js';
 import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
@@ -173,8 +173,22 @@ const poll = (): void => {
     const detectedResult = detailed[session.tmux_session];
     if (!detectedResult) continue;
 
-    let newStatus = detectedResult.status;
-    let evidence = detectedResult.evidence;
+    // Issue 15 M1 — additive structured-signal upgrade. The pane
+    // classifier is pane-text-only; tool-execution pane states
+    // (Plan UI, long tool output pushing the spinner off the
+    // capture, multi-line tool_result blocks) can lack a verb and
+    // fall through to idle while the session is actively writing
+    // JSONL. `applyActivityHints` upgrades `idle → working` when
+    // `last_activity_at` was bumped within IDLE_UPGRADE_MS (15s).
+    // Stop-hook interaction is pre-gated by the 60s hook-yield
+    // below: by the time the classifier runs on a Stop-idled row,
+    // its `last_activity_at` is ≥60s stale.
+    const hinted = applyActivityHints(
+      { status: detectedResult.status, evidence: detectedResult.evidence },
+      { lastActivityAt: Number(session.last_activity_at ?? 0) },
+    );
+    let newStatus = hinted.status;
+    let evidence = hinted.evidence;
     const activity = detectedResult.activity;
 
     // Keep the activity cache fresh for downstream API reads regardless of

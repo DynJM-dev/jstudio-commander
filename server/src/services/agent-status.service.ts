@@ -40,8 +40,17 @@ import { tmuxService } from './tmux.service.js';
 //     Code routinely runs 10–30min of real work with a stable
 //     spinner + incrementing elapsed. Only past-tense "frozen-
 //     footer" panes (`✻ Cooked 21261s`) warrant an elapsed-based
-//     force-idle. Issue 15's false-idle was stale-elapsed firing
+//     force-idle. Issue 15 M2's false-idle was stale-elapsed firing
 //     unconditionally on `-ing` verbs.
+//   - Structured data signals are preferable to pane-text pattern
+//     matching when both are available. Pane reading is the
+//     fallback, not the default. `classifyStatusFromPane` is pane-
+//     only by design; `applyActivityHints` below upgrades an
+//     ambiguous pane `idle` to `working` when the caller supplies
+//     proof-of-life from the JSONL/hook feed. Issue 15 M1's false-
+//     idle during Bash/Read/Edit tool execution was the classifier
+//     deciding idle from a pane-read that lacked any spinner verb
+//     while the session was actively writing JSONL records.
 //
 // When adding a new pattern match: state its semantic shape
 // constraint inline. Not doing so is how Issue 8 P0 was possible.
@@ -475,6 +484,62 @@ export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus
   }
 
   return { status: 'idle', evidence: 'fallthrough → idle' };
+};
+
+// Issue 15 M1 — Additive structured-signal upgrade. The pane classifier
+// is pane-text-only (H4). Certain tool-execution pane states don't
+// expose a spinner verb: Plan tool UI, long tool output that pushes the
+// footer off the capture window, multi-line tool_result blocks, etc.
+// In those cases `classifyStatusFromPane` falls through to `idle` even
+// though Claude is actively running a tool.
+//
+// `watcher-bridge.ts` bumps `last_activity_at` on EVERY JSONL append
+// (each tool_use / tool_result / text delta), and `hook-event.routes.ts`
+// bumps it on every resolved hook match. A session actively generating
+// will have `last_activity_at` within milliseconds; a parked session
+// writes nothing, so the column goes stale quickly.
+//
+// This helper wraps a classifier result: upgrade `idle` → `working`
+// when the caller supplies a recent (< IDLE_UPGRADE_MS) proof-of-life
+// timestamp. Never downgrades; untouched on waiting/error/stopped/
+// working.
+//
+// Stop-hook interaction: Stop bumps `last_activity_at` too, but the
+// poller's 60s hook-yield pre-gates all classifier runs for 60s after
+// ANY hook. By the time the classifier runs, a Stop-idled session's
+// `last_activity_at` is ≥60s stale → outside the 15s upgrade window.
+// The temporal gate is the primary safety; the evidence-prefix
+// exclusions below are belt-and-suspenders for Phase J.1 IDLE_VERBS
+// and Phase L past-tense branches (semantically-explicit idle).
+export const IDLE_UPGRADE_MS = 15_000;
+
+export interface ClassifierHints {
+  /** Session's last_activity_at (epoch ms) — JSONL-append + hook feed. */
+  lastActivityAt?: number;
+  /** Test override for `now`. Defaults to `Date.now()`. */
+  nowMs?: number;
+}
+
+export const applyActivityHints = (
+  paneResult: Omit<DetectedStatus, 'activity'>,
+  hints?: ClassifierHints,
+): Omit<DetectedStatus, 'activity'> => {
+  if (paneResult.status !== 'idle') return paneResult;
+  if (!hints) return paneResult;
+  const last = hints.lastActivityAt ?? 0;
+  if (last <= 0) return paneResult;
+  const now = hints.nowMs ?? Date.now();
+  const age = now - last;
+  if (age >= IDLE_UPGRADE_MS) return paneResult;
+  // Skip explicit-idle intent: IDLE_VERBS override (PM pane showing
+  // `✻ Idle · teammates running`) and past-tense completion verbs.
+  // Those are semantically "Claude is parked", not pane-ambiguity.
+  if (/overrides spinner hoist/.test(paneResult.evidence)) return paneResult;
+  if (/past-tense verb=/.test(paneResult.evidence)) return paneResult;
+  return {
+    status: 'working',
+    evidence: `activity-hint upgrade (${Math.round(age / 1000)}s since jsonl) over "${paneResult.evidence}"`,
+  };
 };
 
 export const agentStatusService = {

@@ -1,6 +1,12 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectActivity, classifyStatusFromPane, parseElapsedSeconds } from '../agent-status.service.js';
+import {
+  detectActivity,
+  classifyStatusFromPane,
+  parseElapsedSeconds,
+  applyActivityHints,
+  IDLE_UPGRADE_MS,
+} from '../agent-status.service.js';
 
 describe('detectActivity — Phase J pane-footer parser', () => {
   test('full line → spinner + verb + elapsed + tokens + effort', () => {
@@ -320,5 +326,110 @@ describe('detectActivity — Phase L multi-line elapsed', () => {
     const activity = detectActivity(pane);
     assert.ok(activity);
     assert.equal(activity!.elapsed, undefined);
+  });
+});
+
+// Issue 15 M1 — additive structured-signal upgrade over pane
+// classification. Proof-of-life timestamp (watcher-bridge JSONL append
+// + hook feed) upgrades an ambiguous `idle` pane read to `working`.
+describe('applyActivityHints — Issue 15 M1 structured-signal upgrade', () => {
+  const NOW = 1_700_000_000_000;
+
+  test('idle + fresh activity (<15s) → upgrade to working', () => {
+    const pane = classifyStatusFromPane('some tool output scrolling\nno spinner verb');
+    assert.equal(pane.status, 'idle');
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 5_000, nowMs: NOW });
+    assert.equal(result.status, 'working');
+    assert.match(result.evidence, /activity-hint upgrade/);
+    assert.match(result.evidence, /5s since jsonl/);
+  });
+
+  test('idle + stale activity (>=15s) → stays idle', () => {
+    const pane = classifyStatusFromPane('some tool output scrolling\nno spinner verb');
+    const result = applyActivityHints(pane, {
+      lastActivityAt: NOW - IDLE_UPGRADE_MS,
+      nowMs: NOW,
+    });
+    assert.equal(result.status, 'idle');
+    assert.equal(result.evidence, pane.evidence);
+  });
+
+  test('idle + no hint → passthrough', () => {
+    const pane = classifyStatusFromPane('scrollback without any signal');
+    const result = applyActivityHints(pane);
+    assert.deepEqual(result, pane);
+  });
+
+  test('idle + lastActivityAt=0 (never bumped) → passthrough', () => {
+    const pane = classifyStatusFromPane('scrollback without any signal');
+    const result = applyActivityHints(pane, { lastActivityAt: 0, nowMs: NOW });
+    assert.deepEqual(result, pane);
+  });
+
+  test('working + fresh activity → untouched', () => {
+    const pane = classifyStatusFromPane('✻ Brewing… (3s)');
+    assert.equal(pane.status, 'working');
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
+    assert.equal(result.status, 'working');
+    assert.equal(result.evidence, pane.evidence);
+  });
+
+  test('waiting + fresh activity → untouched (never downgrade urgency)', () => {
+    // Synthetic: force a waiting result via the numbered-choice branch.
+    const pane = classifyStatusFromPane('❯ 1. Yes\n  2. No');
+    assert.equal(pane.status, 'waiting');
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
+    assert.equal(result.status, 'waiting');
+  });
+
+  test('IDLE_VERBS override ("✻ Idle · teammates running") + fresh activity → stays idle', () => {
+    // PM panes show `✻ Idle` while teammates work. The PM's own
+    // last_activity_at would not bump from teammate work, but be
+    // defensive: explicit-idle evidence must not upgrade even if the
+    // caller hands a fresh timestamp in error.
+    const pane = classifyStatusFromPane('✻ Idle · 2 teammates running');
+    assert.equal(pane.status, 'idle');
+    assert.match(pane.evidence, /overrides spinner hoist/);
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
+    assert.equal(result.status, 'idle');
+  });
+
+  test('past-tense verb ("✻ Cooked") + fresh activity → stays idle', () => {
+    // After a Stop hook the pane may briefly read `✻ Cooked` with
+    // last_activity_at fresh from the Stop bump. Poller's 60s hook-
+    // yield is the primary defense; this evidence-exclusion is the
+    // belt-and-suspenders guard.
+    const pane = classifyStatusFromPane('✻ Cooked');
+    assert.equal(pane.status, 'idle');
+    assert.match(pane.evidence, /past-tense verb=/);
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
+    assert.equal(result.status, 'idle');
+  });
+
+  test('idle fallthrough (no spinner, no ❯) + fresh activity → upgrade', () => {
+    // The canonical Issue 15 M1 shape: tool UI without a verb footer.
+    const pane = classifyStatusFromPane([
+      '⏺ Bash(ls -la)',
+      '  └─ drwxr-xr-x  12 jose  staff   384 Apr 19 04:01 .',
+      '  └─ -rw-r--r--   1 jose  staff  1234 Apr 19 04:00 README.md',
+    ].join('\n'));
+    assert.equal(pane.status, 'idle');
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 2_000, nowMs: NOW });
+    assert.equal(result.status, 'working');
+    assert.match(result.evidence, /activity-hint upgrade/);
+  });
+
+  test('idle ❯ prompt + fresh activity → upgrade (user typing branch)', () => {
+    // A `❯ ` prompt means the user has finished a turn. If activity is
+    // fresh within 15s, the Stop-hook must have just fired — and the
+    // poller's hook-yield would have pre-gated. In prod this combo is
+    // unreachable; in isolation the helper still upgrades because the
+    // `idle ❯ prompt visible` evidence is not on the exclusion list.
+    // Documenting the semantics keeps future edits honest.
+    const pane = classifyStatusFromPane('❯ \n');
+    assert.equal(pane.status, 'idle');
+    assert.match(pane.evidence, /idle ❯/);
+    const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
+    assert.equal(result.status, 'working');
   });
 });
