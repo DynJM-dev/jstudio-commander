@@ -121,6 +121,17 @@ export const resolveActionLabel = (opts: {
         }
         break;
       case 'Working':
+        // Issue 15.3 §6.1 — Working-path inversion. The client's
+        // getActionInfo derives rich, specific labels from ChatMessage
+        // content ("Reading STATE.md…", "Editing file.ts…", "Running
+        // command…"). The server's typed Working:ToolExec currently
+        // lacks a populated toolName (hasPendingToolUseInTranscript
+        // returns a boolean), so the typed path degrades to a generic
+        // "Running tool…" that overrides the richer jsonlLabel. Invert:
+        // for the Working coarse status, prefer jsonlLabel first, then
+        // fall back to typed subtype hints. Stopped/Error/Waiting/
+        // Compacting/Idle keep the typed-state authority above.
+        if (jsonlLabel) return jsonlLabel;
         switch (sessionState.subtype) {
           case 'ToolExec':
             return sessionState.toolName ? `Running ${sessionState.toolName}…` : 'Running tool…';
@@ -129,8 +140,7 @@ export const resolveActionLabel = (opts: {
           case 'Composing':
             return 'Composing response...';
           case 'Generic':
-            // Fall through to legacy derivation — jsonl label or
-            // terminal hint may still have a specific name.
+            // Fall through to terminal-hint legacy path.
             break;
         }
         break;

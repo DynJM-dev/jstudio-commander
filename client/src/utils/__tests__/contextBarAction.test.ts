@@ -212,7 +212,21 @@ describe('resolveActionLabel — Issue 15.3 typed SessionState path', () => {
     assert.equal(out, 'Choose an option');
   });
 
-  test('Working:ToolExec with toolName → "Running <tool>…"', () => {
+  test('Working:ToolExec with jsonlLabel → jsonlLabel wins (§6.1 inversion)', () => {
+    // User-observable behavior: when the client's getActionInfo has
+    // derived a specific label like "Reading STATE.md…" from the
+    // ChatMessage tail, the ContextBar must display that rich label
+    // — NOT the generic "Running Bash…" from the typed state.
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Reading STATE.md…',
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'ToolExec', toolName: 'Bash' },
+    });
+    assert.equal(out, 'Reading STATE.md…');
+  });
+
+  test('Working:ToolExec with toolName, no jsonlLabel → "Running <tool>…"', () => {
     const out = resolveActionLabel({
       isWorking: true,
       jsonlLabel: null,
@@ -222,7 +236,7 @@ describe('resolveActionLabel — Issue 15.3 typed SessionState path', () => {
     assert.equal(out, 'Running Bash…');
   });
 
-  test('Working:ToolExec without toolName → "Running tool…"', () => {
+  test('Working:ToolExec without toolName or jsonlLabel → "Running tool…"', () => {
     const out = resolveActionLabel({
       isWorking: true,
       jsonlLabel: null,
@@ -232,7 +246,17 @@ describe('resolveActionLabel — Issue 15.3 typed SessionState path', () => {
     assert.equal(out, 'Running tool…');
   });
 
-  test('Working:Thinking with hintLabel → hintLabel value', () => {
+  test('Working:Thinking with jsonlLabel → jsonlLabel wins (§6.1 inversion)', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Pondering…',
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'Thinking', hintLabel: 'Thinking…' },
+    });
+    assert.equal(out, 'Pondering…');
+  });
+
+  test('Working:Thinking with hintLabel, no jsonlLabel → hintLabel value', () => {
     const out = resolveActionLabel({
       isWorking: true,
       jsonlLabel: null,
