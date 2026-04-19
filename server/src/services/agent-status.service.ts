@@ -2,7 +2,7 @@ import type { SessionStatus, SessionActivity, EffortLevel } from '@commander/sha
 import { tmuxService } from './tmux.service.js';
 
 // ─────────────────────────────────────────────────────────────────────
-// PATTERN-MATCHING CONSTRAINT (Issue 8 P0, 8.1, 9 P2)
+// PATTERN-MATCHING CONSTRAINT (Issue 8 P0, 8.1, 9 P2, 15)
 //
 // External tool output — Claude Code pane content, stdout, JSONL
 // record fields — may change semantics between versions. Character-
@@ -34,6 +34,14 @@ import { tmuxService } from './tmux.service.js';
 //     viewer modal (`/status`, `/compact` preview, …). See
 //     `prompt-detector.service.ts` for the full detection rules
 //     and the Issue 9 P2 rationale.
+//   - Stale-elapsed heuristics MUST be gated on completion-verb
+//     morphology (`/ed$/` or COMPLETION_VERBS set). A live `-ing`
+//     verb at any elapsed is a legitimate long generation — Claude
+//     Code routinely runs 10–30min of real work with a stable
+//     spinner + incrementing elapsed. Only past-tense "frozen-
+//     footer" panes (`✻ Cooked 21261s`) warrant an elapsed-based
+//     force-idle. Issue 15's false-idle was stale-elapsed firing
+//     unconditionally on `-ing` verbs.
 //
 // When adding a new pattern match: state its semantic shape
 // constraint inline. Not doing so is how Issue 8 P0 was possible.
@@ -388,12 +396,34 @@ export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus
         return { status: 'idle', evidence: `verb=${activity.verb} overrides spinner hoist` };
       }
       if (isCompletionVerb(activity.verb)) {
+        // Belt-and-suspenders: a past-tense verb with a very large
+        // elapsed is the Phase L "frozen footer" class — Claude Code
+        // lingers on `✻ Cooked / 21261s` post-turn. The completion
+        // branch above already flips the state to idle; leaving the
+        // stale-elapsed log-evidence here just preserves the Phase L
+        // reasoning trail in the ring buffer.
+        //
+        // Issue 15 — PATTERN-MATCHING CONSTRAINT (§24):
+        // stale-elapsed MUST be gated on completion-verb morphology.
+        // A live `-ing` verb at 12m 45s is a legitimate long
+        // generation (Claude Code verification summaries, architectural
+        // analyses routinely run 10–30min in the wild). Flipping those
+        // to idle was the false-idle class this issue fixes.
+        //
+        // The `/ed$/` fallback inside isCompletionVerb (line 345)
+        // already catches unknown future past-tense verbs, so the
+        // belt-and-suspenders case is still handled without a
+        // duplicate elapsed check.
+        const secs = parseElapsedSeconds(activity.elapsed);
+        if (secs !== null && secs > STALE_ELAPSED_SECONDS) {
+          return { status: 'idle', evidence: `past-tense verb=${activity.verb} stale elapsed ${secs}s` };
+        }
         return { status: 'idle', evidence: `past-tense verb=${activity.verb}` };
       }
-      const secs = parseElapsedSeconds(activity.elapsed);
-      if (secs !== null && secs > STALE_ELAPSED_SECONDS) {
-        return { status: 'idle', evidence: `stale elapsed ${secs}s` };
-      }
+      // Live `-ing` verbs: no stale-elapsed flip. Phase U.1's separate
+      // `last_activity_at` poller guard (STALE_ACTIVITY_MS=90s, pinned
+      // in status-poller.service.ts) catches genuinely stuck sessions
+      // via absence of hook events, independent of pane-elapsed.
     }
     return { status: 'working', evidence: 'active-indicator in tail' };
   }

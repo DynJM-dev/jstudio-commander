@@ -231,10 +231,37 @@ describe('classifyStatusFromPane — Phase L past-tense + stale-elapsed', () => 
     assert.equal(result.evidence, 'active-indicator in tail');
   });
 
-  test('✻ Ruminating (620s) → idle (stale-elapsed override)', () => {
+  // Issue 15 — inverted invariant. Phase L's stale-elapsed guard
+  // originally fired on ANY elapsed > 10min, assuming the footer was
+  // frozen. Reality: Claude Code's long reasoning/verification runs
+  // legitimately go 10–30min with a live `-ing` verb + cycling
+  // spinner. The guard was giving a false-idle on Jose's 10+-min
+  // Gesticulating during a verification summary.
+  //
+  // Fix: stale-elapsed only fires when the verb is a completion
+  // (past-tense) verb that slipped past COMPLETION_VERBS allowlist —
+  // belt-and-suspenders for frozen footers, NOT a hammer on live
+  // `-ing` turns.
+  test('Issue 15 — ✻ Ruminating (620s) → working (live long-generation, NOT stale)', () => {
     const result = classifyStatusFromPane('✻ Ruminating… (620s · ↓ 120 tokens)');
+    assert.equal(result.status, 'working', `expected live working, got ${result.status} (${result.evidence})`);
+  });
+
+  test('Issue 15 — ✻ Gesticulating (12m 45s) → working (Jose\'s repro shape)', () => {
+    const result = classifyStatusFromPane('✻ Gesticulating… (12m 45s · ↓ 890 tokens)');
+    assert.equal(result.status, 'working');
+  });
+
+  test('Issue 15 — future unknown `-ed` verb past threshold still goes idle (Phase L guard retained)', () => {
+    // Phase L's original concern: a future Claude verb slips past the
+    // COMPLETION_VERBS allowlist but still has `-ed` morphology + huge
+    // elapsed = frozen footer. The completion-verb check at line 390
+    // catches it via the `/ed$/` fallback in isCompletionVerb, BEFORE
+    // the stale-elapsed check ever runs. Leaving this test pinned so
+    // the `-ed` path stays honest.
+    const result = classifyStatusFromPane('✻ Schlepped (21261s)');
     assert.equal(result.status, 'idle');
-    assert.match(result.evidence, /stale elapsed 620s/);
+    assert.match(result.evidence, /past-tense verb=Schlepped/);
   });
 
   test('multi-line footer: ✻ Cooked / · / 21261s → idle (both gates fire, past-tense wins first)', () => {
