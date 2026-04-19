@@ -1,6 +1,19 @@
 // Types
 export type { Session, SessionStatus, SessionEvent, Teammate, EffortLevel, SessionType, SessionActivity, StatusFlip } from './types/session.js';
 export { EFFORT_LEVELS, SESSION_TYPES, SESSION_TYPE_EFFORT_DEFAULTS } from './types/session.js';
+export type {
+  SessionState,
+  SessionStateKind,
+  IdleSubtype,
+  WorkingSubtype,
+  WaitingSubtype,
+  StoppedReason,
+} from './types/session-state.js';
+export {
+  IDLE_JUST_FINISHED_MS,
+  IDLE_POST_COMPACT_MS,
+  sessionStateToStatus,
+} from './types/session-state.js';
 export type { ChatMessage, ContentBlock, TokenUsage, UnmappedKind } from './types/chat.js';
 export type { Project, PhaseStatus, PhaseLog, StackPill, StackCategory, RecentCommit } from './types/project.js';
 export type { TerminalSession, TerminalResize } from './types/terminal.js';

@@ -1,4 +1,5 @@
 import type { Session, SessionStatus, SessionActivity, Teammate } from './session.js';
+import type { SessionState } from './session-state.js';
 import type { ChatMessage } from './chat.js';
 import type { Project } from './project.js';
 import type { TokenUsageEntry, DailyStats } from './analytics.js';
@@ -25,6 +26,10 @@ export type WSEvent =
       // Live activity snapshot at transition time; null when nothing parses.
       activity?: SessionActivity | null;
       at?: string;
+      // Issue 15.3 — canonical typed state. Optional during the dual-
+      // emit migration; clients that recognize it SHOULD prefer it over
+      // re-deriving from `status`. Absent on legacy emit paths.
+      state?: SessionState;
     }
   | { type: 'chat:message'; sessionId: string; message: ChatMessage }
   | { type: 'chat:messages'; sessionId: string; messages: ChatMessage[] }

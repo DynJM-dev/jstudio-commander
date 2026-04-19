@@ -14,6 +14,7 @@ import { AttachmentChipRow } from '../components/chat/AttachmentChipRow';
 import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { useSessionTick } from '../hooks/useSessionTick';
+import { useSessionState } from '../hooks/useSessionState';
 import { useHeartbeat } from '../hooks/useHeartbeat';
 import { useAttachments, ACCEPTED_MIME } from '../hooks/useAttachments';
 import { ContextLowToast } from '../components/shared/ContextLowToast';
@@ -46,6 +47,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // Drives both the context-band color strip (when present) and the
   // context-low toast that fires on upward band crossings.
   const { tick, refetch: refetchTick } = useSessionTick(sessionId);
+  // Issue 15.3 — canonical typed SessionState from the server. Null
+  // until the first `session:status` event lands with the `state`
+  // field populated (or forever on pre-15.3 clients). When null,
+  // ContextBar's actionLabel derivation falls back to its legacy
+  // jsonl + terminal-hint path.
+  const sessionState = useSessionState(sessionId);
   const ctxPct = tick?.contextWindow.usedPercentage ?? null;
   const ctxBand = bandForPercentage(ctxPct);
   // Phase N.0 Patch 3 — if no heartbeat in 30s, we suppress the
@@ -544,6 +551,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         onInterrupt={interruptSession}
         onRefresh={handleRefresh}
         sessionTick={tick}
+        sessionState={sessionState}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

@@ -2,6 +2,8 @@ import type { SessionStatus, SessionActivity, StatusFlip } from '@commander/shar
 import { getDb } from '../db/connection.js';
 import { agentStatusService, applyActivityHints } from './agent-status.service.js';
 import { hasPendingToolUseInTranscript } from './jsonl-parser.service.js';
+import { computeSessionState } from './session-state.service.js';
+import { preCompactService } from './pre-compact.service.js';
 import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
@@ -407,6 +409,43 @@ const poll = (): void => {
       // Update cache
       lastKnownStatus.set(session.id, newStatus);
 
+      // Issue 15.3 — compute the canonical typed state and dual-emit
+      // it on the same `session:status` event. Clients that recognize
+      // the `state` field prefer it for subtype-aware UI; legacy
+      // consumers keep reading `status`. Signals we have cheaply in
+      // the poller:
+      //   - paneStatus / paneEvidence / paneActivity (detectedResult)
+      //   - hintedStatus / hintedEvidence (hinted)
+      //   - pendingToolUse (ran above for 15.1-H gate — recomputed
+      //     for the state too; duplicate read of a 64KB tail is
+      //     negligible and avoids threading a bool through the flow)
+      //   - preCompactState via preCompactService.getSessionState
+      //   - activeTeammateCount via a single SQL count
+      // Signals NOT plumbed in Phase 1 (follow-up work):
+      //   - waitingPromptKind (requires running detectPrompts per tick)
+      //   - lastStopAt / lastCompactBoundaryAt (requires new tracking)
+      //   - pendingToolName / stoppedReason
+      // Those resolve as Generic subtypes — functionally identical to
+      // pre-15.3 coarse status for the unmigrated surfaces.
+      const transcriptPathForState = latestTranscriptPath(session.transcript_paths);
+      const pendingToolUseForState = transcriptPathForState
+        ? hasPendingToolUseInTranscript(transcriptPathForState)
+        : false;
+      const teammateRow = db.prepare(
+        "SELECT COUNT(*) as n FROM sessions WHERE parent_session_id = ? AND status != 'stopped'",
+      ).get(session.id) as { n: number } | undefined;
+      const activeTeammateCount = Number(teammateRow?.n ?? 0);
+      const sessionState = computeSessionState({
+        paneStatus: detectedResult.status,
+        paneEvidence: detectedResult.evidence,
+        paneActivity: activity,
+        hintedStatus: hinted.status,
+        hintedEvidence: hinted.evidence,
+        pendingToolUse: pendingToolUseForState,
+        preCompactState: preCompactService.getSessionState(session.id),
+        activeTeammateCount,
+      });
+
       // Emit event — richer payload on transition with the before/after
       // statuses, the parsed evidence, and the live activity snapshot.
       // The legacy `status` field stays populated to the `to` value for
@@ -417,6 +456,7 @@ const poll = (): void => {
         evidence,
         activity,
         at,
+        state: sessionState,
       });
     } else {
       // Cache the current status even if unchanged (first run)

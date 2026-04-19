@@ -54,6 +54,10 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
   });
 
   eventBus.on('session:status', (sessionId, status, extras) => {
+    // `extras` already carries the Issue 15.3 `state` field when the
+    // poller (or another emitter) attached one. Spread as-is so new
+    // consumers read extras.state; legacy consumers continue to read
+    // extras.status.
     rooms.broadcast('sessions', {
       type: 'session:status',
       sessionId,

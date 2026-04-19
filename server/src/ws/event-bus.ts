@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick, SystemStatsPayload, AggregateRateLimitsPayload, PreCompactStateChangedEvent } from '@commander/shared';
+import type { Session, SessionStatus, SessionActivity, ChatMessage, Project, TokenUsageEntry, Teammate, SessionTick, SystemStatsPayload, AggregateRateLimitsPayload, PreCompactStateChangedEvent, SessionState } from '@commander/shared';
 
 export interface StatusEmitExtras {
   from?: SessionStatus;
@@ -7,6 +7,10 @@ export interface StatusEmitExtras {
   evidence?: string;
   activity?: SessionActivity | null;
   at?: string;
+  // Issue 15.3 — canonical typed state. Dual-emitted alongside the
+  // legacy coarse `status`. Clients that recognize it prefer this
+  // field; older consumers keep reading `status`.
+  state?: SessionState;
 }
 
 class CommanderEventBus extends EventEmitter {

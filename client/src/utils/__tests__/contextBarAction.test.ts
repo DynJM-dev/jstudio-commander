@@ -177,3 +177,146 @@ describe('resolveActionLabel — compaction precedence', () => {
     assert.equal(out, null);
   });
 });
+
+// Issue 15.3 — typed SessionState path. When the server emits a
+// canonical `state`, resolveActionLabel reads it directly; missing
+// state falls through to the legacy jsonl + terminal-hint path.
+describe('resolveActionLabel — Issue 15.3 typed SessionState path', () => {
+  test('Compacting state → "Compacting context..." (overrides any jsonl label)', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+      sessionState: { kind: 'Compacting' },
+    });
+    assert.equal(out, 'Compacting context...');
+  });
+
+  test('WaitingForInput:Approval → "Waiting for approval"', () => {
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'WaitingForInput', subtype: 'Approval' },
+    });
+    assert.equal(out, 'Waiting for approval');
+  });
+
+  test('WaitingForInput:NumberedChoice → "Choose an option"', () => {
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'WaitingForInput', subtype: 'NumberedChoice' },
+    });
+    assert.equal(out, 'Choose an option');
+  });
+
+  test('Working:ToolExec with toolName → "Running <tool>…"', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'ToolExec', toolName: 'Bash' },
+    });
+    assert.equal(out, 'Running Bash…');
+  });
+
+  test('Working:ToolExec without toolName → "Running tool…"', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'ToolExec' },
+    });
+    assert.equal(out, 'Running tool…');
+  });
+
+  test('Working:Thinking with hintLabel → hintLabel value', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'Thinking', hintLabel: 'Ruminating…' },
+    });
+    assert.equal(out, 'Ruminating…');
+  });
+
+  test('Working:Generic falls through to legacy path', () => {
+    // Generic means "we know it is working but have no narrower
+    // subtype" — the client should use jsonlLabel or terminalHint
+    // for more specificity.
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+      sessionState: { kind: 'Working', subtype: 'Generic' },
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('Idle state → null (LiveActivityRow unmounts)', () => {
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: 'Composing response...',  // stale — should not show
+      terminalHint: null,
+      sessionState: { kind: 'Idle', subtype: 'Generic' },
+    });
+    assert.equal(out, null);
+  });
+
+  test('Idle:MonitoringSubagents → null (ContextBar doesn\'t render this subtype)', () => {
+    // ContextBar's actionLabel stays null for idle states; the
+    // status-bar component (not this path) is what renders the
+    // "Monitoring N teammates" line.
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'Idle', subtype: 'MonitoringSubagents' },
+    });
+    assert.equal(out, null);
+  });
+
+  test('Stopped → null', () => {
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: null,
+      terminalHint: null,
+      sessionState: { kind: 'Stopped', reason: 'UserInitiated' },
+    });
+    assert.equal(out, null);
+  });
+
+  test('sessionState absent → legacy path (backward compat preserved)', () => {
+    // Client just opened a chat and no WS event has landed yet.
+    // resolveActionLabel MUST fall back to the legacy derivation
+    // (this test is the whole point of dual-emit migration).
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+      sessionState: null,
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('sessionState undefined → legacy path', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('Compacting takes precedence over terminalHint + jsonl', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: 'Compacting context...',
+      sessionState: { kind: 'Compacting' },
+    });
+    assert.equal(out, 'Compacting context...');
+  });
+});

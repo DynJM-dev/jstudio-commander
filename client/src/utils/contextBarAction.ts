@@ -85,12 +85,68 @@ export const getComposingLabelIfApplicable = (messages: ChatMessage[]): string |
 //
 // Pure function — used by ContextBar's actionLabel derivation. Tests
 // cover the precedence matrix without rendering React.
+//
+// Issue 15.3 — when the server has emitted a canonical `SessionState`
+// via `session:status`, the typed state's subtype + hintLabel are the
+// authoritative source for the action label. Falls back to the
+// legacy derivation (jsonl-derived `jsonlLabel` / `terminalHint`)
+// when the canonical state is absent (pre-migration clients + gap
+// between session open and first status emit).
+import type { SessionState } from '@commander/shared';
+
 export const resolveActionLabel = (opts: {
   isWorking: boolean;
   jsonlLabel: string | null;
   terminalHint: string | null;
+  /** Canonical typed state from the server. When present takes priority. */
+  sessionState?: SessionState | null;
 }): string | null => {
-  const { isWorking, jsonlLabel, terminalHint } = opts;
+  const { isWorking, jsonlLabel, terminalHint, sessionState } = opts;
+
+  // Issue 15.3 — typed-state path. The server has decided the state;
+  // render the user-facing label from its kind + subtype. Falls
+  // through to the legacy derivation below when `sessionState` is
+  // absent (client is pre-migration or no event has arrived yet).
+  if (sessionState) {
+    switch (sessionState.kind) {
+      case 'Compacting':
+        return 'Compacting context...';
+      case 'WaitingForInput':
+        switch (sessionState.subtype) {
+          case 'Approval': return 'Waiting for approval';
+          case 'TrustFolder': return 'Trust this folder?';
+          case 'NumberedChoice': return 'Choose an option';
+          case 'YesNo': return 'Confirm (y/n)';
+          case 'Generic': return 'Waiting for input';
+        }
+        break;
+      case 'Working':
+        switch (sessionState.subtype) {
+          case 'ToolExec':
+            return sessionState.toolName ? `Running ${sessionState.toolName}…` : 'Running tool…';
+          case 'Thinking':
+            return sessionState.hintLabel ?? 'Thinking…';
+          case 'Composing':
+            return 'Composing response...';
+          case 'Generic':
+            // Fall through to legacy derivation — jsonl label or
+            // terminal hint may still have a specific name.
+            break;
+        }
+        break;
+      case 'Idle':
+        // Idle has no action label in the ContextBar (LiveActivityRow
+        // unmounts). Return null so the chip reads null.
+        return null;
+      case 'Stopped':
+      case 'Error':
+        return null;
+    }
+  }
+
+  // Legacy path (unchanged from pre-15.3): compaction hint > jsonl
+  // label > terminal-hint fallback. Runs when sessionState is absent
+  // OR when Working:Generic fell through above.
   if (isWorking && terminalHint === 'Compacting context...') {
     return terminalHint;
   }

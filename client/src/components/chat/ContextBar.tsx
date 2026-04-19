@@ -14,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { ChatMessage, SessionActivity, SessionTick } from '@commander/shared';
+import type { ChatMessage, SessionActivity, SessionTick, SessionState } from '@commander/shared';
 import { formatTokens, formatCost } from '../../utils/format';
 import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
@@ -224,6 +224,11 @@ interface ContextBarProps {
   // Absent-or-null falls back to the legacy token/contextLimit ratio so
   // pre-Phase-M sessions still render something sensible.
   sessionTick?: SessionTick | null;
+  // Issue 15.3 — canonical typed SessionState from the server. When
+  // present, `resolveActionLabel` reads the typed subtype directly;
+  // absent means "no canonical state yet, fall back to deriving from
+  // jsonl + terminal-hint" (pre-15.3 behavior).
+  sessionState?: SessionState | null;
 }
 
 // Phase S.1 Patch 4 — tick-first ctx% resolver. Exported so unit tests
@@ -244,7 +249,7 @@ export const resolveContextPercent = (
   return Math.min(Math.round((displayTokens / contextLimit) * 100), 100);
 };
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null, sessionState = null }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -325,10 +330,15 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // Issue 15.1 Symptom A — action-label precedence. Compaction overrides
   // the stale jsonl-derived "Composing response..." label; see
   // resolveActionLabel's doc-comment for the full rationale.
+  //
+  // Issue 15.3 — when the server has emitted a canonical SessionState,
+  // `resolveActionLabel` reads it directly; otherwise falls back to the
+  // legacy jsonl + terminal-hint derivation path.
   const actionLabel = resolveActionLabel({
     isWorking,
     jsonlLabel: jsonlAction?.label ?? null,
     terminalHint: terminalHint ?? null,
+    sessionState,
   });
   const ActionIcon = jsonlAction?.icon ?? null;
 
