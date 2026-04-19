@@ -486,31 +486,31 @@ export const classifyStatusFromPane = (paneContent: string): Omit<DetectedStatus
   return { status: 'idle', evidence: 'fallthrough → idle' };
 };
 
-// Issue 15 M1 — Additive structured-signal upgrade. The pane classifier
-// is pane-text-only (H4). Certain tool-execution pane states don't
-// expose a spinner verb: Plan tool UI, long tool output that pushes the
-// footer off the capture window, multi-line tool_result blocks, etc.
-// In those cases `classifyStatusFromPane` falls through to `idle` even
-// though Claude is actively running a tool.
+// Issue 15 M1 + 15.1-D — Additive structured-signal upgrade, allowlist
+// form. The pane classifier is pane-text-only (H4). Certain tool-
+// execution pane states don't expose a spinner verb: Plan tool UI,
+// long tool output that pushes the footer off the capture window,
+// multi-line tool_result blocks, etc. In those cases
+// `classifyStatusFromPane` falls through to `idle` with evidence
+// `'fallthrough → idle'` even though Claude is actively running a tool.
 //
-// `watcher-bridge.ts` bumps `last_activity_at` on EVERY JSONL append
-// (each tool_use / tool_result / text delta), and `hook-event.routes.ts`
-// bumps it on every resolved hook match. A session actively generating
-// will have `last_activity_at` within milliseconds; a parked session
-// writes nothing, so the column goes stale quickly.
+// `watcher-bridge.ts` bumps `last_activity_at` on every JSONL append
+// (each tool_use / tool_result / text delta), `hook-event.routes.ts`
+// bumps it on every resolved hook match, and `session-tick.service.ts`
+// bumps it on every statusline tick (~15s cadence). A session actively
+// generating will have `last_activity_at` within milliseconds.
 //
 // This helper wraps a classifier result: upgrade `idle` → `working`
-// when the caller supplies a recent (< IDLE_UPGRADE_MS) proof-of-life
-// timestamp. Never downgrades; untouched on waiting/error/stopped/
-// working.
+// ONLY when the evidence is `'fallthrough → idle'` AND the caller
+// supplies a recent (< IDLE_UPGRADE_MS) proof-of-life timestamp. Every
+// other idle branch (IDLE_VERBS, past-tense verbs, `idle ❯ prompt
+// visible`, IDLE_INDICATORS pattern) is semantically explicit and
+// MUST NOT be upgraded — the original Issue 15 M1 shipped a denylist
+// form that missed `idle ❯ prompt visible`, so session-tick activity
+// bumps cycled every idle session between `idle` and `working` on a
+// ~20s period (the 15.1-D P0 regression).
 //
-// Stop-hook interaction: Stop bumps `last_activity_at` too, but the
-// poller's 60s hook-yield pre-gates all classifier runs for 60s after
-// ANY hook. By the time the classifier runs, a Stop-idled session's
-// `last_activity_at` is ≥60s stale → outside the 15s upgrade window.
-// The temporal gate is the primary safety; the evidence-prefix
-// exclusions below are belt-and-suspenders for Phase J.1 IDLE_VERBS
-// and Phase L past-tense branches (semantically-explicit idle).
+// Never downgrades; waiting/error/stopped/working untouched.
 export const IDLE_UPGRADE_MS = 15_000;
 
 export interface ClassifierHints {
@@ -520,22 +520,44 @@ export interface ClassifierHints {
   nowMs?: number;
 }
 
+// Issue 15.1-D — allowlist, not denylist. The original M1 implementation
+// excluded two explicit-idle evidence strings (IDLE_VERBS override +
+// past-tense verbs) and upgraded everything else. Session ticks from the
+// statusline forwarder bump `last_activity_at` every ~15s on ANY session,
+// including genuinely parked ones showing `❯` prompt. That re-entered
+// the poller's classifier → classifier returned `idle ❯ prompt visible`
+// → M1's denylist didn't exclude that string → upgrade fired → status
+// flipped to `working` → ~15s later activity went stale → classifier
+// won → flip back to `idle` → next tick → upgrade → cycling on ~20s
+// period across every idle session in the fleet (Issue 15.1-D P0).
+//
+// The fix: only upgrade when the classifier's evidence is exactly
+// `'fallthrough → idle'` — the single branch meaning "I couldn't
+// determine from the pane, defaulting to idle". That's the legitimate
+// M1 target (Plan UI pane, tool output pushing spinner off capture,
+// multi-line tool_result blocks). Every other idle branch
+// (IDLE_VERBS, past-tense verb, idle ❯ prompt, idle-indicator pattern)
+// is semantically explicit and must not be upgraded.
+//
+// §24.2 PATTERN-MATCHING CONSTRAINT: allowlist beats denylist. The
+// original denylist accreted silent exclusions whenever the classifier
+// grew a new idle branch. The allowlist fails closed — a new idle
+// branch we haven't cataloged means "don't upgrade", which is safer
+// than "do upgrade and cycle the whole fleet".
+const FALLTHROUGH_EVIDENCE = 'fallthrough → idle';
+
 export const applyActivityHints = (
   paneResult: Omit<DetectedStatus, 'activity'>,
   hints?: ClassifierHints,
 ): Omit<DetectedStatus, 'activity'> => {
   if (paneResult.status !== 'idle') return paneResult;
+  if (paneResult.evidence !== FALLTHROUGH_EVIDENCE) return paneResult;
   if (!hints) return paneResult;
   const last = hints.lastActivityAt ?? 0;
   if (last <= 0) return paneResult;
   const now = hints.nowMs ?? Date.now();
   const age = now - last;
   if (age >= IDLE_UPGRADE_MS) return paneResult;
-  // Skip explicit-idle intent: IDLE_VERBS override (PM pane showing
-  // `✻ Idle · teammates running`) and past-tense completion verbs.
-  // Those are semantically "Claude is parked", not pane-ambiguity.
-  if (/overrides spinner hoist/.test(paneResult.evidence)) return paneResult;
-  if (/past-tense verb=/.test(paneResult.evidence)) return paneResult;
   return {
     status: 'working',
     evidence: `activity-hint upgrade (${Math.round(age / 1000)}s since jsonl) over "${paneResult.evidence}"`,

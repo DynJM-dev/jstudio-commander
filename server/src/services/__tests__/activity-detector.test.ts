@@ -383,10 +383,9 @@ describe('applyActivityHints — Issue 15 M1 structured-signal upgrade', () => {
   });
 
   test('IDLE_VERBS override ("✻ Idle · teammates running") + fresh activity → stays idle', () => {
-    // PM panes show `✻ Idle` while teammates work. The PM's own
-    // last_activity_at would not bump from teammate work, but be
-    // defensive: explicit-idle evidence must not upgrade even if the
-    // caller hands a fresh timestamp in error.
+    // PM panes show `✻ Idle` while teammates work. Explicit-idle
+    // evidence: IDLE_VERBS override. Allowlist (15.1-D) only permits
+    // `fallthrough → idle` for upgrades — every other branch stays idle.
     const pane = classifyStatusFromPane('✻ Idle · 2 teammates running');
     assert.equal(pane.status, 'idle');
     assert.match(pane.evidence, /overrides spinner hoist/);
@@ -395,10 +394,8 @@ describe('applyActivityHints — Issue 15 M1 structured-signal upgrade', () => {
   });
 
   test('past-tense verb ("✻ Cooked") + fresh activity → stays idle', () => {
-    // After a Stop hook the pane may briefly read `✻ Cooked` with
-    // last_activity_at fresh from the Stop bump. Poller's 60s hook-
-    // yield is the primary defense; this evidence-exclusion is the
-    // belt-and-suspenders guard.
+    // Phase L explicit-idle: past-tense verb. Outside the `fallthrough`
+    // allowlist → no upgrade regardless of activity freshness.
     const pane = classifyStatusFromPane('✻ Cooked');
     assert.equal(pane.status, 'idle');
     assert.match(pane.evidence, /past-tense verb=/);
@@ -408,28 +405,49 @@ describe('applyActivityHints — Issue 15 M1 structured-signal upgrade', () => {
 
   test('idle fallthrough (no spinner, no ❯) + fresh activity → upgrade', () => {
     // The canonical Issue 15 M1 shape: tool UI without a verb footer.
+    // Evidence is `fallthrough → idle` — the one branch the allowlist
+    // permits. Must upgrade so Plan / Bash / Read / Edit mid-flight
+    // sessions don't false-report idle.
     const pane = classifyStatusFromPane([
       '⏺ Bash(ls -la)',
       '  └─ drwxr-xr-x  12 jose  staff   384 Apr 19 04:01 .',
       '  └─ -rw-r--r--   1 jose  staff  1234 Apr 19 04:00 README.md',
     ].join('\n'));
     assert.equal(pane.status, 'idle');
+    assert.equal(pane.evidence, 'fallthrough → idle');
     const result = applyActivityHints(pane, { lastActivityAt: NOW - 2_000, nowMs: NOW });
     assert.equal(result.status, 'working');
     assert.match(result.evidence, /activity-hint upgrade/);
   });
 
-  test('idle ❯ prompt + fresh activity → upgrade (user typing branch)', () => {
-    // A `❯ ` prompt means the user has finished a turn. If activity is
-    // fresh within 15s, the Stop-hook must have just fired — and the
-    // poller's hook-yield would have pre-gated. In prod this combo is
-    // unreachable; in isolation the helper still upgrades because the
-    // `idle ❯ prompt visible` evidence is not on the exclusion list.
-    // Documenting the semantics keeps future edits honest.
+  test('idle ❯ prompt + fresh activity → STAYS idle (Issue 15.1-D regression)', () => {
+    // The 15.1-D P0 case. Session tick bumps last_activity_at every
+    // ~15s for ANY session, including genuinely parked ones showing
+    // `❯` prompt. Evidence `idle ❯ prompt visible` is explicit-idle
+    // and must not upgrade — the original M1 denylist missed this
+    // branch and every idle session in the fleet cycled
+    // idle ↔ working on a ~20s period.
     const pane = classifyStatusFromPane('❯ \n');
     assert.equal(pane.status, 'idle');
     assert.match(pane.evidence, /idle ❯/);
     const result = applyActivityHints(pane, { lastActivityAt: NOW - 1_000, nowMs: NOW });
-    assert.equal(result.status, 'working');
+    assert.equal(result.status, 'idle');
+    assert.equal(result.evidence, pane.evidence);
+  });
+
+  test('idle ❯ prompt + fresh activity + full statusline chrome → STAYS idle', () => {
+    // Shape matching what a live idle session looks like when tick-
+    // driven activity is <15s old. Must stay idle post-fix.
+    const pane = [
+      '─────',
+      '❯ ',
+      '─────',
+      '  Opus 4.7 │ ctx 15% │ 5h 31% │ 7d 66% │ $0.12',
+      '  ⏵⏵ bypass permissions on · 1 shell',
+    ].join('\n');
+    const core = classifyStatusFromPane(pane);
+    assert.equal(core.status, 'idle');
+    const result = applyActivityHints(core, { lastActivityAt: NOW - 5_000, nowMs: NOW });
+    assert.equal(result.status, 'idle');
   });
 });
