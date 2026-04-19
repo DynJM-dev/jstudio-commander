@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { ChatMessage } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { jsonlParserService } from '../services/jsonl-parser.service.js';
@@ -19,9 +20,28 @@ const resolveTranscripts = (rawJson: string | null | undefined): ResolvedTranscr
   let parsed: unknown;
   try { parsed = JSON.parse(rawJson); } catch { return { paths: [], awaitingFirstTurn: true }; }
   if (!Array.isArray(parsed)) return { paths: [], awaitingFirstTurn: true };
-  const paths = parsed.filter((p): p is string => typeof p === 'string' && existsSync(p));
+  const filtered = parsed.filter((p): p is string => typeof p === 'string' && existsSync(p));
+
+  // Issue 11 — dedup by basename at read time too. Pre-fix rows may
+  // carry two case-diverged paths pointing at the same JSONL
+  // (see sessionService.appendTranscriptPath). Reading both would
+  // double every message in chat. First basename wins; equivalent
+  // paths are dropped. Legitimate rotation (different UUIDs per
+  // file) is unaffected.
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const p of filtered) {
+    const b = basename(p);
+    if (seen.has(b)) continue;
+    seen.add(b);
+    paths.push(p);
+  }
   return { paths, awaitingFirstTurn: paths.length === 0 };
 };
+
+// Exported test hook — the dedup behavior is unit-tested against the
+// pure function. Not part of the public API.
+export const resolveTranscriptsForTest = resolveTranscripts;
 
 const concatTranscripts = (paths: string[]): ChatMessage[] => {
   const out: ChatMessage[] = [];

@@ -627,7 +627,22 @@ export const sessionService = {
       | undefined;
     if (!row) return false;
     const existing = parseTranscriptPaths(row.transcript_paths);
-    if (existing.includes(path)) return false;
+    // Issue 11 — dedup by basename UUID, not exact path. Claude Code's
+    // JSONL filename is `<claude-session-uuid>.jsonl` and the UUID is
+    // globally unique to one session. On macOS case-insensitive FS a
+    // project dir typed as `~/.../JSTUDIO/` vs. real-case `~/.../JStudio/`
+    // encodes to two different claude-projects dirs (`-JSTUDIO-` vs.
+    // `-JStudio-`) both of which resolve to the SAME physical file.
+    // Commander's watcher + hook-event resolver can independently add
+    // both encodings; the chat endpoint then reads the same JSONL
+    // twice and every message renders twice (the bootstrap-ack dupe
+    // Jose reported).
+    //
+    // Basename dedup is safe against legitimate multi-file transcripts
+    // (session rotation produces different UUIDs per file — see the
+    // rotation test below).
+    const newBasename = basename(path);
+    if (existing.some((p) => basename(p) === newBasename)) return false;
     const next = [...existing, path];
     db.prepare(
       'UPDATE sessions SET transcript_paths = ? WHERE id = ?',
