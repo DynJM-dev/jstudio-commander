@@ -6,6 +6,7 @@ import {
   isActivityStale,
   shouldSuppressComposingLabel,
   getComposingLabelIfApplicable,
+  resolveActionLabel,
 } from '../contextBarAction.js';
 
 const asstMsg = (lastBlockType: string, text = ''): ChatMessage => ({
@@ -109,5 +110,70 @@ describe('Issue 8.1 Part 2 — getComposingLabelIfApplicable', () => {
       content: [{ type: 'text', text: 'next prompt' }], isSidechain: false,
     };
     assert.equal(getComposingLabelIfApplicable([asst, user]), 'Composing response...');
+  });
+});
+
+// Issue 15.1 Symptom A — compaction label precedence.
+describe('resolveActionLabel — compaction precedence', () => {
+  test('working + compacting terminal hint → compacting wins over jsonl label', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: 'Compacting context...',
+    });
+    assert.equal(out, 'Compacting context...');
+  });
+
+  test('working + no terminalHint → jsonl label wins', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('working + other terminal hint (non-compacting) → jsonl label wins', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: 'Composing response...',
+      terminalHint: 'Exploring codebase...',
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('working + no jsonl label + terminalHint (non-compacting) → terminalHint fallback', () => {
+    const out = resolveActionLabel({
+      isWorking: true,
+      jsonlLabel: null,
+      terminalHint: 'Running subagent...',
+    });
+    assert.equal(out, 'Running subagent...');
+  });
+
+  test('not working → terminalHint suppressed even if present', () => {
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: null,
+      terminalHint: 'Compacting context...',
+    });
+    assert.equal(out, null);
+  });
+
+  test('not working + jsonl label → label still returned (jsonl path is status-independent by design)', () => {
+    // ContextBar derives jsonlLabel only when isWorking; passing a label
+    // here means the caller explicitly chose to surface it. Preserve
+    // that by returning it — the helper doesn't second-guess its input.
+    const out = resolveActionLabel({
+      isWorking: false,
+      jsonlLabel: 'Composing response...',
+      terminalHint: null,
+    });
+    assert.equal(out, 'Composing response...');
+  });
+
+  test('all null/false → null', () => {
+    const out = resolveActionLabel({ isWorking: false, jsonlLabel: null, terminalHint: null });
+    assert.equal(out, null);
   });
 });

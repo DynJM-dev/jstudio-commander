@@ -66,3 +66,35 @@ export const getComposingLabelIfApplicable = (messages: ChatMessage[]): string |
   }
   return null;
 };
+
+// Issue 15.1 Symptom A — action-label precedence for compaction state.
+//
+// `/compact` doesn't emit a new assistant text block, so
+// `getComposingLabelIfApplicable` stays pinned on the PREVIOUS turn's
+// text reply and returns "Composing response..." for the whole
+// duration of the compaction + after it completes. Claude Code's pane
+// shows "Compacting..." while the slash command runs, which the
+// client's parseTerminalHint maps to the literal string
+// 'Compacting context...'.
+//
+// Compaction is a discrete lifecycle state, not regular composition —
+// promote the compacting hint above the jsonl-derived label when the
+// session is working and the terminal-hint says compacting. Other
+// terminal hints stay lower-priority (less specific than jsonl-derived
+// labels, which usually name the exact tool or action).
+//
+// Pure function — used by ContextBar's actionLabel derivation. Tests
+// cover the precedence matrix without rendering React.
+export const resolveActionLabel = (opts: {
+  isWorking: boolean;
+  jsonlLabel: string | null;
+  terminalHint: string | null;
+}): string | null => {
+  const { isWorking, jsonlLabel, terminalHint } = opts;
+  if (isWorking && terminalHint === 'Compacting context...') {
+    return terminalHint;
+  }
+  if (jsonlLabel) return jsonlLabel;
+  if (isWorking && terminalHint) return terminalHint;
+  return null;
+};

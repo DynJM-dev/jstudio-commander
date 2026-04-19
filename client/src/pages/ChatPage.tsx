@@ -153,13 +153,38 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // Clear optimistic "userJustSent" when Claude starts responding to our message
   useEffect(() => {
     if (!userJustSent) return;
-    // Clear when new assistant messages arrive after our send
+    // Clear when new assistant messages arrive after our send.
+    //
+    // Issue 15.1 Symptom B — also clear on any new system message that
+    // is a `compact_boundary`. The `/compact` slash command doesn't emit
+    // an assistant text block when it finishes; it only writes a
+    // system-role record that renders as the "Compacted — freed Nk
+    // tokens" pill. Without this branch, `userJustSent` stayed true
+    // for the whole session after a /compact, pinning the Thinking
+    // indicator until the user sent another prompt.
     if (messages.length > msgCountAtSendRef.current) {
       const newMsgs = messages.slice(msgCountAtSendRef.current);
       const hasNewAssistant = newMsgs.some((m) => m.role === 'assistant');
-      if (hasNewAssistant) setUserJustSent(false);
+      const hasCompactBoundary = newMsgs.some(
+        (m) => m.role === 'system' && m.content.some((b) => b.type === 'compact_boundary'),
+      );
+      if (hasNewAssistant || hasCompactBoundary) setUserJustSent(false);
     }
-  }, [userJustSent, messages.length]);
+  }, [userJustSent, messages.length, messages]);
+
+  // Issue 15.1 Symptom B — backstop: if the server flips status back to
+  // idle while we still think the user "just sent", the operation has
+  // concluded (Stop hook fired, either at true turn end or a compaction
+  // completion path). Clearing here prevents the Thinking indicator from
+  // sticking on send paths that generate neither a new assistant message
+  // nor a compact_boundary (e.g. `/exit`, `/clear`, `/bashes`, or any
+  // future slash-command whose only observable effect is status=idle).
+  useEffect(() => {
+    if (!userJustSent) return;
+    if (session?.status === 'idle' || session?.status === 'stopped') {
+      setUserJustSent(false);
+    }
+  }, [userJustSent, session?.status]);
 
   // Auto-resize textarea
   const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {

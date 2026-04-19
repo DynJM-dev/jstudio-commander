@@ -20,7 +20,7 @@ import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
 import { getContextLimit } from '@commander/shared';
 import { useSessions } from '../../hooks/useSessions';
-import { isActivityStale } from '../../utils/contextBarAction';
+import { isActivityStale, resolveActionLabel } from '../../utils/contextBarAction';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
 
 const M = 'Montserrat, sans-serif';
@@ -322,7 +322,14 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     !userJustSent &&
     isActivityStale(lastActivityAt);
   const jsonlAction = suppressComposing ? null : rawJsonlAction;
-  const actionLabel = jsonlAction?.label ?? (isWorking ? terminalHint : null) ?? null;
+  // Issue 15.1 Symptom A — action-label precedence. Compaction overrides
+  // the stale jsonl-derived "Composing response..." label; see
+  // resolveActionLabel's doc-comment for the full rationale.
+  const actionLabel = resolveActionLabel({
+    isWorking,
+    jsonlLabel: jsonlAction?.label ?? null,
+    terminalHint: terminalHint ?? null,
+  });
   const ActionIcon = jsonlAction?.icon ?? null;
 
   // Active-teammate count for the current session — drives the
