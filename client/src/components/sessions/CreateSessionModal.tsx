@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal, Code } from 'lucide-react';
 import type { Project, SessionType } from '@commander/shared';
-import { MODEL_PRICING, MODEL_CONTEXT_LIMITS, DEFAULT_MODEL } from '@commander/shared';
+import { MODEL_PRICING, DEFAULT_MODEL, normalizeModelId, getContextLimit } from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -11,10 +11,23 @@ const M = 'Montserrat, sans-serif';
 
 // Pull pricing from the shared MODEL_PRICING constant so changes there
 // flow through the picker automatically.
-const priceDetail = (modelId: string): string => {
-  const p = MODEL_PRICING[modelId];
-  const ctx = MODEL_CONTEXT_LIMITS[modelId];
-  const ctxLabel = ctx === 1_000_000 ? '1M' : ctx === 200_000 ? '200K' : `${Math.round((ctx ?? 0) / 1_000)}K`;
+//
+// Issue 16.1.1 — `priceDetail` now resolves context via `getContextLimit`
+// (which handles the `[1m]` suffix branch) and keys pricing via
+// `normalizeModelId` (which strips the suffix). Pre-fix the helper did
+// a raw `MODEL_CONTEXT_LIMITS[modelId]` lookup that returned undefined
+// for `[1m]` variants — prior to Issue 16.1's table correction this was
+// masked because the base-ID entries were 1_000_000 AND every `[1m]`
+// MODEL_OPTIONS row passed the BASE id to priceDetail (not its own
+// `[1m]` id). Post-16.1 the base IDs correctly return 200K so the two
+// drift points surfaced together as the modal showing "200K ctx" for
+// every `[1m]` variant. Fixing both in one commit: priceDetail uses
+// the getContextLimit SSOT, MODEL_OPTIONS passes its own `value` so
+// the suffix reaches the helper.
+export const priceDetail = (modelId: string): string => {
+  const p = MODEL_PRICING[normalizeModelId(modelId)];
+  const ctx = getContextLimit(modelId);
+  const ctxLabel = ctx === 1_000_000 ? '1M' : ctx === 200_000 ? '200K' : `${Math.round(ctx / 1_000)}K`;
   return p
     ? `${ctxLabel} ctx · $${p.input}/$${p.output}`
     : `${ctxLabel} ctx`;
@@ -27,14 +40,18 @@ const priceDetail = (modelId: string): string => {
 // type `claude-opus-4-7[1m]` to use the 1M window. Ordering: Opus →
 // Sonnet → Haiku, within family newest first, standard before [1m]
 // variant. Labels are distinct — no two items share a display name.
-const MODEL_OPTIONS = [
-  { value: 'claude-opus-4-7',       label: 'Opus 4.7',                 detail: priceDetail('claude-opus-4-7'),   tier: 'premium' },
-  { value: 'claude-opus-4-7[1m]',   label: 'Opus 4.7 [1M context]',    detail: priceDetail('claude-opus-4-7'),   tier: 'premium' },
-  { value: 'claude-sonnet-4-6',     label: 'Sonnet 4.6',               detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
-  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 [1M context]',  detail: priceDetail('claude-sonnet-4-6'), tier: 'balanced' },
-  { value: 'claude-haiku-4-5',      label: 'Haiku 4.5',                detail: priceDetail('claude-haiku-4-5'),  tier: 'fast' },
-  { value: 'claude-opus-4-6',       label: 'Opus 4.6 (legacy)',        detail: priceDetail('claude-opus-4-6'),   tier: 'legacy' },
-  { value: 'claude-opus-4-6[1m]',   label: 'Opus 4.6 [1M context] (legacy)', detail: priceDetail('claude-opus-4-6'), tier: 'legacy' },
+//
+// Issue 16.1.1 — every entry's `detail` now reads `priceDetail(value)`
+// (previously several `[1m]` entries passed the base id, which was a
+// silent drift exposed by 16.1's correction of base-ID context limits).
+export const MODEL_OPTIONS = [
+  { value: 'claude-opus-4-7',       label: 'Opus 4.7',                 detail: priceDetail('claude-opus-4-7'),       tier: 'premium' },
+  { value: 'claude-opus-4-7[1m]',   label: 'Opus 4.7 [1M context]',    detail: priceDetail('claude-opus-4-7[1m]'),   tier: 'premium' },
+  { value: 'claude-sonnet-4-6',     label: 'Sonnet 4.6',               detail: priceDetail('claude-sonnet-4-6'),     tier: 'balanced' },
+  { value: 'claude-sonnet-4-6[1m]', label: 'Sonnet 4.6 [1M context]',  detail: priceDetail('claude-sonnet-4-6[1m]'), tier: 'balanced' },
+  { value: 'claude-haiku-4-5',      label: 'Haiku 4.5',                detail: priceDetail('claude-haiku-4-5'),      tier: 'fast' },
+  { value: 'claude-opus-4-6',       label: 'Opus 4.6 (legacy)',        detail: priceDetail('claude-opus-4-6'),       tier: 'legacy' },
+  { value: 'claude-opus-4-6[1m]',   label: 'Opus 4.6 [1M context] (legacy)', detail: priceDetail('claude-opus-4-6[1m]'), tier: 'legacy' },
 ];
 
 interface CreateSessionModalProps {
