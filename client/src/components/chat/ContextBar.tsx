@@ -647,18 +647,11 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
         </span>
       )}
 
-      <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
-
-      {/* Cost */}
-      <span
-        className="font-mono-stats text-xs shrink-0 hidden sm:inline"
-        style={{ color: 'var(--color-working)' }}
-        title={compacted
-          ? `In-context: ${formatCost(displayCost)} · Total this session: ${formatCost(totalCost)}`
-          : undefined}
-      >
-        {formatCost(displayCost)}
-      </span>
+      {/* Issue 9 Part 1 refinement — per-session cost display removed
+          from ContextBar. Redundant: HeaderStatsWidget already surfaces
+          account-wide cost telemetry. Cost data itself stays computed
+          (tooltips elsewhere still reference it; totalCost remains on
+          the session). Only the inline chip is gone. */}
 
       <span className="text-xs hidden sm:inline" style={{ color: 'var(--color-text-tertiary)' }}>&middot;</span>
 
