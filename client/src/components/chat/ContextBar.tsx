@@ -20,6 +20,7 @@ import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
 import { getContextLimit } from '@commander/shared';
 import { useSessions } from '../../hooks/useSessions';
+import { isActivityStale } from '../../utils/contextBarAction';
 
 const M = 'Montserrat, sans-serif';
 
@@ -191,6 +192,13 @@ interface ContextBarProps {
   contextCost?: number;
   messages: ChatMessage[];
   sessionStatus?: string;
+  // Issue 8.1 Part 2 — defense-in-depth for the "Composing response..."
+  // label. The last-known activity timestamp (Session.lastActivityAt)
+  // gates the composing label: if the activity stream went stale we
+  // suppress the label rather than trusting session.status alone.
+  // Missing / 0 → treated as fresh (defensive against brand-new
+  // sessions that haven't emitted a first activity yet).
+  lastActivityAt?: number;
   // Phase J — live pane-activity snapshot parsed from the Claude Code footer
   // ("✽ Ruminating (1m 49s · 430 tokens · thinking with xhigh effort)"). Null
   // when nothing parses; we then fall back to the existing generic labels.
@@ -235,7 +243,7 @@ export const resolveContextPercent = (
   return Math.min(Math.round((displayTokens / contextLimit) * 100), 100);
 };
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -295,9 +303,23 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     }
   }, [sessionId]);
 
-  // Derive action label — userJustSent provides instant "working" before server confirms
+  // Derive action label — userJustSent provides instant "working" before server confirms.
+  //
+  // Issue 8.1 Part 2 — defense-in-depth for the "Composing response..."
+  // label. Issue 8 P0 removed the primary trigger (tmux `⏺` reply-bullet
+  // false-firing as spinner on the server), but the same jsonl-derived
+  // label can still stale-leak if status flips working for any other
+  // reason while the last assistant block is text. Gate: suppress the
+  // label when lastActivityAt is older than STALE_ACTIVITY_MS. Tool-
+  // based labels pass through unchanged — their staleness story is
+  // handled by tool_result append timing.
   const isWorking = sessionStatus === 'working' || userJustSent;
-  const jsonlAction = isWorking ? getActionInfo(messages) : null;
+  const rawJsonlAction = isWorking ? getActionInfo(messages) : null;
+  const suppressComposing =
+    rawJsonlAction?.label === 'Composing response...' &&
+    !userJustSent &&
+    isActivityStale(lastActivityAt);
+  const jsonlAction = suppressComposing ? null : rawJsonlAction;
   const actionLabel = jsonlAction?.label ?? (isWorking ? terminalHint : null) ?? null;
   const ActionIcon = jsonlAction?.icon ?? null;
 

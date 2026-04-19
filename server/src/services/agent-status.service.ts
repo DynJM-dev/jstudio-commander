@@ -1,6 +1,36 @@
 import type { SessionStatus, SessionActivity, EffortLevel } from '@commander/shared';
 import { tmuxService } from './tmux.service.js';
 
+// ─────────────────────────────────────────────────────────────────────
+// PATTERN-MATCHING CONSTRAINT (Issue 8 P0, 8.1)
+//
+// External tool output — Claude Code pane content, stdout, JSONL
+// record fields — may change semantics between versions. Character-
+// presence matches alone are not safe: `⏺` went from "in-progress"
+// glyph (v1.x) to "reply-bullet" glyph (v2.x) with no schema version
+// bump, and every session that happened to quote a Claude reply
+// stuck in `working` state until the reply scrolled off pane.
+//
+// Rule: character-based matches MUST be constrained by semantic shape:
+//   - Verb morphology — require `-ing` / `-ed` (live / just-finished
+//     participles), or an explicit atypical-verb allowlist (`Idle`).
+//     See `detectActivity`'s verb filter below.
+//   - Line-start anchoring — real live-spinner glyphs begin the line;
+//     reply content may contain the same char mid-line. See the
+//     client-side counterpart in `src/utils/parseTerminalHint.ts`.
+//   - Activity-event verification — UI labels that imply "Claude is
+//     actively working" must gate on a recent activity event, not
+//     session.status alone. Defense-in-depth against any future
+//     trigger that flips status to `working` while the jsonl shows
+//     a stale turn. See `src/utils/contextBarAction.ts`.
+//   - SPINNER_CHARS vs SPINNER_GLYPHS — the former gates the tail-
+//     scanner's "active evidence" heuristic (narrow), the latter
+//     scopes the verb-extraction regex (broad, filtered downstream).
+//
+// When adding a new pattern match: state its semantic shape
+// constraint inline. Not doing so is how Issue 8 P0 was possible.
+// ─────────────────────────────────────────────────────────────────────
+
 // Parsed from the Claude Code footer. The line format (as observed across
 // 4.6 / 4.7 releases):
 //   "<spinner> <Verb>… (<elapsed> · ↓ <tokens> tokens · thinking with <effort> effort)"
