@@ -407,17 +407,22 @@ export const sessionService = {
     const tmuxName = generateTmuxName(id);
     const model = opts.model || 'claude-opus-4-7';
 
-    // Issue 6 — canonicalize the cwd NOW so `project_path` stored on the row
-    // equals the `cwd` that Claude Code will later send in every hook event.
-    // resolveSessionCwd expands `~`, trims trailing slashes, and falls back
-    // to the tmux pane's own `pane_current_path` when the caller supplied
-    // nothing. Without this, raw sessions created from the modal (no user-
-    // typed projectPath) had empty `project_path`, bindClaudeSessionFromJsonl
-    // early-returned on null cwd, and resolveOwner's cwd-exclusive strategy
-    // couldn't match the row → transcript_paths stayed empty, chat was blank.
-    // Pass the user input to tmux so it honors an explicit cwd; fall back to
-    // whatever tmux actually put the pane in if we resolve nothing.
-    tmuxService.createSession(tmuxName, opts.projectPath);
+    // Issue 10 — canonicalize user input BEFORE spawning tmux. `tmux
+    // new-session -c <cwd>` runs via `execFile` (no shell) so a literal
+    // `~/...` path is NEVER expanded by tmux; it silently falls back to
+    // $HOME. Pre-Issue-10 we passed `opts.projectPath` raw, so a modal-
+    // submitted `~/Desktop/Projects/JSTUDIO/` put Claude in `$HOME`, and
+    // every downstream step (JSONL bind watcher, project-scoped bootstrap
+    // instructions like "read PROJECT_DOCUMENTATION.md") broke despite
+    // /effort + bootstrap themselves injecting successfully.
+    //
+    // resolveSessionCwd (lifted from Issue 6) already does tilde expansion
+    // + trailing-slash normalization. Call it with paneCwd=null so the
+    // user input alone drives the pre-spawn cwd; after pane id resolves
+    // below we re-call with the real paneCwd to fill in the absent-input
+    // case.
+    const inputCwd = resolveSessionCwd(opts.projectPath, null);
+    tmuxService.createSession(tmuxName, inputCwd ?? undefined);
 
     // Phase S.1 Patch 1 — resolve the first pane id of the just-created
     // tmux session and persist THAT in `tmux_session`. Without this step
@@ -442,6 +447,10 @@ export const sessionService = {
     // user input wins when provided (tilde-expanded, slash-normalized), else
     // pane cwd is the source of truth. Either way, `canonicalCwd` is what we
     // use for BOTH the watcher and the row's project_path column.
+    // (Issue 10 note: `inputCwd` already reflects the tilde-expanded user
+    // value, so this call is idempotent when opts.projectPath is set — it
+    // only earns its keep when opts.projectPath is empty and we need
+    // paneCwd as the fallback.)
     const paneCwd = resolvedPaneId ? tmuxService.resolvePaneCwd(resolvedPaneId) : null;
     const canonicalCwd = resolveSessionCwd(opts.projectPath, paneCwd);
     if (!canonicalCwd) {
