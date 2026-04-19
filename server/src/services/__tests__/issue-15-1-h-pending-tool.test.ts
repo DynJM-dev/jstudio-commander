@@ -57,7 +57,10 @@ const decide = (opts: {
   hasPendingTool: boolean;
 }): Action => {
   if (opts.msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS) return 'cooldown-skip';
-  const overrideFires = opts.hintedStatus === 'idle' && opts.hasPendingTool;
+  // Issue 15.3 Phase 1.1 — broaden to fire from waiting too.
+  const overrideFires =
+    (opts.hintedStatus === 'idle' || opts.hintedStatus === 'waiting') &&
+    opts.hasPendingTool;
   if (overrideFires) return 'pending-tool-upgrade';
   if (opts.msSinceHook < HOOK_YIELD_MS) return 'hook-yield-skip';
   return 'classify';
@@ -140,9 +143,19 @@ test('hinted status working → no upgrade needed (already working)', () => {
   );
 });
 
-test('hinted status waiting → no upgrade (user-action approval prompt preserved)', () => {
-  // A visible approval prompt IS the tool's user-action gate.
-  // Upgrading waiting → working would mask a user-needed action.
+test('hinted status waiting → 15.3 Phase 1.1 broadens override to fire here too', () => {
+  // Post-Phase-1.1 the override DOES fire from waiting state when
+  // pendingToolUse is true. Rationale: after user approves a permission
+  // prompt, Claude starts executing but the pane may still show
+  // residual "waiting"-class text; hinted stays 'waiting'. Without
+  // this branch, status stuck at waiting for the whole tool exec
+  // (Jose's "approval-stick" repro).
+  //
+  // A visible active approval prompt produces pendingToolUse=false
+  // (no unmatched tool_use — the tool hasn't been emitted yet; the
+  // prompt IS the approval gate). So this override only fires when
+  // approval is ALREADY satisfied AND tool exec started — exactly
+  // the case Phase 1.1 wants to catch.
   assert.equal(
     decide({
       hintedStatus: 'waiting',
@@ -150,7 +163,7 @@ test('hinted status waiting → no upgrade (user-action approval prompt preserve
       msSinceHook: 2_000,
       hasPendingTool: true,
     }),
-    'hook-yield-skip',
+    'pending-tool-upgrade',
   );
 });
 

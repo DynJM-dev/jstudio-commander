@@ -255,6 +255,66 @@ describe('computeSessionState — Idle subtypes (Candidate 20 + 15.4 polish)', (
   });
 });
 
+// Issue 15.3 Phase 1.1 — subtype transitions within same coarse status.
+// The poller's lastKnownStateKey comparison emits on these even when
+// newStatus === cachedStatus. Tests pin the transitions that matter
+// for Jose's UX (live subtype flips without coarse flips).
+describe('computeSessionState — Phase 1.1 subtype transitions (same coarse status)', () => {
+  test('Working:ToolExec → Working:Thinking (tool completes, LLM starts composing verb)', () => {
+    const duringTool = computeSessionState(inputs({
+      paneStatus: 'idle',
+      paneEvidence: 'idle ❯ prompt visible',
+      hintedStatus: 'idle',
+      pendingToolUse: true,
+    }));
+    const afterTool = computeSessionState(inputs({
+      paneStatus: 'working',
+      paneEvidence: 'active-indicator in tail',
+      paneActivity: { verb: 'Cogitating', spinner: '✻', raw: '✻ Cogitating…' },
+      hintedStatus: 'working',
+      pendingToolUse: false,
+    }));
+    // Both are kind=Working but subtype changed — poller must emit.
+    assert.equal(duringTool.kind, 'Working');
+    assert.equal(afterTool.kind, 'Working');
+    if (duringTool.kind === 'Working') assert.equal(duringTool.subtype, 'ToolExec');
+    if (afterTool.kind === 'Working') assert.equal(afterTool.subtype, 'Thinking');
+  });
+
+  test('Idle:Generic → Idle:MonitoringSubagents (teammate spawns while PM idle)', () => {
+    const before = computeSessionState(inputs({
+      paneStatus: 'idle',
+      lastStopAt: NOW - 60_000,
+      activeTeammateCount: 0,
+    }));
+    const after = computeSessionState(inputs({
+      paneStatus: 'idle',
+      lastStopAt: NOW - 60_000,
+      activeTeammateCount: 1,
+    }));
+    assert.equal(before.kind, 'Idle');
+    assert.equal(after.kind, 'Idle');
+    if (before.kind === 'Idle') assert.equal(before.subtype, 'Generic');
+    if (after.kind === 'Idle') assert.equal(after.subtype, 'MonitoringSubagents');
+  });
+
+  test('Phase 1.1 approval-stick fix: WaitingForInput → Working:ToolExec via override', () => {
+    // User was being asked for approval; approved; Claude started bash.
+    // Pane may still show residual waiting text → hinted='waiting'. The
+    // 15.1-H override (broadened in Phase 1.1) now fires from 'waiting'
+    // too, so paneStatus → hinted → override produces newStatus=working
+    // which computeSessionState maps to Working:ToolExec.
+    const overridden = computeSessionState(inputs({
+      paneStatus: 'working',          // after override in poller
+      paneEvidence: 'pending-tool-use authoritative (over "waiting for input")',
+      hintedStatus: 'working',
+      pendingToolUse: true,
+    }));
+    assert.equal(overridden.kind, 'Working');
+    if (overridden.kind === 'Working') assert.equal(overridden.subtype, 'ToolExec');
+  });
+});
+
 describe('computeSessionState — preservation invariants (no regression)', () => {
   test('Issue 15.1-D: tick-driven fresh activity on idle ❯ pane + no pending tool → stays Idle', () => {
     // Session ticks bump activity every ~15s; without pendingToolUse

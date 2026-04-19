@@ -1,4 +1,4 @@
-import type { SessionStatus, SessionActivity, StatusFlip } from '@commander/shared';
+import type { SessionStatus, SessionActivity, StatusFlip, SessionState } from '@commander/shared';
 import { getDb } from '../db/connection.js';
 import { agentStatusService, applyActivityHints } from './agent-status.service.js';
 import { hasPendingToolUseInTranscript } from './jsonl-parser.service.js';
@@ -31,6 +31,24 @@ const latestTranscriptPath = (raw: string | null | undefined): string | null => 
 
 // In-memory cache of last known statuses to avoid unnecessary DB writes
 const lastKnownStatus = new Map<string, SessionStatus>();
+// Issue 15.3 Phase 1.1 — last-emitted typed state per session. Used to
+// emit subtype-only transitions (e.g. Working:ToolExec → Working:Thinking
+// when coarse status stays `working`) without broadcasting noop ticks.
+// Key: sessionId; value: last serialized SessionState string comparison.
+const lastKnownStateKey = new Map<string, string>();
+const stateKey = (s: SessionState): string => {
+  // Stable key = kind + subtype + tool-name/reason/context discriminator.
+  // Excluding `since` + `hintLabel` keeps the key quiet against clock
+  // churn / free-form label formatting drift.
+  switch (s.kind) {
+    case 'Idle': return `Idle:${s.subtype}`;
+    case 'Working': return `Working:${s.subtype}:${s.toolName ?? ''}`;
+    case 'WaitingForInput': return `WaitingForInput:${s.subtype}`;
+    case 'Stopped': return `Stopped:${s.reason}`;
+    case 'Compacting': return 'Compacting';
+    case 'Error': return `Error`;
+  }
+};
 // Grace period: working → idle must be observed across 2 consecutive polls
 // (≈10s) before committing. Prevents flicker to idle between tool calls
 // when Claude pauses briefly. working → waiting bypasses the grace period
@@ -273,7 +291,15 @@ const poll = (): void => {
     //   - Cooldown gate above still wins: a force-idled session stays
     //     idle for FORCE_IDLE_COOLDOWN_MS regardless of transcript
     //     state, preserving 15.1-D's oscillation protection.
-    if (hinted.status === 'idle') {
+    // Issue 15.3 Phase 1.1 — broaden to fire from `waiting` too. Pre-
+    // fix: scope was idle-only. Repro: user approves a permission
+    // prompt → Claude starts executing → pane still shows residual
+    // "waiting" verbiage on some frames → hinted stays 'waiting' →
+    // override didn't fire → status stuck at 'waiting' for the whole
+    // tool exec. Structured signal (pending tool_use) outranks the
+    // pane's belief that we're still waiting. `working` untouched
+    // (no-op); error/stopped untouched.
+    if (hinted.status === 'idle' || hinted.status === 'waiting') {
       const transcriptPath = latestTranscriptPath(session.transcript_paths);
       if (transcriptPath && hasPendingToolUseInTranscript(transcriptPath)) {
         newStatus = 'working';
@@ -366,6 +392,34 @@ const poll = (): void => {
       idleSince.delete(session.id);
     }
 
+    // Issue 15.3 Phase 1.1 — compute typed state on EVERY tick (not
+    // just coarse-status transitions). A subtype change with no flip
+    // (e.g. Working:ToolExec → Working:Thinking, or Idle:Generic →
+    // Idle:MonitoringSubagents when teammates spawn) must still reach
+    // the client. Phase 1 computed state inside the transition block
+    // only, so subtype-only updates never fanned out.
+    const transcriptPathForState = latestTranscriptPath(session.transcript_paths);
+    const pendingToolUseForState = transcriptPathForState
+      ? hasPendingToolUseInTranscript(transcriptPathForState)
+      : false;
+    const teammateRow = db.prepare(
+      "SELECT COUNT(*) as n FROM sessions WHERE parent_session_id = ? AND status != 'stopped'",
+    ).get(session.id) as { n: number } | undefined;
+    const activeTeammateCount = Number(teammateRow?.n ?? 0);
+    const sessionState = computeSessionState({
+      paneStatus: detectedResult.status,
+      paneEvidence: detectedResult.evidence,
+      paneActivity: activity,
+      hintedStatus: hinted.status,
+      hintedEvidence: hinted.evidence,
+      pendingToolUse: pendingToolUseForState,
+      preCompactState: preCompactService.getSessionState(session.id),
+      activeTeammateCount,
+    });
+    const newStateKey = stateKey(sessionState);
+    const cachedStateKey = lastKnownStateKey.get(session.id);
+    const stateChanged = newStateKey !== cachedStateKey;
+
     if (newStatus !== cachedStatus) {
       // If we were stuck in 'working' for a long time and just escaped,
       // surface it in logs — helps diagnose classification lag (#222).
@@ -408,43 +462,7 @@ const poll = (): void => {
 
       // Update cache
       lastKnownStatus.set(session.id, newStatus);
-
-      // Issue 15.3 — compute the canonical typed state and dual-emit
-      // it on the same `session:status` event. Clients that recognize
-      // the `state` field prefer it for subtype-aware UI; legacy
-      // consumers keep reading `status`. Signals we have cheaply in
-      // the poller:
-      //   - paneStatus / paneEvidence / paneActivity (detectedResult)
-      //   - hintedStatus / hintedEvidence (hinted)
-      //   - pendingToolUse (ran above for 15.1-H gate — recomputed
-      //     for the state too; duplicate read of a 64KB tail is
-      //     negligible and avoids threading a bool through the flow)
-      //   - preCompactState via preCompactService.getSessionState
-      //   - activeTeammateCount via a single SQL count
-      // Signals NOT plumbed in Phase 1 (follow-up work):
-      //   - waitingPromptKind (requires running detectPrompts per tick)
-      //   - lastStopAt / lastCompactBoundaryAt (requires new tracking)
-      //   - pendingToolName / stoppedReason
-      // Those resolve as Generic subtypes — functionally identical to
-      // pre-15.3 coarse status for the unmigrated surfaces.
-      const transcriptPathForState = latestTranscriptPath(session.transcript_paths);
-      const pendingToolUseForState = transcriptPathForState
-        ? hasPendingToolUseInTranscript(transcriptPathForState)
-        : false;
-      const teammateRow = db.prepare(
-        "SELECT COUNT(*) as n FROM sessions WHERE parent_session_id = ? AND status != 'stopped'",
-      ).get(session.id) as { n: number } | undefined;
-      const activeTeammateCount = Number(teammateRow?.n ?? 0);
-      const sessionState = computeSessionState({
-        paneStatus: detectedResult.status,
-        paneEvidence: detectedResult.evidence,
-        paneActivity: activity,
-        hintedStatus: hinted.status,
-        hintedEvidence: hinted.evidence,
-        pendingToolUse: pendingToolUseForState,
-        preCompactState: preCompactService.getSessionState(session.id),
-        activeTeammateCount,
-      });
+      lastKnownStateKey.set(session.id, newStateKey);
 
       // Emit event — richer payload on transition with the before/after
       // statuses, the parsed evidence, and the live activity snapshot.
@@ -464,6 +482,26 @@ const poll = (): void => {
       if (newStatus === 'working' && !workingSince.has(session.id)) {
         workingSince.set(session.id, Date.now());
       }
+
+      // Issue 15.3 Phase 1.1 — subtype-only transition. Coarse status
+      // didn't flip (both working, or both idle, etc.) but the typed
+      // state did: Working:ToolExec → Working:Thinking, or Idle:Generic
+      // → Idle:MonitoringSubagents, etc. Emit so the client's typed-
+      // state consumers see the subtype change. No DB write — only the
+      // legacy coarse `status` column persists; typed state is a
+      // memoryless WS broadcast.
+      if (stateChanged) {
+        const at = new Date().toISOString();
+        eventBus.emitSessionStatus(session.id, newStatus, {
+          from: newStatus,
+          to: newStatus,
+          evidence: `state-subtype change: ${cachedStateKey ?? '∅'} → ${newStateKey}`,
+          activity,
+          at,
+          state: sessionState,
+        });
+        lastKnownStateKey.set(session.id, newStateKey);
+      }
     }
   }
 };
@@ -482,6 +520,7 @@ export const statusPollerService = {
       pollTimer = null;
     }
     lastKnownStatus.clear();
+    lastKnownStateKey.clear();
     console.log('[poller] Status poller stopped');
   },
 
