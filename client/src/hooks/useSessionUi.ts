@@ -30,6 +30,9 @@ interface SessionUiActions {
   // height. When no user choice is stored yet, returns the default
   // (35% of pane). Never returns null — callers always get a number.
   effectiveHeight: (paneHeightPx: number) => number;
+  // Phase T MVP — tmux mirror pane visibility per session.
+  setMirrorVisible: (visible: boolean) => void;
+  toggleMirror: () => void;
 }
 
 const clampHeight = (px: number, paneHeightPx: number): number => {
@@ -60,6 +63,7 @@ export const useSessionUi = (sessionId: string): [SessionUi, SessionUiActions] =
     const next: SessionUi = state.terminalDrawerOpen
       ? { ...state, terminalDrawerOpen: false }
       : {
+          ...state,
           terminalDrawerOpen: true,
           terminalDrawerHeightPx: state.terminalDrawerHeightPx
             ?? clampHeight(
@@ -76,5 +80,19 @@ export const useSessionUi = (sessionId: string): [SessionUi, SessionUiActions] =
     return clampHeight(raw, paneHeightPx);
   }, [state.terminalDrawerHeightPx]);
 
-  return [state, { setOpen, setHeight, toggle, effectiveHeight }];
+  const setMirrorVisible = useCallback((visible: boolean) => {
+    // Read `state.mirrorVisible ?? true` so legacy stored preference
+    // rows (pre-Phase-T) without the field default to visible — same
+    // shape as DEFAULT_SESSION_UI. Avoids a persistence migration.
+    const current = state.mirrorVisible ?? true;
+    if (current === visible) return;
+    setState({ ...state, mirrorVisible: visible });
+  }, [state, setState]);
+
+  const toggleMirror = useCallback(() => {
+    const current = state.mirrorVisible ?? true;
+    setState({ ...state, mirrorVisible: !current });
+  }, [state, setState]);
+
+  return [state, { setOpen, setHeight, toggle, effectiveHeight, setMirrorVisible, toggleMirror }];
 };

@@ -42,11 +42,17 @@ export interface SessionUi {
   // Height in px. `null` means "not yet chosen" — the client computes
   // 35% of the pane content height on first open and writes it back.
   terminalDrawerHeightPx: number | null;
+  // Phase T MVP — tmux mirror pane visibility, per session. Defaults
+  // to true so the mirror is observable out of the box; users can
+  // hide per-session via the header toggle. Persistence key is the
+  // same `session-ui.<sessionId>` preference row.
+  mirrorVisible: boolean;
 }
 
 export const DEFAULT_SESSION_UI: SessionUi = {
   terminalDrawerOpen: false,
   terminalDrawerHeightPx: null,
+  mirrorVisible: true,
 };
 
 export const sessionUiKey = (sessionId: string): string => `session-ui.${sessionId}`;

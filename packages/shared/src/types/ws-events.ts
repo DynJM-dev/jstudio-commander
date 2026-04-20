@@ -47,6 +47,16 @@ export type WSEvent =
       projectPath: string;
       content: string | null;
     }
+  // Phase T MVP — tmux mirror pane feed. Broadcast on the session-
+  // scoped `pane-capture:<sessionId>` channel with ANSI-preserved
+  // pane text captured by the status-poller tick. Server dedupes on
+  // content change so idle panes don't emit every tick.
+  | {
+      type: 'session:pane-capture';
+      sessionId: string;
+      paneText: string;
+      capturedAt: number;
+    }
   | { type: 'terminal:data'; sessionId: string; data: string }
   | { type: 'terminal:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'analytics:token'; entry: TokenUsageEntry }

@@ -164,6 +164,12 @@ const FLIP_HISTORY_MAX = 20;
 // API routes so they don't need to re-shell-out to tmux on every request.
 const lastKnownActivity = new Map<string, SessionActivity | null>();
 
+// Phase T MVP — per-session last-emitted mirror pane text. Gate ensures
+// WS traffic only fires on CONTENT change; otherwise every 1.5s tick
+// would emit identical payloads across all idle sessions and saturate
+// clients. Cleared by clearSessionMirrorState(id) on session delete.
+const lastEmittedByCapture = new Map<string, string>();
+
 const recordFlip = (sessionId: string, flip: StatusFlip): void => {
   let arr = statusFlipHistory.get(sessionId);
   if (!arr) {
@@ -242,6 +248,32 @@ const poll = (): void => {
     // whether the status itself flipped — the footer updates many times
     // per second and polling every 5s is already a coarse snapshot.
     lastKnownActivity.set(session.id, activity);
+
+    // Phase T MVP — mirror pane tee. Second tmux capture-pane call with
+    // `-e` so ANSI escape sequences survive the round trip to the
+    // client's ansi_up renderer. Runs in parallel to the classifier
+    // path (which still reads ANSI-free text via the batch above) so
+    // classification is non-regression-protected. Dedupe gate: emit
+    // ONLY on content change — idle sessions would otherwise saturate
+    // WS with identical payloads every 1.5s tick. Pane-targets that
+    // aren't active tmux sessions silently produce '' from the capture
+    // helper; we still emit those through the dedupe gate so a just-
+    // killed pane flips the mirror to empty once and then goes quiet.
+    try {
+      const mirrorText = tmuxService.capturePane(
+        session.tmux_session,
+        50,
+        { preserveAnsi: true },
+      );
+      if (lastEmittedByCapture.get(session.id) !== mirrorText) {
+        lastEmittedByCapture.set(session.id, mirrorText);
+        eventBus.emitSessionPaneCapture(session.id, mirrorText, Date.now());
+      }
+    } catch {
+      // tmux call failures are non-fatal for the poller; the classifier
+      // path already handles its own tmux errors upstream. Skip this
+      // tick's mirror emit and let the next tick retry.
+    }
 
     // Pane-target safety net: if a row whose tmux_session starts with '%'
     // was classified as 'stopped' (heuristic transient miss), double-check
@@ -545,7 +577,23 @@ export const statusPollerService = {
     }
     lastKnownStatus.clear();
     lastKnownStateKey.clear();
+    lastEmittedByCapture.clear();
     console.log('[poller] Status poller stopped');
+  },
+
+  // Phase T MVP — drop per-session mirror dedupe state. Called from
+  // session.service on delete/purge so the Map doesn't leak entries
+  // across long uptimes. Idempotent; safe to call for an id that was
+  // never polled.
+  clearSessionMirrorState(sessionId: string): void {
+    lastEmittedByCapture.delete(sessionId);
+  },
+
+  // Test-only peek into the dedupe Map — the Phase T dedupe behavior
+  // + cleanup-hook tests read this to assert state without reaching
+  // into module internals. Not referenced by production code paths.
+  __getLastEmittedForTest(sessionId: string): string | undefined {
+    return lastEmittedByCapture.get(sessionId);
   },
 
   // Exposed so the routes layer can surface the ring buffer + cached

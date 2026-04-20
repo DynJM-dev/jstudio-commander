@@ -125,8 +125,16 @@ export const tmuxService = {
     exec(['send-keys', '-t', name, key]);
   },
 
-  capturePane(name: string, lines = 50): string {
-    return exec(['capture-pane', '-t', name, '-p', '-S', `-${lines}`]);
+  // Phase T — `preserveAnsi: true` adds tmux's `-e` flag so escape
+  // sequences (colors, bold, cursor hints) stay in the output. Default
+  // is unchanged (ANSI-stripped) because `classifyStatusFromPane` + the
+  // activity/regex surface expect raw text and would break on escape
+  // sequences. The mirror-pane tee path (status-poller) opts in per
+  // call; every other caller is unaffected.
+  capturePane(name: string, lines = 50, opts?: { preserveAnsi?: boolean }): string {
+    const args = ['capture-pane', '-t', name, '-p', '-S', `-${lines}`];
+    if (opts?.preserveAnsi) args.push('-e');
+    return exec(args);
   },
 
   hasSession(name: string): boolean {

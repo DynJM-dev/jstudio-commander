@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { GripVertical, X } from 'lucide-react';
+import { GripVertical, X, Monitor } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { TerminalDrawer } from '../components/chat/TerminalDrawer';
 import { ProjectStateDrawer } from '../components/chat/ProjectStateDrawer';
 import { SplitViewButton } from '../components/chat/SplitViewButton';
+import { TmuxMirror } from '../components/chat/TmuxMirror';
 import { usePaneState } from '../hooks/usePaneState';
 import { useSessionUi } from '../hooks/useSessionUi';
 import { useSessions } from '../hooks/useSessions';
@@ -47,6 +48,10 @@ interface PaneHeaderProps {
   splitCandidates?: Session[];
   splitEnabled?: boolean;
   onSplitSelect?: (sessionId: string) => void;
+  // Phase T MVP — mirror toggle. Button is always rendered when the
+  // handler is supplied so the user can show + hide at will.
+  mirrorVisible?: boolean;
+  onToggleMirror?: () => void;
 }
 
 const PaneHeader = ({
@@ -58,6 +63,8 @@ const PaneHeader = ({
   splitCandidates = [],
   splitEnabled = true,
   onSplitSelect,
+  mirrorVisible,
+  onToggleMirror,
 }: PaneHeaderProps) => (
   <div
     className="shrink-0 flex items-center gap-2 px-3 py-1.5"
@@ -75,6 +82,28 @@ const PaneHeader = ({
       </span>
     )}
     <span className="flex-1" />
+    {onToggleMirror && (
+      <button
+        onClick={onToggleMirror}
+        title={mirrorVisible ? 'Hide tmux mirror' : 'Show tmux mirror'}
+        aria-label={mirrorVisible ? 'Hide tmux mirror' : 'Show tmux mirror'}
+        aria-pressed={mirrorVisible ? 'true' : 'false'}
+        className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-medium transition-colors"
+        style={{
+          color: mirrorVisible ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+          background: mirrorVisible ? 'rgba(14,124,123,0.12)' : 'transparent',
+        }}
+        onMouseEnter={(e) => {
+          if (!mirrorVisible) e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+        }}
+        onMouseLeave={(e) => {
+          if (!mirrorVisible) e.currentTarget.style.background = 'transparent';
+        }}
+      >
+        <Monitor size={12} />
+        Mirror
+      </button>
+    )}
     {showSplitView && onSplitSelect && (
       <SplitViewButton
         candidates={splitCandidates}
@@ -97,6 +126,24 @@ const PaneHeader = ({
     )}
   </div>
 );
+
+// Phase T MVP — small wrapper that injects per-session mirror toggle
+// state into PaneHeader. Kept separate so PaneHeader remains a pure
+// render and useSessionUi stays called per-pane (hooks rule).
+interface PaneHeaderWithMirrorProps extends Omit<PaneHeaderProps, 'mirrorVisible' | 'onToggleMirror'> {
+  sessionId: string;
+}
+
+const PaneHeaderWithMirror = ({ sessionId, ...rest }: PaneHeaderWithMirrorProps) => {
+  const [sessionUi, ui] = useSessionUi(sessionId);
+  return (
+    <PaneHeader
+      {...rest}
+      mirrorVisible={sessionUi.mirrorVisible ?? true}
+      onToggleMirror={ui.toggleMirror}
+    />
+  );
+};
 
 interface PaneProps {
   sessionId: string;
@@ -209,6 +256,11 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PanePr
       data-pane-session-id={sessionId}
     >
       {header}
+      {/* Phase T MVP — per-session tmux mirror. Mounted directly
+          below the header, above the chat content wrapper. Hidden
+          entirely (zero DOM footprint) when mirrorVisible is false.
+          Visibility default from DEFAULT_SESSION_UI is `true`. */}
+      {(sessionUi.mirrorVisible ?? true) && <TmuxMirror sessionId={sessionId} />}
       <div
         className="flex-1 min-h-0 overflow-hidden"
         style={{
@@ -447,7 +499,8 @@ export const PaneContainer = () => {
 
   if (!isDual) {
     const singleHeader = (
-      <PaneHeader
+      <PaneHeaderWithMirror
+        sessionId={leftId}
         sessionName={leftMeta?.name ?? 'Session'}
         sessionType={typeLabel(leftMeta)}
         status={leftMeta?.status}
@@ -477,7 +530,8 @@ export const PaneContainer = () => {
 
   const leftRatio = paneState.dividerRatio;
   const leftHeader = (
-    <PaneHeader
+    <PaneHeaderWithMirror
+      sessionId={leftId}
       sessionName={leftMeta?.name ?? 'Session'}
       sessionType={typeLabel(leftMeta)}
       showClose={true}
@@ -485,8 +539,9 @@ export const PaneContainer = () => {
       onClose={onLeftClose}
     />
   );
-  const rightHeader = (
-    <PaneHeader
+  const rightHeader = effectiveRightId ? (
+    <PaneHeaderWithMirror
+      sessionId={effectiveRightId}
       sessionName={rightMeta?.name ?? 'Session'}
       sessionType={typeLabel(rightMeta)}
       showClose={true}
@@ -499,7 +554,7 @@ export const PaneContainer = () => {
       onSplitSelect={onSplitSelect}
       onClose={onRightClose}
     />
-  );
+  ) : null;
 
   return (
     <>

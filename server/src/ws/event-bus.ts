@@ -57,6 +57,13 @@ class CommanderEventBus extends EventEmitter {
     this.emit('project:state-md-updated', sessionId, projectPath, content);
   }
 
+  // Phase T MVP — tmux mirror pane feed. Emitted by status-poller when
+  // captured pane content differs from last emit for this sessionId.
+  // Broadcast fan-out on `pane-capture:<sessionId>` channel.
+  emitSessionPaneCapture(sessionId: string, paneText: string, capturedAt: number): void {
+    this.emit('session:pane-capture', sessionId, paneText, capturedAt);
+  }
+
   // Analytics events
   emitAnalyticsToken(entry: TokenUsageEntry): void {
     this.emit('analytics:token', entry);

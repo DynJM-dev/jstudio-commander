@@ -97,6 +97,18 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     });
   });
 
+  // Phase T MVP — per-session tmux pane mirror broadcast. Dedicated
+  // channel `pane-capture:<sessionId>` mirrors the M7 firewall pattern
+  // so subscribers are structurally isolated from chat + STATE.md.
+  eventBus.on('session:pane-capture', (sessionId, paneText, capturedAt) => {
+    rooms.broadcast(`pane-capture:${sessionId}`, {
+      type: 'session:pane-capture',
+      sessionId,
+      paneText,
+      capturedAt,
+    });
+  });
+
   eventBus.on('analytics:token', (entry) => {
     rooms.broadcast('analytics', { type: 'analytics:token', entry });
   });

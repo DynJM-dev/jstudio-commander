@@ -22,6 +22,7 @@ const normalizeEffortLevel = (raw: string | null | undefined): EffortLevel => {
 import { getDb } from '../db/connection.js';
 import { tmuxService } from './tmux.service.js';
 import { agentStatusService } from './agent-status.service.js';
+import { statusPollerService } from './status-poller.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { isCrossSessionPaneOwner } from './cross-session.js';
 import { removeSessionUploads } from '../routes/upload.routes.js';
@@ -1202,6 +1203,9 @@ export const sessionService = {
 
     session.status = 'stopped';
     session.stoppedAt = now;
+    // Phase T MVP — clear the status-poller mirror-dedupe Map entry
+    // so it doesn't leak across long uptimes.
+    statusPollerService.clearSessionMirrorState(id);
     eventBus.emitSessionDeleted(id);
     return session;
   },
@@ -1260,6 +1264,8 @@ export const sessionService = {
     // follow-up session even after the pane is gone.
     removeSessionUploads(session.id);
 
+    // Phase T MVP — mirror dedupe Map cleanup, same as deleteSession.
+    statusPollerService.clearSessionMirrorState(session.id);
     eventBus.emitSessionDeleted(session.id);
     session.status = 'stopped';
     return session;
