@@ -30,50 +30,28 @@ interface ActionInfo {
   icon: LucideIcon | null;
 }
 
-// Exported for §6.1.1 + Tier A integration tests.
-//
-// Issue 15.3 Tier A Item 1 — reverse-scan for the most-recent tool_use.
-// Pre-fix read `blocks[blocks.length - 1]` only, collapsing the rich
-// tool label to "Composing response..." / "Cogitating..." the instant
-// Claude emitted text or thinking AFTER an unmatched tool_use. E0.3 /
-// E0.5 captured this as mid-turn regression from "Reading X.md" back
-// to generic "Working...".
-//
-// Scope: walks the tail-run of consecutive assistant messages (matches
-// the ChatThread render-side grouping from commit 9c82b87 — user-visible
-// "last assistant response" can span multiple JSONL records). Within
-// that run, returns the most-recently-dispatched tool_use. If no
-// tool_use exists anywhere in the run, falls through to the legacy
-// tail-block thinking/text resolution. Shape A per Tier A dispatch —
-// does NOT touch `hasUnmatchedToolUse` (Shape B, deferred).
-export const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
+const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
   if (messages.length === 0) return null;
-
-  // Collect blocks from the tail-run of consecutive assistant messages.
-  // Stops at the first non-assistant message (user/system) — a tool
-  // that already had its turn closed should NOT drive the current label.
-  const blocks: ChatMessage['content'] = [];
+  let lastMsg: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m) continue;
-    if (m.role !== 'assistant') break;
-    // Prepend this message's blocks so the combined array reads oldest→newest.
-    blocks.unshift(...m.content);
+    if (messages[i]?.role === 'assistant') { lastMsg = messages[i]; break; }
   }
-  if (blocks.length === 0) return null;
+  if (!lastMsg) return null;
 
-  // Reverse-scan for the most-recent tool_use in the collected run.
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const block = blocks[i];
-    if (!block) continue;
-    if (block.type !== 'tool_use') continue;
+  const blocks = lastMsg.content;
+  const lastBlock = blocks[blocks.length - 1];
+  if (!lastBlock) return null;
 
-    const name = block.name;
-    const fp = typeof block.input.file_path === 'string'
-      ? block.input.file_path.split('/').pop() ?? ''
+  if (lastBlock.type === 'thinking') return { label: 'Cogitating...', icon: Brain };
+  if (lastBlock.type === 'text') return { label: 'Composing response...', icon: null };
+
+  if (lastBlock.type === 'tool_use') {
+    const name = lastBlock.name;
+    const fp = typeof lastBlock.input.file_path === 'string'
+      ? lastBlock.input.file_path.split('/').pop() ?? ''
       : '';
     if (name === 'Read') {
-      const path = typeof block.input.file_path === 'string' ? block.input.file_path : '';
+      const path = typeof lastBlock.input.file_path === 'string' ? lastBlock.input.file_path : '';
       if (/\/\.claude\/skills\//.test(path)) return { label: `Reading skill ${fp || ''}...`, icon: Brain };
       if (/\/memory\/[^/]+\.md$/.test(path) || /\b(CODER_BRAIN|PM_HANDOFF|STATE|CLAUDE|MEMORY)\.md$/.test(path)) {
         return { label: `Reading ${fp}...`, icon: BookOpen };
@@ -90,13 +68,6 @@ export const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
     return { label: 'Working...', icon: null };
   }
 
-  // No tool_use in the assistant-run — fall back to the tail block's
-  // thinking/text label. Preserves the pre-Tier-A Composing/Cogitating
-  // behavior for assistant messages that are genuinely prose-only.
-  const tail = blocks[blocks.length - 1];
-  if (!tail) return null;
-  if (tail.type === 'thinking') return { label: 'Cogitating...', icon: Brain };
-  if (tail.type === 'text') return { label: 'Composing response...', icon: null };
   return null;
 };
 
@@ -129,11 +100,7 @@ interface StatusInfo {
   pulse: boolean;
 }
 
-// Exported for §6.1.1 integration tests — pins the DOM-facing label
-// string this bar renders so "user-observable" tests can compose the
-// full derivation chain (resolveActionLabel → getStatusInfo) without
-// mounting React.
-export const getStatusInfo = (
+const getStatusInfo = (
   sessionStatus: string | undefined,
   actionLabel: string | null,
   hasPrompt: boolean,
