@@ -8,7 +8,14 @@ import { tmuxService } from './tmux.service.js';
 import { eventBus } from '../ws/event-bus.js';
 import { sessionService } from './session.service.js';
 
-const POLL_INTERVAL = 5_000; // 5 seconds
+// Issue 15.3 §6.4 Delta 1 — drop from 5_000ms to 1_500ms. Jose-observed
+// 5s user-visible latency between prompt send and activity indicator
+// (Case 1 sleep 10) was floored by this cadence: the server could not
+// re-classify between polls. 1_500ms matches the client's working-mode
+// poll cadence in useChat.ts and cuts worst-case status-stale window
+// by ~70%. Floor is deliberately 1.5s; going lower trades against
+// per-tick pane-read CPU cost across all live sessions.
+const POLL_INTERVAL = 1_500; // 1.5 seconds
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 // Issue 15.1-H — parse the sessions.transcript_paths JSON column and
