@@ -65,8 +65,13 @@ const decide = (
   msSinceActivity: number,
   msSinceHook: number,
   msSinceForceIdle: number,
+  pendingTool = false,
 ): Action => {
-  if (msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS) return 'cooldown';
+  // §6.4 Delta 2 — structured tool-pairing evidence is higher-trust than
+  // pane-regex (§24.2 + Issue 15.1-H). When the bounded-tail JSONL scan
+  // finds an unclosed tool_use the cooldown gate must fall through so
+  // the pending-tool override at the next gate can upgrade idle→working.
+  if (msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS && !pendingTool) return 'cooldown';
   if (msSinceHook < HOOK_YIELD_MS) return 'yield';
   if (status === 'working' && msSinceActivity > STALE_ACTIVITY_MS) return 'force-idle';
   return 'classify';
@@ -125,6 +130,40 @@ test('idle row inside cooldown → still cooldown (scope not gated on status)', 
   // 5s later regardless of whether it's idle, waiting, or working now.
   assert.equal(decide('idle', 0, 200_000, 30_000), 'cooldown');
   assert.equal(decide('waiting', 0, 200_000, 30_000), 'cooldown');
+});
+
+// -------- §6.4 Delta 2 — pending-tool exemption from cooldown gate --------
+//
+// Issue 15.3 §6.4 Delta 2. A bounded-tail JSONL scan that finds an unclosed
+// tool_use is higher-trust evidence of active work than the 60s cooldown's
+// protection against pane-regex flapping. These tests pin that when the
+// transcript reports a pending tool_use, the cooldown gate MUST fall through
+// so the downstream pending-tool override can upgrade idle → working.
+
+test('30s inside cooldown + pendingTool=true → classify (Delta 2 exemption fires)', () => {
+  // Without exemption this would route to 'cooldown'. With the Delta 2
+  // override it falls through to the next applicable branch.
+  assert.equal(decide('idle', 10_000, 200_000, 30_000, true), 'classify');
+});
+
+test('30s inside cooldown + pendingTool=false → cooldown (baseline preserved)', () => {
+  // Regression guard: the exemption must NOT fire when there is no
+  // pending tool_use in the transcript.
+  assert.equal(decide('idle', 10_000, 200_000, 30_000, false), 'cooldown');
+});
+
+test('pendingTool=true does not override hook yield when hook is recent', () => {
+  // Exemption only bypasses the cooldown gate. A recent hook still wins
+  // over pane-regex classification on the same tick — pendingTool just
+  // means we got here instead of being parked in cooldown.
+  assert.equal(decide('working', 200_000, 1_000, 30_000, true), 'yield');
+});
+
+test('pendingTool=true + stale working row inside cooldown → force-idle', () => {
+  // Once past the cooldown gate via exemption, a stale working row with
+  // no recent hook is a force-idle candidate as normal. The exemption
+  // does not inhibit other guardrails.
+  assert.equal(decide('working', 200_000, 200_000, 30_000, true), 'force-idle');
 });
 
 // -------- Integration: seed a force-idled row and confirm the cooldown holds --------
