@@ -15,6 +15,7 @@ import { useChat } from '../hooks/useChat';
 import { usePromptDetection } from '../hooks/usePromptDetection';
 import { useSessionTick } from '../hooks/useSessionTick';
 import { useSessionState } from '../hooks/useSessionState';
+import { useSessionStateUpdatedAt } from '../hooks/useSessionStateUpdatedAt';
 import { useHeartbeat } from '../hooks/useHeartbeat';
 import { useAttachments, ACCEPTED_MIME } from '../hooks/useAttachments';
 import { ContextLowToast } from '../components/shared/ContextLowToast';
@@ -54,6 +55,11 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // ContextBar's actionLabel derivation falls back to its legacy
   // jsonl + terminal-hint path.
   const sessionState = useSessionState(sessionId);
+  // Issue 15.3 Fix 1 — freshness anchor for the typed `Working` OR-branch
+  // in `isSessionWorking` below. Advances on every new `sessionState`
+  // reference; compared against `lastUserMessageTs` to reject stale
+  // typed-Working carryover from a prior turn (§12.3 Cause 1).
+  const sessionStateUpdatedAt = useSessionStateUpdatedAt(sessionState);
   const ctxPct = tick?.contextWindow.usedPercentage ?? null;
   const ctxBand = bandForPercentage(ctxPct);
   // Phase N.0 Patch 3 — if no heartbeat in 30s, we suppress the
@@ -326,10 +332,33 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // working session. The unmatched-tool_use predicate is a pure
   // ChatMessage-tail signal that doesn't depend on heartbeats.
   const unmatchedToolUse = useMemo(() => hasUnmatchedToolUse(allMessages), [allMessages]);
+  // Issue 15.3 Fix 1 — freshness of typed-Working signal. Scan messages
+  // tail for the most recent `role === 'user'` timestamp; typed state
+  // observed after that counts as "live for the current turn" and is
+  // safe to trust. Stale typed-Working from a prior turn would have
+  // `sessionStateUpdatedAt < lastUserMessageTs` and be rejected.
+  const lastUserMessageTs = useMemo(() => {
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      const m = allMessages[i];
+      if (m?.role === 'user') {
+        const t = Date.parse(m.timestamp);
+        return Number.isFinite(t) ? t : 0;
+      }
+    }
+    return 0;
+  }, [allMessages]);
+  const sessionStateIsFresh = sessionStateUpdatedAt > lastUserMessageTs;
+  // Issue 15.3 Fix 1 — widen isSessionWorking to consume typed `Working`
+  // kind when fresh. Closes §12.3 Case 2: `session.status` lagged 15-20s
+  // while `sessionState.kind='Working:ToolExec'` was emitted throughout;
+  // the typed signal IS at the client via `useSessionState` but was
+  // previously un-consumed by the coarse gate. Freshness predicate
+  // guards against stale prior-turn carryover.
   const isSessionWorking =
     userJustSent
     || (session?.status === 'working' && !heartbeatStale)
-    || unmatchedToolUse;
+    || unmatchedToolUse
+    || (sessionState?.kind === 'Working' && sessionStateIsFresh);
   const liveThinking = useMemo(() => {
     if (!isSessionWorking || allMessages.length === 0) return null;
     const last = allMessages[allMessages.length - 1];

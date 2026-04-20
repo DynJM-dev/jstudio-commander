@@ -30,7 +30,10 @@ interface ActionInfo {
   icon: LucideIcon | null;
 }
 
-const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
+// Issue 15.3 Fix Rotation — exported for integration tests that
+// traverse the full ContextBar derivation chain to the `<span>`
+// textContent (§20.LL-L10 discipline). No runtime behavior change.
+export const getActionInfo = (messages: ChatMessage[]): ActionInfo | null => {
   if (messages.length === 0) return null;
   let lastMsg: ChatMessage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -100,7 +103,9 @@ interface StatusInfo {
   pulse: boolean;
 }
 
-const getStatusInfo = (
+// Issue 15.3 Fix Rotation — exported for integration tests (see
+// `getActionInfo` export-comment above). No runtime behavior change.
+export const getStatusInfo = (
   sessionStatus: string | undefined,
   actionLabel: string | null,
   hasPrompt: boolean,

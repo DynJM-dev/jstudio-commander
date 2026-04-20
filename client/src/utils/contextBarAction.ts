@@ -176,8 +176,21 @@ export const resolveActionLabel = (opts: {
         }
         break;
       case 'Idle':
-        // Idle has no action label in the ContextBar (LiveActivityRow
-        // unmounts). Return null so the chip reads null.
+        // Issue 15.3 Fix 2 — stale-typed-Idle can clobber a live
+        // jsonlLabel during a fresh Working turn (§12.3 Cause 2; §12.1
+        // Case 3: `A-return {branch:"tool_use:Bash", label:"Running
+        // command..."}` at T+5948ms with `sessionStateKind:"Idle"`
+        // stale → pre-fix returned null → DOM fell to generic
+        // "Working...").
+        //
+        // When the bar is actively working (isWorking=true from Fix 1's
+        // OR-chain including the typed-Working freshness branch) and we
+        // have a rich jsonlLabel from getActionInfo, extend the §6.1
+        // Working-path inversion to cover stale-Idle — return the
+        // jsonlLabel rather than null. Preserves true-idle render when
+        // no Working signal is present: if isWorking=false OR jsonlLabel
+        // is null, falls through to `return null` exactly as before.
+        if (isWorking && jsonlLabel) return jsonlLabel;
         return null;
       case 'Stopped':
       case 'Error':
