@@ -183,18 +183,49 @@ describe('Phase Y Rotation 1 — Test 3: matched tool pair → not working', () 
   });
 });
 
-// ----- Test 4 — text-only streaming tail → composing --------------------
+// ----- Test 4 — composing subtype (Rotation 1.5 Fix C — stability-gated)
 
-describe('Phase Y Rotation 1 — Test 4: composing subtype', () => {
-  test('last assistant ends in text → composing', () => {
-    const s = deriveToolExecutionState([
-      userMsg('hello'),
-      assistantWith({ type: 'text', text: 'Working on it...' }),
-    ]);
+describe('Phase Y Rotation 1.5 — Test 4: composing gated on streamingAssistantId', () => {
+  test('text tail + streamingAssistantId matches → composing (real streaming case)', () => {
+    const userM = userMsg('hello');
+    const assistantM = assistantWith({ type: 'text', text: 'Working on it...' });
+    const s = deriveToolExecutionState([userM, assistantM], 8, assistantM.id);
     assert.equal(s.isWorking, true);
     assert.equal(s.subtype, 'composing');
     assert.equal(s.label, 'Composing response...');
     assert.equal(s.currentTool, null);
+  });
+
+  test('text tail + streamingAssistantId=null (settled) → idle (Class 1 closure)', () => {
+    const s = deriveToolExecutionState(
+      [userMsg('hello'), assistantWith({ type: 'text', text: 'Working on it...' })],
+      8,
+      null,
+    );
+    assert.equal(s.isWorking, false);
+    assert.equal(s.subtype, 'idle');
+    assert.equal(s.label, null);
+  });
+
+  test('text tail + streamingAssistantId points to OLDER message → idle (stale id guard)', () => {
+    const older = assistantWith({ type: 'text', text: 'prior turn' });
+    const current = assistantWith({ type: 'text', text: 'this turn' });
+    const s = deriveToolExecutionState(
+      [userMsg('msg-1'), older, userMsg('msg-2'), current],
+      8,
+      older.id, // stale — user already moved past `older`
+    );
+    assert.equal(s.subtype, 'idle');
+  });
+
+  test('default streamingAssistantId (omitted) → idle on text tail (non-regression on pre-1.5 callers)', () => {
+    const s = deriveToolExecutionState([
+      userMsg('hello'),
+      assistantWith({ type: 'text', text: 'done.' }),
+    ]);
+    // No streamingAssistantId → settled by default. Ensures tests or
+    // callers that don't pass the signal get the safe, non-sticky path.
+    assert.equal(s.subtype, 'idle');
   });
 
   test('assistant with unmatched tool + text tail → tool_exec wins over composing (derivation order)', () => {
@@ -423,15 +454,18 @@ describe('Phase Y Rotation 1 — Test 8b: per-session isolation (structural)', (
     assert.deepEqual(s1, s2, 'session A derivation is not contaminated by session B call');
   });
 
-  test('returns a fresh object — no shared-identity leakage between calls', () => {
-    const msgs: ChatMessage[] = [assistantWith({ type: 'text', text: 'hi' })];
+  test('returns a fresh object for non-idle paths — no shared-identity leakage', () => {
+    // Use a tool_exec fixture so the derivation constructs a fresh
+    // object per call. Idle paths deliberately return the shared
+    // IDLE_STATE module constant (zero-alloc hot path), so the
+    // "distinct references" invariant only applies to non-idle.
+    const msgs: ChatMessage[] = [
+      assistantWith({ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }),
+    ];
     const s1 = deriveToolExecutionState(msgs);
     const s2 = deriveToolExecutionState(msgs);
     assert.deepEqual(s1, s2);
-    // Mutating s1 must not affect s2 (proves no shared-reference bug).
-    // We can't assign to readonly interface fields at compile time
-    // without `any`; this shape-check is enough for rotation 1.
-    assert.notStrictEqual(s1, s2, 'distinct object references per call');
+    assert.notStrictEqual(s1, s2, 'distinct object references per non-idle call');
   });
 
   test('different sessionIds with different messages: zero cross-talk', () => {

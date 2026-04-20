@@ -20,7 +20,12 @@ import { getActivePlan } from '../../utils/plans';
 import { api } from '../../services/api';
 import { getContextLimit } from '@commander/shared';
 import { useSessions } from '../../hooks/useSessions';
-import { isActivityStale, resolveActionLabel } from '../../utils/contextBarAction';
+import {
+  isActivityStale,
+  resolveActionLabel,
+  resolveActionLabelForParallelRun,
+  resolveEffectiveStatus,
+} from '../../utils/contextBarAction';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
 import type { ToolExecutionState } from '../../hooks/useToolExecutionState';
 import { useCodemanDiffLogger } from '../../hooks/useCodemanDiffLogger';
@@ -375,13 +380,18 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     terminalHint: terminalHint ?? null,
     sessionState,
   });
-  // Phase Y Rotation 1 — codeman label is primary when present; legacy
-  // computation above remains as nullish-coalesce fallback AND as the
-  // `[codeman-diff]` audit counterparty (payload.legacyLabel). Rotation
-  // 2 deletes `legacyActionLabel` and promotes `codemanState.label`
-  // (with resolveActionLabel still handling terminalHint / sessionState
-  // branches that outlast the deletion, per CTO Q2).
-  const actionLabel = codemanState?.label ?? legacyActionLabel;
+  // Phase Y Rotation 1.5 Fix B — suppress legacy label leak when
+  // codeman confidently says idle. Previously `codemanState?.label ??
+  // legacyActionLabel` let legacy's stuck "Composing response..." /
+  // "Running command..." reach the UI while codeman correctly reported
+  // null (JSONL Class 2 evidence entries 6, 7, 9, 10, 13). Pre-bootstrap
+  // (codemanState === null) still falls through to legacy so the UI
+  // never goes label-blank during the first render.
+  const actionLabel = resolveActionLabelForParallelRun(
+    codemanState?.isWorking,
+    codemanState?.label ?? null,
+    legacyActionLabel,
+  );
   const ActionIcon = jsonlAction?.icon ?? null;
 
   // Phase Y Rotation 1 — `[codeman-diff]` parallel-run divergence
@@ -423,13 +433,28 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     return { activeTeammateCount: active, workingTeammateCount: working };
   }, [sessions, sessionId]);
 
-  // Status info (always shown). Issue 15.3 §6.1.1 — when the composite
-  // `isWorking` is true (OR-gate caught a tool mid-flight even while
-  // raw server status says idle/stopped), promote `effectiveStatus` to
-  // 'working' so `getStatusInfo` takes the Working branch and renders
-  // the rich label instead of falling to the default "Idle — Waiting
-  // for instructions".
-  const effectiveStatus = isWorking && sessionStatus !== 'working' ? 'working' : sessionStatus;
+  // Status info (always shown).
+  //
+  // Phase Y Rotation 1.5 Fix A — codeman's verdict dominates
+  // `effectiveStatus` when it has a concrete boolean (true → 'working',
+  // false → 'idle'). Closes JSONL Class 3 evidence (entry 11, user
+  // visually saw "Idle" while codeman reported working because legacy's
+  // typedIdleFreshKillSwitch had forced sessionStatus='idle' upstream
+  // and the rotation-1 upgrade didn't override strongly enough).
+  //
+  // CRITICAL invariant preserved by the helper: `sessionStatus ===
+  // 'waiting'` passthrough sits at the TOP of the precedence chain so
+  // Item 3 (`00f1c30`) approval-modal mount path is not shadowed by
+  // codeman's verdict. Rejection trigger (f) would fire if this breaks.
+  //
+  // Legacy branch (Issue 15.3 §6.1.1 upgrade) fires only when codeman
+  // hasn't bootstrapped (codemanState === null). Rotation 2 deletes the
+  // legacy branch entirely.
+  const effectiveStatus = resolveEffectiveStatus(
+    sessionStatus,
+    codemanState?.isWorking,
+    isWorking,
+  );
   const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
   const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount, workingTeammateCount);
   // Drives the bar-teammate-active CSS class: only when the PM pane is idle

@@ -46,7 +46,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const sessionId = sessionIdOverride ?? urlSessionId;
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
-  const { messages, loading, error, hasMore, stats, loadMore, refetch } = useChat(sessionId, session?.status);
+  const { messages, loading, error, hasMore, stats, loadMore, refetch, streamingAssistantId } = useChat(sessionId, session?.status);
   // Phase M — live session telemetry from the statusline forwarder.
   // Drives both the context-band color strip (when present) and the
   // context-low toast that fires on upward band crossings.
@@ -325,7 +325,11 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // ContextBar as the primary source (with legacy as `??` fallback).
   // The `[codeman-diff]` logger inside ContextBar captures divergence
   // between codeman and legacy for rotation 2 audit.
-  const codemanState = useToolExecutionState(sessionId, allMessages);
+  //
+  // Rotation 1.5 Fix C — `streamingAssistantId` threads through from
+  // `useChat` so the hook's `composing` branch only fires on an actively
+  // streaming text tail. Class 1 stuck-composing closure.
+  const codemanState = useToolExecutionState(sessionId, allMessages, streamingAssistantId);
 
   // Active plan — drives the sticky plan widget. Rebuilt on every messages
   // change so it stays in sync with the inline plan card rendered in ChatThread.
