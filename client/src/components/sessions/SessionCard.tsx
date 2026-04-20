@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Pencil, SplitSquareHorizontal, Zap, ZapOff } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
-import type { Session } from '@commander/shared';
+import type { Session, EffortLevel } from '@commander/shared';
+import { EFFORT_LEVELS } from '@commander/shared';
 import { GlassCard } from '../shared/GlassCard';
 import { StatusBadge } from '../shared/StatusBadge';
 import { HeartbeatDot } from '../shared/HeartbeatDot';
@@ -14,6 +15,12 @@ import { getDisplayStatus } from '../../utils/sessionDisplay';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { usePreCompactState } from '../../hooks/usePreCompactState';
 import { api } from '../../services/api';
+import {
+  effortCommandPath,
+  effortCommandBody,
+  effortPatchPath,
+  effortPatchBody,
+} from './effortCard';
 
 // Phase N.0 Patch 3 — when a session hasn't heartbeated in >30s, force
 // the visual badge to `idle` regardless of stored status. DOES NOT
@@ -159,6 +166,36 @@ export const SessionCard = ({
       setAutoCompactEnabled(!next);
     }
   }, [autoCompactEnabled, session.id]);
+
+  // M8 — click-to-adjust effort on the sidebar badge. Mirrors ContextBar's
+  // in-chat dropdown (ContextBar.tsx:313-324, :708-765) so users perceive
+  // one consistent adjust UX. Helper is DUPLICATED from ContextBar rather
+  // than lifted — the dispatch boundary forbids touching ContextBar.tsx's
+  // working dropdown. Tech debt: consolidate into a shared hook once the
+  // consolidation rotation is authorized.
+  const [effortOpen, setEffortOpen] = useState(false);
+  const [effort, setEffort] = useState<EffortLevel | null>(session.effortLevel ?? null);
+  useEffect(() => {
+    setEffort(session.effortLevel ?? null);
+  }, [session.effortLevel]);
+  const effortRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!effortOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (effortRef.current && !effortRef.current.contains(e.target as Node)) setEffortOpen(false);
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [effortOpen]);
+  const changeEffort = useCallback(async (level: EffortLevel, e: React.MouseEvent) => {
+    e.stopPropagation();  // prevent card-click navigation
+    setEffort(level);
+    setEffortOpen(false);
+    try {
+      await api.post(effortCommandPath(session.id), effortCommandBody(level));
+    } catch { /* ignore — WS session:updated will settle */ }
+    api.patch(effortPatchPath(session.id), effortPatchBody(level)).catch(() => {});
+  }, [session.id]);
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -344,21 +381,73 @@ export const SessionCard = ({
           >
             {shortModel(session.model)}
           </span>
-          {session.effortLevel && (
-            <span
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-              style={{
-                fontFamily: M,
-                background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)',
-                color: 'var(--color-accent-light)',
-                border: '1px solid color-mix(in srgb, var(--color-accent) 22%, transparent)',
-                fontWeight: 600,
-              }}
-              title={`Effort: ${session.effortLevel}`}
-            >
-              <Zap size={10} strokeWidth={2.4} />
-              {session.effortLevel}
-            </span>
+          {effort && (
+            <div ref={effortRef} className="relative inline-block">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();  // prevent card navigate
+                  setEffortOpen((v) => !v);
+                }}
+                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full cursor-pointer transition-colors"
+                style={{
+                  fontFamily: M,
+                  background: effortOpen
+                    ? 'color-mix(in srgb, var(--color-accent) 18%, transparent)'
+                    : 'color-mix(in srgb, var(--color-accent) 10%, transparent)',
+                  color: 'var(--color-accent-light)',
+                  border: '1px solid color-mix(in srgb, var(--color-accent) 22%, transparent)',
+                  fontWeight: 600,
+                }}
+                title={`Effort: ${effort} (click to adjust)`}
+                aria-haspopup="listbox"
+                aria-expanded={effortOpen}
+                data-testid="session-card-effort-button"
+              >
+                <Zap size={10} strokeWidth={2.4} />
+                {effort}
+              </button>
+              {effortOpen && (
+                <div
+                  data-escape-owner="session-card-effort-dropdown"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      setEffortOpen(false);
+                    }
+                  }}
+                  className="absolute top-full left-0 mt-1 rounded-lg overflow-hidden py-1 z-50"
+                  style={{
+                    fontFamily: M,
+                    background: 'rgba(15, 20, 25, 0.98)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                    minWidth: 100,
+                    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.4)',
+                  }}
+                >
+                  {EFFORT_LEVELS.map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={(e) => changeEffort(level, e)}
+                      className="flex items-center gap-2 w-full px-3 py-1.5 text-left text-xs transition-colors"
+                      style={{
+                        fontFamily: M,
+                        color: level === effort ? 'var(--color-accent-light)' : 'var(--color-text-secondary)',
+                        background: level === effort ? 'rgba(14, 124, 123, 0.1)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = level === effort ? 'rgba(14, 124, 123, 0.15)' : 'rgba(255, 255, 255, 0.04)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = level === effort ? 'rgba(14, 124, 123, 0.1)' : 'transparent'; }}
+                    >
+                      <span className="font-mono-stats">{level}</span>
+                      {level === effort && <span style={{ color: 'var(--color-accent)' }}>•</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
