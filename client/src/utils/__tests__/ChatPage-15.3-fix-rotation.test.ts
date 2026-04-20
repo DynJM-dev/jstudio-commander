@@ -37,6 +37,7 @@ const deriveStatusLabel = (opts: {
   sessionState?: SessionState | null;
   sessionStateUpdatedAt?: number;
   lastUserMessageTsOverride?: number;
+  lastTurnEndTs?: number | null;
   terminalHint?: string | null;
   hasPrompt?: boolean;
 }): string => {
@@ -47,6 +48,7 @@ const deriveStatusLabel = (opts: {
     sessionState = null,
     sessionStateUpdatedAt = 0,
     lastUserMessageTsOverride,
+    lastTurnEndTs = null,
     terminalHint = null,
     hasPrompt = false,
   } = opts;
@@ -77,7 +79,8 @@ const deriveStatusLabel = (opts: {
     : (userJustSent
        || (sessionStatus === 'working' && !heartbeatStale)
        || unmatchedToolUse
-       || (sessionState?.kind === 'Working' && sessionStateIsFresh));
+       // Issue 15.3 Option 2 — typed-Working gated on lastTurnEndTs === null.
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null));
   const effectiveSessionStatus = typedIdleFreshKillSwitch ? 'idle' : sessionStatus;
 
   const isWorking = isSessionWorking;
@@ -394,5 +397,83 @@ describe('15.3 Option 4 (tighten) — hard-off on fresh typed-Idle', () => {
       sessionStateUpdatedAt: lastUserTs + 100, // fresh
     });
     assert.equal(label, 'Idle — Waiting for instructions');
+  });
+});
+
+describe('15.3 Option 2 (tighten) — turn-bounded freshness lock on typed-Working', () => {
+  test('Test 10 — Case 3 closure: lastTurnEndTs set + fresh typed-Working → typed-Working OR-branch locked off → DOM reads Idle', () => {
+    // Live-smoke Case 3 repro: Claude completed Bash (tool_result landed),
+    // unmatchedToolUse flipped true → false → lastTurnEndTs set. Server
+    // continued emitting Working:ToolExec (stale). Pre-Option-2 the
+    // fresh-Working OR-branch held isSessionWorking=true for ~60s;
+    // getActionInfo returned the last tool_use label → bar stuck on
+    // "Running command...". Option 2 locks the typed-Working branch
+    // off while lastTurnEndTs is non-null. Bar snaps Idle immediately
+    // after tool_result.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), textOnlyAssistant],
+      sessionStatus: 'idle',
+      heartbeatStale: false,
+      sessionState: { kind: 'Working', subtype: 'ToolExec' },
+      sessionStateUpdatedAt: lastUserTs + 30_000, // fresh
+      lastTurnEndTs: lastUserTs + 29_000,         // turn-end lock set
+    });
+    assert.equal(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 11 — lock reset on new tool: lastTurnEndTs set then unmatched tool appears → typed-Working re-enabled', () => {
+    // After a turn ends (lastTurnEndTs set), if Claude dispatches a NEW
+    // tool (unmatchedToolUse flips back to true), the lock must release.
+    // In the helper we simulate the reset by explicitly setting
+    // lastTurnEndTs=null (mirrors the useEffect transition in ChatPage).
+    // With lock released and an unmatched Bash in messages, unmatchedToolUse
+    // OR-branch drives isSessionWorking=true; getActionInfo returns
+    // Bash label.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), bashToolUse],
+      sessionStatus: 'working',
+      sessionState: { kind: 'Working', subtype: 'ToolExec' },
+      sessionStateUpdatedAt: lastUserTs + 30_000,
+      lastTurnEndTs: null, // reset by new tool dispatch
+    });
+    assert.equal(label, 'Running command...');
+  });
+
+  test('Test 12 — lock reset on new user message: turn ended, then new user msg → typed-Working re-enabled on next fresh emission', () => {
+    // User sends a new message after a turn ended. lastUserMessageTs
+    // advances → useEffect resets lastTurnEndTs to null. Next fresh
+    // typed-Working emission (sessionStateUpdatedAt > new lastUserMessageTs)
+    // fires the OR-branch normally. Here we simulate that state by
+    // passing lastTurnEndTs=null and a sessionStateUpdatedAt fresher
+    // than the NEW user message timestamp.
+    const newUserTs = Date.parse('2026-04-20T05:05:00.000Z'); // later user msg
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:05:00.000Z'), textOnlyAssistant],
+      sessionStatus: 'idle',
+      sessionState: { kind: 'Working', subtype: 'Composing' },
+      sessionStateUpdatedAt: newUserTs + 2_000, // fresh against new user msg
+      lastTurnEndTs: null, // reset by the new user msg send
+    });
+    assert.equal(label, 'Composing response...');
+  });
+
+  test('Test 12b — non-regression: lock set but unmatchedToolUse=true overrides (new tool racing in) → Working', () => {
+    // If a new tool dispatches but lastTurnEndTs hasn't been reset yet
+    // (race window), unmatchedToolUse OR-branch still fires the bar on.
+    // Option 2 only gates the typed-Working OR-branch, not the
+    // unmatchedToolUse branch.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), bashToolUse],
+      sessionStatus: 'idle',
+      sessionState: { kind: 'Working', subtype: 'ToolExec' },
+      sessionStateUpdatedAt: lastUserTs + 30_000,
+      lastTurnEndTs: lastUserTs + 29_000, // stale lock (hasn't flipped null yet)
+    });
+    // unmatchedToolUse=true (Bash pending) → OR-branch fires regardless
+    // of typed-Working being locked off. Correct behavior.
+    assert.equal(label, 'Running command...');
   });
 });

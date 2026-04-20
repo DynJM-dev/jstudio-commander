@@ -332,6 +332,17 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // working session. The unmatched-tool_use predicate is a pure
   // ChatMessage-tail signal that doesn't depend on heartbeats.
   const unmatchedToolUse = useMemo(() => hasUnmatchedToolUse(allMessages), [allMessages]);
+  // Issue 15.3 Option 2 (tighten) — turn-bounded freshness state-lock.
+  // Tracks the moment `unmatchedToolUse` transitioned true → false
+  // (tool_result landed for the final pending tool). While non-null,
+  // the typed-Working OR-branch is state-locked OFF regardless of
+  // fresh typed-Working emissions — server keeps emitting Working
+  // briefly post-turn-end (§12.1 Case 3's 60s trailing edge).
+  // Resets to null when EITHER (a) a new user message is sent OR
+  // (b) `unmatchedToolUse` transitions false → true (new tool dispatched).
+  const [lastTurnEndTs, setLastTurnEndTs] = useState<number | null>(null);
+  const prevUnmatchedToolUseRef = useRef<boolean>(false);
+  const prevLastUserMessageTsRef = useRef<number>(0);
   // Issue 15.3 Fix 1 — freshness of typed-Working signal. Scan messages
   // tail for the most recent `role === 'user'` timestamp; typed state
   // observed after that counts as "live for the current turn" and is
@@ -348,6 +359,24 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     return 0;
   }, [allMessages]);
   const sessionStateIsFresh = sessionStateUpdatedAt > lastUserMessageTs;
+  // Issue 15.3 Option 2 — drive lastTurnEndTs transitions:
+  //   unmatchedToolUse flips true → false  → lock (setLastTurnEndTs(now))
+  //   unmatchedToolUse flips false → true  → unlock (setLastTurnEndTs(null))
+  //   lastUserMessageTs advances            → unlock
+  useEffect(() => {
+    if (prevUnmatchedToolUseRef.current && !unmatchedToolUse) {
+      setLastTurnEndTs(Date.now());
+    } else if (!prevUnmatchedToolUseRef.current && unmatchedToolUse) {
+      setLastTurnEndTs(null);
+    }
+    prevUnmatchedToolUseRef.current = unmatchedToolUse;
+  }, [unmatchedToolUse]);
+  useEffect(() => {
+    if (lastUserMessageTs > prevLastUserMessageTsRef.current) {
+      setLastTurnEndTs(null);
+    }
+    prevLastUserMessageTsRef.current = lastUserMessageTs;
+  }, [lastUserMessageTs]);
   // Issue 15.3 Fix 1 — widen isSessionWorking to consume typed `Working`
   // kind when fresh. Closes §12.3 Case 2: `session.status` lagged 15-20s
   // while `sessionState.kind='Working:ToolExec'` was emitted throughout;
@@ -375,7 +404,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     : (userJustSent
        || (session?.status === 'working' && !heartbeatStale)
        || unmatchedToolUse
-       || (sessionState?.kind === 'Working' && sessionStateIsFresh));
+       // Issue 15.3 Option 2 — typed-Working OR-branch also gated on
+       // lastTurnEndTs === null (no turn-boundary lock). Closes the
+       // §12.1 Case 3 60s trailing edge where server kept emitting
+       // Working:ToolExec post-tool-result and Fix 1's freshness alone
+       // was insufficient to suppress it.
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null));
   // Issue 15.3 Option 4 (tighten) — when the hard-off fires, downgrade
   // the coarse `sessionStatus` prop passed to ContextBar from 'working'
   // (server pane lag) to 'idle' so `getStatusInfo`'s Working branch
