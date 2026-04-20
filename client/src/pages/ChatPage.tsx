@@ -164,25 +164,34 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     api.get<Session[]>('/sessions').then(setSessions).catch(() => {});
   }, []);
 
-  // Clear optimistic "userJustSent" when Claude starts responding to our message
+  // Clear optimistic "userJustSent" when a confirmed turn-progress signal
+  // has arrived in the message stream.
+  //
+  // Issue 15.3 Activity-gap fix — pre-fix cleared on ANY new assistant
+  // message, which fired in ~40ms (§12.1 captures) even when the new
+  // message was just a thinking block. That left the bar Idle during
+  // Claude's pre-tool thinking window (Jose observed: "send message, no
+  // activity visible, Claude working behind the scenes"). Every other
+  // Claude UI (Codeman, VSCode extension, native) shows continuous
+  // activity from prompt send through response — Commander must match.
+  //
+  // Narrow: clear only on (a) a tool_use in new messages — unmatchedToolUse
+  // OR-branch will carry the bar next render; (b) compact_boundary
+  // (Issue 15.1 Symptom B — /compact path preserved). Idle/stopped
+  // backstop remains in the next effect; a separate late effect below
+  // (after isSessionWorking declaration) clears on confirmed Working
+  // signal takeover.
   useEffect(() => {
     if (!userJustSent) return;
-    // Clear when new assistant messages arrive after our send.
-    //
-    // Issue 15.1 Symptom B — also clear on any new system message that
-    // is a `compact_boundary`. The `/compact` slash command doesn't emit
-    // an assistant text block when it finishes; it only writes a
-    // system-role record that renders as the "Compacted — freed Nk
-    // tokens" pill. Without this branch, `userJustSent` stayed true
-    // for the whole session after a /compact, pinning the Thinking
-    // indicator until the user sent another prompt.
     if (messages.length > msgCountAtSendRef.current) {
       const newMsgs = messages.slice(msgCountAtSendRef.current);
-      const hasNewAssistant = newMsgs.some((m) => m.role === 'assistant');
+      const hasToolUseInNewMsgs = newMsgs.some(
+        (m) => m.role === 'assistant' && m.content.some((b) => b.type === 'tool_use'),
+      );
       const hasCompactBoundary = newMsgs.some(
         (m) => m.role === 'system' && m.content.some((b) => b.type === 'compact_boundary'),
       );
-      if (hasNewAssistant || hasCompactBoundary) setUserJustSent(false);
+      if (hasToolUseInNewMsgs || hasCompactBoundary) setUserJustSent(false);
     }
   }, [userJustSent, messages.length, messages]);
 
@@ -410,6 +419,20 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
        // Working:ToolExec post-tool-result and Fix 1's freshness alone
        // was insufficient to suppress it.
        || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null));
+
+  // Issue 15.3 Activity-gap fix — clear userJustSent once a confirmed
+  // Working signal has taken over the OR-chain so no visual gap
+  // appears between `userJustSent=true → false` and the takeover.
+  // Placed AFTER isSessionWorking so the referenced values are in
+  // scope; runs in render order after the chain computes.
+  useEffect(() => {
+    if (!userJustSent) return;
+    if (session?.status === 'working'
+        || unmatchedToolUse
+        || (sessionState?.kind === 'Working' && sessionStateIsFresh)) {
+      setUserJustSent(false);
+    }
+  }, [userJustSent, session?.status, unmatchedToolUse, sessionState, sessionStateIsFresh]);
   // Issue 15.3 Option 4 (tighten) — when the hard-off fires, downgrade
   // the coarse `sessionStatus` prop passed to ContextBar from 'working'
   // (server pane lag) to 'idle' so `getStatusInfo`'s Working branch

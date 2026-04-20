@@ -477,3 +477,90 @@ describe('15.3 Option 2 (tighten) — turn-bounded freshness lock on typed-Worki
     assert.equal(label, 'Running command...');
   });
 });
+
+describe('15.3 Activity-gap fix — userJustSent holds through pre-tool thinking window', () => {
+  // Context: every other Claude UI (Codeman, VSCode, native Claude Code)
+  // shows a continuous activity indicator from the moment the user sends
+  // a prompt until Claude finishes. Commander pre-fix cleared `userJustSent`
+  // at ~40ms on any new assistant message (including pure thinking blocks),
+  // producing a visible Idle gap during Claude's pre-tool thinking window.
+  // Fix: only clear `userJustSent` when another confirmed-Working signal
+  // has taken over the OR-chain (tool_use in new msgs, session.status=working,
+  // fresh typed-Working) OR on compact_boundary / status-idle-backstop.
+  //
+  // These DOM tests verify the CONSEQUENCE: when `userJustSent=true` is
+  // HELD (as it will be post-fix during pre-tool windows), the bar reads
+  // a working-class label. Clear-timing itself (the React effect behavior)
+  // is verified by Jose's live-smoke — the test harness (node:test + tsx)
+  // does not stand up a JSDOM renderer for hook-level assertions.
+
+  test('Test 13 — pre-tool thinking window: userJustSent=true + thinking-only new msg → bar reads Cogitating... (NOT Idle)', () => {
+    // Post-fix state: user sent, Claude emitted a thinking block, no
+    // tool yet, no session.status flip yet, no sessionState transition
+    // yet. Pre-fix: userJustSent cleared, all OR-branches false, bar
+    // Idle. Post-fix: userJustSent held → isSessionWorking=true → rich
+    // getActionInfo label on thinking tail = "Cogitating...".
+    const thinkingAssistant: ChatMessage = {
+      id: 'a-thinking', parentId: null, role: 'assistant',
+      timestamp: '2026-04-20T05:00:01.000Z',
+      content: [{ type: 'thinking', text: 'pondering the approach...' }],
+      isSidechain: false,
+    };
+    const label = deriveStatusLabel({
+      messages: [userMsg(), thinkingAssistant],
+      sessionStatus: 'idle', // server pane not yet flipped
+      userJustSent: true, // held — post-fix
+      sessionState: null, // no typed state yet
+    });
+    assert.equal(label, 'Cogitating...');
+    assert.notEqual(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 14 — pre-tool text-only window: userJustSent=true + text assistant msg → bar reads Composing response... (NOT Idle)', () => {
+    // Same shape as Test 13 but the new assistant msg is pure text
+    // (e.g. Claude's mid-thought prose before dispatching a tool).
+    // Rich label via getActionInfo text branch. Both cases: bar is
+    // WORKING-class, never Idle during pre-tool window.
+    const label = deriveStatusLabel({
+      messages: [userMsg(), textOnlyAssistant],
+      sessionStatus: 'idle',
+      userJustSent: true,
+      sessionState: null,
+    });
+    assert.equal(label, 'Composing response...');
+    assert.notEqual(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 14b — absolute-minimum case: userJustSent=true + no assistant msg yet → bar reads Processing... (true pre-response window)', () => {
+    // Immediately after send, Claude hasn't emitted anything yet.
+    // getActionInfo returns null (no assistant msg). jsonlLabel=null.
+    // resolveActionLabel returns null. effectiveAction falls back to
+    // 'Processing...' via userJustSent. Bar reads Processing.
+    // This is the worst-case "nothing but userJustSent to work with"
+    // scenario — pre-fix this window is ~40ms; post-fix it holds
+    // until any Working signal arrives.
+    const label = deriveStatusLabel({
+      messages: [userMsg()], // no assistant activity yet
+      sessionStatus: 'idle',
+      userJustSent: true,
+      sessionState: null,
+    });
+    assert.equal(label, 'Processing...');
+  });
+
+  test('Test 15 — signal takeover: userJustSent was cleared BY the fix when tool_use arrives → bar reads tool label (handoff clean)', () => {
+    // After a tool_use lands, the clear-effect fires and unmatchedToolUse
+    // OR-branch takes over. Helper simulates the post-handoff state:
+    // userJustSent=false, unmatched Bash present. Bar reads rich tool
+    // label. No Idle gap between userJustSent clearing and tool label
+    // appearing — the handoff is instant because unmatchedToolUse
+    // flips true in the same render where userJustSent flips false.
+    const label = deriveStatusLabel({
+      messages: [userMsg(), bashToolUse],
+      sessionStatus: 'idle',
+      userJustSent: false, // cleared by the fix now that tool is pending
+    });
+    // unmatchedToolUse carries the bar. Rich Bash label surfaces.
+    assert.equal(label, 'Running command...');
+  });
+});
