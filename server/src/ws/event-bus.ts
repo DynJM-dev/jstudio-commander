@@ -49,6 +49,14 @@ class CommanderEventBus extends EventEmitter {
     this.emit('project:scanned', projects);
   }
 
+  // M7 MVP — live STATE.md update for a specific session's project.
+  // Fired by watcher-bridge when STATE.md in the session's project_path
+  // changes. Broadcast on a session-scoped channel (not 'projects') so
+  // chat channels stay structurally firewall-separated.
+  emitProjectStateMd(sessionId: string, projectPath: string, content: string | null): void {
+    this.emit('project:state-md-updated', sessionId, projectPath, content);
+  }
+
   // Analytics events
   emitAnalyticsToken(entry: TokenUsageEntry): void {
     this.emit('analytics:token', entry);

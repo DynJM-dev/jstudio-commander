@@ -1,4 +1,5 @@
 import { dirname, basename } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileWatcherService } from './file-watcher.service.js';
 import { jsonlParserService } from './jsonl-parser.service.js';
 import { jsonlDiscoveryService } from './jsonl-discovery.service.js';
@@ -160,6 +161,34 @@ export const setupWatcherBridge = (): void => {
           const refreshed = projectScannerService.getProject(project.id);
           if (refreshed) eventBus.emitProjectUpdated(refreshed);
         });
+      }
+    }
+
+    // M7 MVP — per-session STATE.md broadcast. Independent of the
+    // project-list re-scan above; fires on a session-scoped channel so
+    // per-pane drawers get live updates without piggybacking on the
+    // global projects broadcast. Only STATE.md triggers this path;
+    // PM_HANDOFF.md changes continue to route through the project re-
+    // scan above (existing behavior).
+    if (type === 'state') {
+      let content: string | null = null;
+      try {
+        content = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null;
+      } catch (err) {
+        console.error('[bridge] STATE.md read error:', (err as Error).message);
+        content = null;
+      }
+      const db = getDb();
+      // Live sessions rooted at this project directory — one emit per
+      // session so a split view with two sessions on the same project
+      // updates both panes' drawers.
+      const sessions = db.prepare(
+        `SELECT id FROM sessions
+         WHERE project_path = ?
+           AND status != 'stopped'`,
+      ).all(projectDir) as { id: string }[];
+      for (const s of sessions) {
+        eventBus.emitProjectStateMd(s.id, projectDir, content);
       }
     }
   });

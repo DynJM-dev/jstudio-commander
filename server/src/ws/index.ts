@@ -86,6 +86,17 @@ export const setupWebSocket = async (app: FastifyInstance): Promise<void> => {
     rooms.broadcast('projects', { type: 'project:scanned', projects });
   });
 
+  // M7 MVP — per-session STATE.md broadcast. Dedicated channel keeps
+  // subscribers structurally isolated from chat channels (firewall).
+  eventBus.on('project:state-md-updated', (sessionId, projectPath, content) => {
+    rooms.broadcast(`project-state:${sessionId}`, {
+      type: 'project:state-md-updated',
+      sessionId,
+      projectPath,
+      content,
+    });
+  });
+
   eventBus.on('analytics:token', (entry) => {
     rooms.broadcast('analytics', { type: 'analytics:token', entry });
   });

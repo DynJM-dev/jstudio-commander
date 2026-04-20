@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { readFileSync, existsSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import type { SessionType } from '@commander/shared';
 import { sessionService } from '../services/session.service.js';
 import { tmuxService } from '../services/tmux.service.js';
@@ -71,6 +73,36 @@ export const sessionRoutes = async (app: FastifyInstance) => {
         return reply.status(404).send({ error: 'Session not found' });
       }
       return { sessionId: session.id, flips: statusPollerService.getFlipHistory(session.id) };
+    },
+  );
+
+  // M7 MVP — initial content for the per-session STATE.md drawer.
+  // Separate from the WS push path so the client's `useProjectStateMd`
+  // hook has a clean "read current" call on mount without waiting for
+  // the next change event. Returns { content: null } when the session
+  // has no project_path OR when STATE.md doesn't exist in that project
+  // (not a 404 — some projects legitimately don't carry a STATE.md).
+  app.get<{ Params: { id: string } }>(
+    '/api/sessions/:id/project-state-md',
+    { logLevel: 'warn' as const },
+    async (request, reply) => {
+      const session = sessionService.getSession(request.params.id);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      if (!session.projectPath) {
+        return { content: null };
+      }
+      const statePath = joinPath(session.projectPath, 'STATE.md');
+      if (!existsSync(statePath)) {
+        return { content: null };
+      }
+      try {
+        const content = readFileSync(statePath, 'utf-8');
+        return { content };
+      } catch {
+        return { content: null };
+      }
     },
   );
 

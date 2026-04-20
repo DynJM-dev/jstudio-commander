@@ -35,6 +35,18 @@ export type WSEvent =
   | { type: 'chat:messages'; sessionId: string; messages: ChatMessage[] }
   | { type: 'project:updated'; project: Project }
   | { type: 'project:scanned'; projects: Project[] }
+  // M7 MVP — live STATE.md pane. Delivered on the session-scoped
+  // `project-state:<sessionId>` channel so subscribers are structurally
+  // isolated from chat channels (subscription firewall per dispatch).
+  // Payload carries the FULL new content so the client hook can render
+  // without a second fetch; `content: null` means the file was removed
+  // or couldn't be read.
+  | {
+      type: 'project:state-md-updated';
+      sessionId: string;
+      projectPath: string;
+      content: string | null;
+    }
   | { type: 'terminal:data'; sessionId: string; data: string }
   | { type: 'terminal:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'analytics:token'; entry: TokenUsageEntry }

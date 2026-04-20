@@ -4,12 +4,18 @@ import { GripVertical, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChatPage } from './ChatPage';
 import { TerminalDrawer } from '../components/chat/TerminalDrawer';
+import { ProjectStateDrawer } from '../components/chat/ProjectStateDrawer';
 import { SplitViewButton } from '../components/chat/SplitViewButton';
 import { usePaneState } from '../hooks/usePaneState';
 import { useSessionUi } from '../hooks/useSessionUi';
 import { useSessions } from '../hooks/useSessions';
 import { useWebSocket } from '../hooks/useWebSocket';
-import { MIN_PANE_WIDTH_PX, type Session } from '@commander/shared';
+import {
+  MIN_PANE_WIDTH_PX,
+  MIN_DRAWER_HEIGHT_PX,
+  MAX_DRAWER_HEIGHT_RATIO,
+  type Session,
+} from '@commander/shared';
 
 const M = 'Montserrat, sans-serif';
 
@@ -116,6 +122,14 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PanePr
     return () => ro.disconnect();
   }, []);
 
+  // M7 MVP — per-pane STATE.md drawer state. Local useState (not
+  // persisted via useSessionUi to keep the dispatch boundary minimal;
+  // persistence across reload is a later polish). Mutually exclusive
+  // with the terminal drawer: opening one closes the other since both
+  // bottom-anchor. Height defaults to 50% of pane on first open.
+  const [stateDrawerOpen, setStateDrawerOpen] = useState(false);
+  const [stateDrawerHeightPx, setStateDrawerHeightPx] = useState<number | null>(null);
+
   // Cmd+J / Ctrl+J — toggles THIS pane's drawer when focused.
   // Skipped when keydown target is an input/textarea (search boxes).
   useEffect(() => {
@@ -127,13 +141,57 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PanePr
       if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
       e.preventDefault();
       ui.toggle(paneHeight);
+      // Mutual exclusion — terminal opening closes the STATE.md drawer.
+      setStateDrawerOpen(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [isFocused, paneHeight, ui]);
 
+  // M7 MVP — Cmd+Shift+S / Ctrl+Shift+S toggles THIS pane's STATE.md
+  // drawer when focused. No known conflicts with existing shortcuts
+  // (grep verified: CommandInput/ChatPage Enter handlers, useModalA11y
+  // tab trap — none bind Shift+S with modifier).
+  useEffect(() => {
+    if (!isFocused || paneHeight <= 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 's' && e.key !== 'S') return;
+      if (!e.shiftKey) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
+      e.preventDefault();
+      setStateDrawerOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          // Mutual exclusion — close terminal drawer.
+          ui.setOpen(false);
+          if (stateDrawerHeightPx === null) {
+            // First open — default 50% of pane, clamped.
+            const init = Math.floor(paneHeight * 0.5);
+            const clamped = Math.min(
+              Math.max(init, MIN_DRAWER_HEIGHT_PX),
+              Math.floor(paneHeight * MAX_DRAWER_HEIGHT_RATIO),
+            );
+            setStateDrawerHeightPx(clamped);
+          }
+        }
+        return next;
+      });
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isFocused, paneHeight, ui, stateDrawerHeightPx]);
+
   const drawerHeight = paneHeight > 0 ? ui.effectiveHeight(paneHeight) : 0;
   const drawerOpen = sessionUi.terminalDrawerOpen && paneHeight > 0;
+  const stateDrawerHeight = stateDrawerHeightPx !== null && paneHeight > 0
+    ? Math.min(
+        Math.max(stateDrawerHeightPx, MIN_DRAWER_HEIGHT_PX),
+        Math.floor(paneHeight * MAX_DRAWER_HEIGHT_RATIO),
+      )
+    : 0;
+  const stateDrawerReallyOpen = stateDrawerOpen && paneHeight > 0 && stateDrawerHeight > 0;
 
   return (
     <div
@@ -154,7 +212,9 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PanePr
       <div
         className="flex-1 min-h-0 overflow-hidden"
         style={{
-          paddingBottom: drawerOpen ? drawerHeight : 0,
+          paddingBottom: drawerOpen
+            ? drawerHeight
+            : (stateDrawerReallyOpen ? stateDrawerHeight : 0),
           transition: 'padding-bottom 180ms ease-out',
         }}
       >
@@ -168,6 +228,25 @@ const Pane = ({ sessionId, isFocused, onFocus, showFocusBorder, header }: PanePr
           heightPx={drawerHeight}
           onHeightChange={(px) => ui.setHeight(px, paneHeight)}
           onClose={() => ui.setOpen(false)}
+        />
+      )}
+
+      {/* M7 MVP — per-pane STATE.md drawer. Same position class as
+          TerminalDrawer; mutual exclusion enforced in the keyboard
+          handlers above. Independent of TerminalDrawer lifecycle. */}
+      {paneHeight > 0 && (
+        <ProjectStateDrawer
+          sessionId={sessionId}
+          open={stateDrawerReallyOpen}
+          heightPx={stateDrawerHeight}
+          onHeightChange={(px) => {
+            const clamped = Math.min(
+              Math.max(px, MIN_DRAWER_HEIGHT_PX),
+              Math.floor(paneHeight * MAX_DRAWER_HEIGHT_RATIO),
+            );
+            setStateDrawerHeightPx(clamped);
+          }}
+          onClose={() => setStateDrawerOpen(false)}
         />
       )}
     </div>
