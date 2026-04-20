@@ -8,6 +8,36 @@ import { api } from '../services/api';
 // the glyph AND a live verb (`-ing`/`-ed`/`Idle`) on the same line.
 import { parseTerminalHint } from '../utils/parseTerminalHint';
 
+// Issue 15.3 Tier A Item 3 — exported pure cadence. Pre-fix the hook
+// gated polling on `isActive = working|waiting|userJustSent` at line
+// 68, so any spell of client-side status=idle (stop-hook race, 15.1-F
+// subscription miss, cooldown-induced force-idle while an approval
+// prompt was on pane) silently stopped all polling. That's the "modal
+// doesn't mount until I refresh" class (v5 §11.3). Fix: always poll
+// when `sessionId` is set; scale cadence so idle polling stays cheap.
+//
+// Cadence table:
+//   userJustSent || sessionStatus === 'waiting'  → 1_000 ms
+//   sessionStatus === 'working'                   → 2_000 ms
+//   idle / stopped / unknown                      → 8_000 ms
+//
+// 8s idle cadence justified: Class A (v5 §11.0) is the "status-idle
+// occlusion" class — when the client incorrectly believes the session
+// is idle during an approval window, a wrong cadence is the cost of
+// eventually catching up. 8s means ≤ 8s worst-case mount delay for
+// the pathological case AND ≤ 1-2s in the common case once status
+// flips to working/waiting and the effect re-runs at the tighter
+// cadence. Range per dispatch is 5-10s; 8 is mid-range and avoids
+// the perception that idle is sluggish while keeping CPU cost bounded.
+export const computePromptDetectionCadence = (
+  sessionStatus: string | undefined,
+  userJustSent: boolean,
+): number => {
+  if (userJustSent || sessionStatus === 'waiting') return 1_000;
+  if (sessionStatus === 'working') return 2_000;
+  return 8_000;
+};
+
 interface DetectedPrompt {
   type: string;
   message: string;
@@ -62,17 +92,17 @@ export const usePromptDetection = (
     dismissedUntilRef.current = Date.now() + 5000; // 5s debounce
   }, []);
 
-  // Poll for prompts + terminal hints when session is active or user just sent
+  // Poll for prompts + terminal hints. Issue 15.3 Tier A Item 3 — no
+  // `isActive` gate: the pre-fix guard silently killed polling whenever
+  // the client believed the session was idle, which is exactly when a
+  // force-idled-mid-approval prompt needs the poll MOST (v5 §11.3
+  // Class A). Scale cadence via `computePromptDetectionCadence` so the
+  // idle path stays cheap (8s) while active paths keep 1-2s tightness
+  // for the ≤3s modal-mount contract.
   useEffect(() => {
     if (!sessionId) return;
-    const isActive = sessionStatus === 'working' || sessionStatus === 'waiting' || userJustSent;
-    if (!isActive) return;
 
-    // 1s when user just sent (instant echo) or the session is in 'waiting'
-    // (permission prompts must surface fast — the 2s default left users
-    // staring at a waiting tab with no prompt card for several ticks).
-    // 2s for steady 'working' so the poll doesn't hammer tmux on long turns.
-    const pollInterval = userJustSent || sessionStatus === 'waiting' ? 1000 : 2000;
+    const pollInterval = computePromptDetectionCadence(sessionStatus, userJustSent);
 
     const poll = async () => {
       try {
