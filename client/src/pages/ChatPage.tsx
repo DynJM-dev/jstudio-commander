@@ -354,11 +354,37 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // the typed signal IS at the client via `useSessionState` but was
   // previously un-consumed by the coarse gate. Freshness predicate
   // guards against stale prior-turn carryover.
-  const isSessionWorking =
-    userJustSent
-    || (session?.status === 'working' && !heartbeatStale)
-    || unmatchedToolUse
-    || (sessionState?.kind === 'Working' && sessionStateIsFresh);
+  //
+  // Issue 15.3 Option 4 (tighten) — symmetric hard-off on fresh typed-Idle.
+  // Live-smoke post-Fix-1 exposed a ~60s trailing edge after a Claude
+  // reply whose final assistant-block was `text`: Fix 1's fresh-Working
+  // OR-branch held true because the server continues emitting Working
+  // typed state for a short window post-turn, and `getActionInfo` kept
+  // returning "Composing response..." on the text tail. Fix: when the
+  // server transitions typed state to `Idle` AND that transition was
+  // observed since the last user message (same freshness predicate),
+  // snap the composite to false regardless of other OR-branches.
+  // Symmetric with Fix 1: typed `Idle` fresh is "turn ended server-side"
+  // the same way typed `Working` fresh is "turn active server-side".
+  // Preserves all other non-regression paths: stale typed-Idle (prior
+  // turn carryover) does NOT trip the kill-switch (handled by the
+  // freshness gate), so true-idle mid-turn scenarios are untouched.
+  const typedIdleFreshKillSwitch = sessionState?.kind === 'Idle' && sessionStateIsFresh;
+  const isSessionWorking = typedIdleFreshKillSwitch
+    ? false
+    : (userJustSent
+       || (session?.status === 'working' && !heartbeatStale)
+       || unmatchedToolUse
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh));
+  // Issue 15.3 Option 4 (tighten) — when the hard-off fires, downgrade
+  // the coarse `sessionStatus` prop passed to ContextBar from 'working'
+  // (server pane lag) to 'idle' so `getStatusInfo`'s Working branch
+  // does NOT fall to generic "Working..." after the rich label was
+  // correctly suppressed. Without this downgrade, isSessionWorking=false
+  // combined with a lagged session.status='working' renders "Working..."
+  // instead of the expected "Idle — Waiting for instructions" (dispatch
+  // test 1 contract). Keeps ContextBar.tsx untouched per file boundary.
+  const effectiveSessionStatus: string | undefined = typedIdleFreshKillSwitch ? 'idle' : session?.status;
   const liveThinking = useMemo(() => {
     if (!isSessionWorking || allMessages.length === 0) return null;
     const last = allMessages[allMessages.length - 1];
@@ -584,7 +610,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         contextCost={stats?.contextCost}
         interrupting={interrupting}
         messages={allMessages}
-        sessionStatus={session?.status}
+        sessionStatus={effectiveSessionStatus}
         lastActivityAt={session?.lastActivityAt}
         activity={session?.activity ?? null}
         sessionId={sessionId}

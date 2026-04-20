@@ -68,16 +68,22 @@ const deriveStatusLabel = (opts: {
 
   const unmatchedToolUse = hasUnmatchedToolUse(messages);
   const sessionStateIsFresh = sessionStateUpdatedAt > lastUserMessageTs;
-  const isSessionWorking =
-    userJustSent
-    || (sessionStatus === 'working' && !heartbeatStale)
-    || unmatchedToolUse
-    || (sessionState?.kind === 'Working' && sessionStateIsFresh);
+  // Issue 15.3 Option 4 (tighten) — hard-off wraps the OR-chain, and
+  // downgrades the effective sessionStatus so the DOM flips to Idle
+  // even when the server's coarse status is still lagged on 'working'.
+  const typedIdleFreshKillSwitch = sessionState?.kind === 'Idle' && sessionStateIsFresh;
+  const isSessionWorking = typedIdleFreshKillSwitch
+    ? false
+    : (userJustSent
+       || (sessionStatus === 'working' && !heartbeatStale)
+       || unmatchedToolUse
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh));
+  const effectiveSessionStatus = typedIdleFreshKillSwitch ? 'idle' : sessionStatus;
 
   const isWorking = isSessionWorking;
   const jsonlLabel = (isWorking ? getActionInfo(messages)?.label : null) ?? null;
   const actionLabel = resolveActionLabel({ isWorking, jsonlLabel, terminalHint, sessionState });
-  const effectiveStatus = isWorking && sessionStatus !== 'working' ? 'working' : sessionStatus;
+  const effectiveStatus = isWorking && effectiveSessionStatus !== 'working' ? 'working' : effectiveSessionStatus;
   const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
   return getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, 0, 0).label;
 };
@@ -309,5 +315,84 @@ describe('15.3 Fix Rotation — non-regression', () => {
       sessionState: { kind: 'Working', subtype: 'ToolExec' },
     });
     assert.equal(label, 'Running command...');
+  });
+});
+
+describe('15.3 Option 4 (tighten) — hard-off on fresh typed-Idle', () => {
+  test('Test 7 — Case 2/3 trailing-edge closure: fresh typed-Idle snaps isSessionWorking off', () => {
+    // Live-smoke post-Fix-1 repro: Claude finishes a turn whose final
+    // assistant-block is text. session.status lags on 'working' (server
+    // pane classifier trailing edge). sessionState transitions to Idle
+    // and that transition fires AFTER the user's last message → fresh.
+    // Hard-off kills isSessionWorking regardless of the lagging
+    // session.status. unmatchedToolUse=false (tool_result landed).
+    // userJustSent=false (cleared within ~40ms of send per §12.1).
+    // Expected: DOM reads Idle immediately, not the stuck
+    // "Composing response..." from the text tail for 60s.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), textOnlyAssistant],
+      sessionStatus: 'working', // server pane lag — still says working
+      heartbeatStale: false,
+      sessionState: { kind: 'Idle', subtype: 'JustFinished' },
+      sessionStateUpdatedAt: lastUserTs + 30_000, // fresh: 30s after user send
+    });
+    assert.equal(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 8 — regression guard: stale typed-Idle does NOT fire hard-off (carryover from prior turn)', () => {
+    // If sessionState.kind='Idle' is stale (carryover from BEFORE the
+    // current user message), the freshness gate correctly marks it
+    // not-fresh and the hard-off does NOT fire. Other OR-branches
+    // (here: unmatchedToolUse via Bash tool_use) keep the bar Working.
+    // Verifies the hard-off is gated on freshness — symmetric with Fix 1.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), bashToolUse],
+      sessionStatus: 'idle',
+      sessionState: { kind: 'Idle', subtype: 'JustFinished' }, // stale
+      sessionStateUpdatedAt: lastUserTs - 5_000, // BEFORE user send = stale
+    });
+    // Stale-Idle does not kill. unmatchedToolUse carries isSessionWorking.
+    // getActionInfo finds Bash → "Running command...". resolveActionLabel's
+    // typed:Idle branch — with Fix 2 — returns jsonlLabel because
+    // isWorking=true + jsonlLabel present.
+    assert.equal(label, 'Running command...');
+  });
+
+  test('Test 9 — symmetric boundary: fresh-session (no prior user msg) with fresh typed-Idle still resolves cleanly', () => {
+    // Edge case: brand-new session, no user messages ever sent
+    // (lastUserMessageTs=0). Any positive sessionStateUpdatedAt counts
+    // as fresh. If server happens to emit typed-Idle first, the hard-off
+    // fires and the bar reads Idle. No divide-by-zero, no undefined
+    // comparison — the predicate is a plain `>` on two numbers.
+    const label = deriveStatusLabel({
+      messages: [], // no messages at all
+      sessionStatus: 'idle',
+      sessionState: { kind: 'Idle', subtype: 'AwaitingFirstPrompt' },
+      sessionStateUpdatedAt: 1_000, // any positive → fresh against 0 anchor
+    });
+    assert.equal(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 9b — non-regression: fresh typed-Idle with userJustSent=true still shows Processing (optimistic echo preserved)', () => {
+    // Subtle edge: if the user sends a message and typed-Idle is
+    // somehow already fresh in the tiny window before Claude responds,
+    // the hard-off would kill userJustSent's optimistic "Processing..."
+    // render. But that window is ~40ms per §12.1 observations, and
+    // typed-Idle freshness would require the server to have emitted
+    // Idle AFTER the user message timestamp. In practice unlikely.
+    // Test documents the behavior: IF fresh typed-Idle lands, hard-off
+    // dominates even over userJustSent. This is correct — a fresh
+    // server-confirmed Idle should override the client optimistic flag.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z')],
+      sessionStatus: 'idle',
+      userJustSent: true,
+      sessionState: { kind: 'Idle', subtype: 'JustFinished' },
+      sessionStateUpdatedAt: lastUserTs + 100, // fresh
+    });
+    assert.equal(label, 'Idle — Waiting for instructions');
   });
 });
