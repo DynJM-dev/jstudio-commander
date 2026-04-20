@@ -23,6 +23,7 @@ import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 import { hasUnmatchedToolUse } from '../utils/contextBarAction';
+import { isActiveInDifferentPane } from '../utils/paneFocus';
 
 const M = 'Montserrat, sans-serif';
 
@@ -536,6 +537,16 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         if (active && active.closest('[data-escape-owner]')) return;
       }
 
+      // Candidate 19 — split-view cross-pane interrupt guard. With two
+      // ChatPage instances live in a split view, both register this
+      // window-level handler. Without this check, every ESC / Cmd+.
+      // interrupts BOTH sessions instead of the one the user is
+      // focused in. When focus is inside a different pane, defer to
+      // that pane's handler. When focus is outside any pane, fall
+      // through (preserves pre-fix behavior).
+      const activeForPaneCheck = document.activeElement as HTMLElement | null;
+      if (isActiveInDifferentPane(activeForPaneCheck, sessionId)) return;
+
       // Only fire when there's any sign Claude might be running — avoids
       // spam-stopping an idle session when the user hits ESC.
       const mayBeActive =
@@ -550,7 +561,7 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [session?.status, userJustSent, prompt, interruptSession]);
+  }, [session?.status, userJustSent, prompt, interruptSession, sessionId]);
 
   // No session selected
   if (!sessionId) {
