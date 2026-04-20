@@ -419,7 +419,21 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
        // §12.1 Case 3 60s trailing edge where server kept emitting
        // Working:ToolExec post-tool-result and Fix 1's freshness alone
        // was insufficient to suppress it.
-       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null));
+       //
+       // Heartbeat-stale guard: for pure-text turns (no tool_use
+       // dispatched), lastTurnEndTs stays null for the whole response
+       // because there's no `unmatchedToolUse true→false` transition
+       // to trip it. If the server keeps emitting Working typed state
+       // post-response (pane classifier lag), the branch above would
+       // hold isSessionWorking=true forever and getActionInfo's
+       // text-tail would keep the bar stuck on "Composing response..."
+       // (observed live 2026-04-20: 1150s stuck). Mirror the
+       // `session.status === 'working' && !heartbeatStale` pattern —
+       // when no hook activity in 30s, don't trust typed-Working
+       // either. Real tool-exec windows keep hooks alive so
+       // heartbeatStale stays false; this guard only fires once the
+       // server has gone quiet.
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null && !heartbeatStale));
 
   // Issue 15.3 Activity-gap fix — clear userJustSent once a confirmed
   // Working signal has taken over the OR-chain so no visual gap

@@ -79,8 +79,9 @@ const deriveStatusLabel = (opts: {
     : (userJustSent
        || (sessionStatus === 'working' && !heartbeatStale)
        || unmatchedToolUse
-       // Issue 15.3 Option 2 — typed-Working gated on lastTurnEndTs === null.
-       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null));
+       // Issue 15.3 Option 2 + heartbeat guard — typed-Working gated on
+       // lastTurnEndTs === null AND !heartbeatStale.
+       || (sessionState?.kind === 'Working' && sessionStateIsFresh && lastTurnEndTs === null && !heartbeatStale));
   const effectiveSessionStatus = typedIdleFreshKillSwitch ? 'idle' : sessionStatus;
 
   const isWorking = isSessionWorking;
@@ -457,6 +458,43 @@ describe('15.3 Option 2 (tighten) — turn-bounded freshness lock on typed-Worki
       lastTurnEndTs: null, // reset by the new user msg send
     });
     assert.equal(label, 'Composing response...');
+  });
+
+  test('Test 12c — heartbeat-stale guard: lastTurnEndTs=null (pure-text turn) + fresh typed-Working + heartbeatStale=true → typed branch LOCKED OFF → Idle', () => {
+    // Live repro 2026-04-20: "Composing response..." stuck ~1150s.
+    // Cause: pure-text turn, no tool_use dispatched → lastTurnEndTs stays
+    // null forever → Option 2 lock doesn't engage. Server kept emitting
+    // Working typed state post-response. Heartbeat guard closes the
+    // class: when no hooks/ticks for 30s, don't trust typed-Working.
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), textOnlyAssistant],
+      sessionStatus: 'idle',        // server correctly flipped (eventually)
+      heartbeatStale: true,         // no hook activity in 30s — turn truly over
+      sessionState: { kind: 'Working', subtype: 'Composing' },
+      sessionStateUpdatedAt: lastUserTs + 60_000,  // fresh (server still emitting)
+      lastTurnEndTs: null,          // pure-text turn, no tool boundary
+    });
+    assert.equal(label, 'Idle — Waiting for instructions');
+  });
+
+  test('Test 12d — heartbeat fresh preserves Fix 1: during active tool exec, heartbeatStale stays false → typed-Working still fires', () => {
+    // Non-regression on the Fix 1 path: in a real tool-exec window,
+    // hooks keep firing (tool dispatch, status-poller ticks), so
+    // heartbeatStale stays false. The new guard doesn't suppress
+    // the legitimate Working signal. Here: unmatched tool_use is
+    // present (so unmatchedToolUse OR-branch actually drives here,
+    // but the typed-Working branch is also permitted by !heartbeatStale).
+    const lastUserTs = Date.parse('2026-04-20T05:00:00.000Z');
+    const label = deriveStatusLabel({
+      messages: [userMsg('2026-04-20T05:00:00.000Z'), bashToolUse],
+      sessionStatus: 'idle',
+      heartbeatStale: false,         // hooks alive
+      sessionState: { kind: 'Working', subtype: 'ToolExec' },
+      sessionStateUpdatedAt: lastUserTs + 5_000,
+      lastTurnEndTs: null,
+    });
+    assert.equal(label, 'Running command...');
   });
 
   test('Test 12b — non-regression: lock set but unmatchedToolUse=true overrides (new tool racing in) → Working', () => {
