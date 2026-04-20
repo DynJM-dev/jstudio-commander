@@ -23,6 +23,7 @@ import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 import { hasUnmatchedToolUse } from '../utils/contextBarAction';
+import { useToolExecutionState } from '../hooks/useToolExecutionState';
 import { isActiveInDifferentPane } from '../utils/paneFocus';
 
 const M = 'Montserrat, sans-serif';
@@ -318,6 +319,13 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     return true;
   });
   const allMessages = [...messages, ...pendingLocal];
+
+  // Phase Y Rotation 1 — codeman-pattern transcript-authoritative state.
+  // Runs in parallel with the 15.3-arc OR-chain below; passed to
+  // ContextBar as the primary source (with legacy as `??` fallback).
+  // The `[codeman-diff]` logger inside ContextBar captures divergence
+  // between codeman and legacy for rotation 2 audit.
+  const codemanState = useToolExecutionState(sessionId, allMessages);
 
   // Active plan — drives the sticky plan widget. Rebuilt on every messages
   // change so it stays in sync with the inline plan card rendered in ChatThread.
@@ -711,6 +719,13 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         // long-tool windows collapse the status bar to Idle while the
         // chat bubble correctly stays lit.
         isWorkingOverride={isSessionWorking}
+        // Phase Y Rotation 1 — codeman-pattern transcript-authoritative
+        // state. Primary source for isWorking + label (inside
+        // ContextBar via `??`); legacy isWorkingOverride / jsonl label
+        // path above remains as nullish-coalesce fallback AND as the
+        // `[codeman-diff]` audit counterparty. Rotation 2 deletes the
+        // legacy path after disagreement log audits clean.
+        codemanState={codemanState}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}

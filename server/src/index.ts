@@ -161,6 +161,12 @@ await app.register(cityRoutes);
 await app.register(uploadRoutes);
 await app.register(preCompactRoutes);
 
+// Phase Y Rotation 1 — TEMPORARY parallel-run diff persistence.
+// Rotation 2 deletes this registration, the route file, and the
+// on-disk JSONL at `~/.jstudio-commander/codeman-diff.jsonl`.
+const { debugRoutes } = await import('./routes/debug.routes.js');
+await app.register(debugRoutes);
+
 // Initial project scan
 await projectScannerService.runInitialScan();
 

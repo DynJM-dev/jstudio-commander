@@ -22,6 +22,8 @@ import { getContextLimit } from '@commander/shared';
 import { useSessions } from '../../hooks/useSessions';
 import { isActivityStale, resolveActionLabel } from '../../utils/contextBarAction';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
+import type { ToolExecutionState } from '../../hooks/useToolExecutionState';
+import { useCodemanDiffLogger } from '../../hooks/useCodemanDiffLogger';
 
 const M = 'Montserrat, sans-serif';
 
@@ -242,6 +244,15 @@ interface ContextBarProps {
   // out" — we fall back to the legacy local derivation for backward
   // compat (test fixtures, future callers that don't plumb it yet).
   isWorkingOverride?: boolean;
+  // Phase Y Rotation 1 — codeman-pattern transcript-authoritative state,
+  // computed in ChatPage via `useToolExecutionState(sessionId, messages)`.
+  // Primary source for `isWorking` + `label` when non-null; legacy path
+  // below remains the nullish-coalesce fallback counterparty for the
+  // parallel-run diff logger. Rotation 2 removes the legacy path; this
+  // prop becomes the sole source. Null means "hook not yet bootstrapped"
+  // — in practice the hook emits on first render, so non-null is the
+  // steady-state.
+  codemanState?: ToolExecutionState | null;
 }
 
 // Phase S.1 Patch 4 — tick-first ctx% resolver. Exported so unit tests
@@ -262,7 +273,7 @@ export const resolveContextPercent = (
   return Math.min(Math.round((displayTokens / contextLimit) * 100), 100);
 };
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null, sessionState = null, isWorkingOverride }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null, sessionState = null, isWorkingOverride, codemanState = null }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -338,8 +349,14 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // applies the heartbeatStale tool-exec exemption). Fall back to the
   // legacy local derivation when the prop is absent so ContextBar stays
   // renderable in isolation (tests, future callers).
-  const isWorking = isWorkingOverride ?? (sessionStatus === 'working' || userJustSent);
-  const rawJsonlAction = isWorking ? getActionInfo(messages) : null;
+  // Phase Y Rotation 1 — compute legacy composite AND label up front so
+  // both the codeman primary and the legacy fallback are visible to the
+  // `[codeman-diff]` logger at the emit point. Legacy path is byte-for-
+  // byte unchanged from pre-Y; the only additive is the codeman `??`
+  // primary on `isWorking` + `actionLabel`.
+  const legacyIsWorking = isWorkingOverride ?? (sessionStatus === 'working' || userJustSent);
+  const isWorking = codemanState?.isWorking ?? legacyIsWorking;
+  const rawJsonlAction = legacyIsWorking ? getActionInfo(messages) : null;
   const suppressComposing =
     rawJsonlAction?.label === 'Composing response...' &&
     !userJustSent &&
@@ -352,13 +369,35 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // Issue 15.3 — when the server has emitted a canonical SessionState,
   // `resolveActionLabel` reads it directly; otherwise falls back to the
   // legacy jsonl + terminal-hint derivation path.
-  const actionLabel = resolveActionLabel({
-    isWorking,
+  const legacyActionLabel = resolveActionLabel({
+    isWorking: legacyIsWorking,
     jsonlLabel: jsonlAction?.label ?? null,
     terminalHint: terminalHint ?? null,
     sessionState,
   });
+  // Phase Y Rotation 1 — codeman label is primary when present; legacy
+  // computation above remains as nullish-coalesce fallback AND as the
+  // `[codeman-diff]` audit counterparty (payload.legacyLabel). Rotation
+  // 2 deletes `legacyActionLabel` and promotes `codemanState.label`
+  // (with resolveActionLabel still handling terminalHint / sessionState
+  // branches that outlast the deletion, per CTO Q2).
+  const actionLabel = codemanState?.label ?? legacyActionLabel;
   const ActionIcon = jsonlAction?.icon ?? null;
+
+  // Phase Y Rotation 1 — `[codeman-diff]` parallel-run divergence
+  // instrumentation. Fires (dedupe-gated) when the codeman-pattern
+  // derivation disagrees with the legacy composite. Emits to console
+  // AND POSTs to /api/debug/codeman-diff for durable JSONL storage
+  // at ~/.jstudio-commander/codeman-diff.jsonl. TEMPORARY — rotation 2
+  // deletes this call, the hook file, the endpoint, and the JSONL.
+  useCodemanDiffLogger({
+    sessionId,
+    codemanState: codemanState ?? { isWorking: false, currentTool: null, label: null, subtype: 'idle' },
+    legacyState: { isWorking: legacyIsWorking, label: legacyActionLabel },
+    messages,
+    sessionStatus: sessionStatus ?? null,
+    sessionStateKind: sessionState?.kind ?? null,
+  });
 
   // Active-teammate count for the current session — drives the
   // "Monitoring N teammates" label so a paused PM with running coders
