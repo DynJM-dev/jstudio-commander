@@ -229,6 +229,14 @@ interface ContextBarProps {
   // absent means "no canonical state yet, fall back to deriving from
   // jsonl + terminal-hint" (pre-15.3 behavior).
   sessionState?: SessionState | null;
+  // Issue 15.3 §6.1.1 — authoritative composite working signal computed
+  // at ChatPage. When provided, replaces the local `sessionStatus ===
+  // 'working' || userJustSent` derivation so this bar reads the same
+  // OR-gate (unmatched tool_use) + heartbeat exemption that already
+  // drives LiveActivityRow's visibility. Missing means "caller opted
+  // out" — we fall back to the legacy local derivation for backward
+  // compat (test fixtures, future callers that don't plumb it yet).
+  isWorkingOverride?: boolean;
 }
 
 // Phase S.1 Patch 4 — tick-first ctx% resolver. Exported so unit tests
@@ -249,7 +257,7 @@ export const resolveContextPercent = (
   return Math.min(Math.round((displayTokens / contextLimit) * 100), 100);
 };
 
-export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null, sessionState = null }: ContextBarProps) => {
+export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, contextCost, messages, sessionStatus, lastActivityAt, activity = null, sessionId, terminalHint, hasPrompt = false, messagesQueued = false, effortLevel = 'xhigh', userJustSent = false, onInterrupt, interrupting = false, onRefresh, sessionTick = null, sessionState = null, isWorkingOverride }: ContextBarProps) => {
   const contextLimit = getContextLimit(model);
   const displayTokens = contextTokens ?? totalTokens;
   const displayCost = contextCost ?? totalCost;
@@ -320,7 +328,12 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // label when lastActivityAt is older than STALE_ACTIVITY_MS. Tool-
   // based labels pass through unchanged — their staleness story is
   // handled by tool_result append timing.
-  const isWorking = sessionStatus === 'working' || userJustSent;
+  // Issue 15.3 §6.1.1 — consume ChatPage's authoritative composite when
+  // provided (isSessionWorking already OR-gates hasUnmatchedToolUse and
+  // applies the heartbeatStale tool-exec exemption). Fall back to the
+  // legacy local derivation when the prop is absent so ContextBar stays
+  // renderable in isolation (tests, future callers).
+  const isWorking = isWorkingOverride ?? (sessionStatus === 'working' || userJustSent);
   const rawJsonlAction = isWorking ? getActionInfo(messages) : null;
   const suppressComposing =
     rawJsonlAction?.label === 'Composing response...' &&
@@ -366,8 +379,13 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     return { activeTeammateCount: active, workingTeammateCount: working };
   }, [sessions, sessionId]);
 
-  // Status info (always shown)
-  const effectiveStatus = userJustSent && sessionStatus !== 'working' ? 'working' : sessionStatus;
+  // Status info (always shown). Issue 15.3 §6.1.1 — when the composite
+  // `isWorking` is true (OR-gate caught a tool mid-flight even while
+  // raw server status says idle/stopped), promote `effectiveStatus` to
+  // 'working' so `getStatusInfo` takes the Working branch and renders
+  // the rich label instead of falling to the default "Idle — Waiting
+  // for instructions".
+  const effectiveStatus = isWorking && sessionStatus !== 'working' ? 'working' : sessionStatus;
   const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
   const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount, workingTeammateCount);
   // Drives the bar-teammate-active CSS class: only when the PM pane is idle

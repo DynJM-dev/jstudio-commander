@@ -568,6 +568,12 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         onRefresh={handleRefresh}
         sessionTick={tick}
         sessionState={sessionState}
+        // Issue 15.3 §6.1.1 — authoritative composite. ContextBar must
+        // read the same OR-gate (hasUnmatchedToolUse) + heartbeat
+        // exemption that already drives LiveActivityRow, otherwise
+        // long-tool windows collapse the status bar to Idle while the
+        // chat bubble correctly stays lit.
+        isWorkingOverride={isSessionWorking}
       />
 
       {/* Permission prompt — when Claude is waiting for input */}
