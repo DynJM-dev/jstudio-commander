@@ -263,9 +263,26 @@ const poll = (): void => {
     // the cooldown as the single authoritative signal for "just
     // force-idled — don't touch"). Strict `<` cutoff so at
     // msSinceForceIdle === 60_000 we exit into the next branch.
+    // Issue 15.3 §6.4 Delta 2 — pending-tool exemption to the
+    // force-idle cooldown. The cooldown exists to suppress PANE-REGEX
+    // oscillation (Issue 15.1-D). The structured tool-pairing signal
+    // (`hasPendingToolUseInTranscript`) is orthogonal and strictly
+    // higher-trust per §24.2. When a tool is in flight, the cooldown
+    // must not suppress the pending-tool-override below — otherwise a
+    // user prompt that starts a Bash right after a stale force-idle
+    // (Jose Case 2 post-approval ls → 1min+ latency) stays stuck on
+    // 'idle' for the full 60s window while the tool actually executes.
     const msSinceForceIdle = Date.now() - Number(session.force_idled_at ?? 0);
     if (msSinceForceIdle < FORCE_IDLE_COOLDOWN_MS) {
-      continue;
+      const cooldownTranscript = latestTranscriptPath(session.transcript_paths);
+      const cooldownPendingTool = cooldownTranscript
+        ? hasPendingToolUseInTranscript(cooldownTranscript)
+        : false;
+      if (!cooldownPendingTool) continue;
+      // Fall through — let the pending-tool override at the next gate
+      // upgrade idle → working. Cooldown stamping is NOT reset here;
+      // if the tool completes and a new pane-regex idle classification
+      // fires within the residual window, the cooldown still applies.
     }
 
     // Issue 15.1-H — structured signal is authoritative over the pane
