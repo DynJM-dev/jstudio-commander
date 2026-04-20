@@ -78,6 +78,60 @@ export const hasUnmatchedToolUse = (
   return false;
 };
 
+// Phase Y Rotation 1.5 Fix A — `effectiveStatus` resolution that puts
+// codeman's verdict on top while preserving the `sessionStatus==='waiting'`
+// passthrough (Item 3 approval-modal mount path, `00f1c30` sacred).
+//
+// Precedence:
+//   1. `sessionStatus==='waiting'` — top of chain, LOAD-BEARING for
+//      approval modal. If shadowed, Item 3 regresses.
+//   2. Codeman confident verdict (`true → 'working'`, `false → 'idle'`)
+//      when codemanIsWorking is a concrete boolean.
+//   3. Legacy upgrade — original `isWorking && sessionStatus !== 'working'
+//      ? 'working' : sessionStatus` — fires only when codeman hasn't
+//      bootstrapped (`codemanIsWorking === undefined`).
+//
+// Class 3 evidence in JSONL entry 11 (2026-04-20 user-visible "Idle"
+// while codeman said working): legacy's `typedIdleFreshKillSwitch`
+// forced `sessionStatus='idle'` upstream in ChatPage; the original
+// ContextBar upgrade only fired when `isWorking && sessionStatus !==
+// 'working'`, but via the rotation-1 `??` wiring that `isWorking` was
+// codeman's `true` — still should have upgraded. The live divergence
+// proves we need the codeman verdict to dominate `effectiveStatus`
+// unambiguously rather than relying on the legacy upgrade coincidence.
+export const resolveEffectiveStatus = (
+  sessionStatus: string | undefined,
+  codemanIsWorking: boolean | undefined,
+  legacyIsWorking: boolean,
+): string | undefined => {
+  if (sessionStatus === 'waiting') return 'waiting';
+  if (codemanIsWorking === true) return 'working';
+  if (codemanIsWorking === false) return 'idle';
+  // Codeman hasn't bootstrapped (undefined) — fall through to legacy.
+  return legacyIsWorking && sessionStatus !== 'working' ? 'working' : sessionStatus;
+};
+
+// Phase Y Rotation 1.5 Fix B — parallel-run label resolution. When
+// codeman reports confident-idle (`isWorking === false`), suppress
+// legacy's label entirely so a stuck "Composing response..." or
+// "Running command..." string doesn't leak to the UI.
+//
+// Class 2 evidence in JSONL entries 6, 7, 9, 10, 13: codeman idle +
+// null, legacy stuck on "Composing response..." / "Running command...".
+// Rotation 1's `codemanLabel ?? legacyActionLabel` hit `null ?? "..."`
+// and rendered the stuck string. Conditional fallback blocks the leak
+// only on confident-idle; pre-bootstrap (codemanIsWorking === undefined)
+// still honors legacy so the UI never goes label-blank during the
+// brief window before codeman first emits.
+export const resolveActionLabelForParallelRun = (
+  codemanIsWorking: boolean | undefined,
+  codemanLabel: string | null | undefined,
+  legacyActionLabel: string | null,
+): string | null => {
+  if (codemanIsWorking === false) return null;
+  return codemanLabel ?? legacyActionLabel;
+};
+
 // Pure version of ContextBar's `getActionInfo`. Scans backward
 // for the last assistant message and derives an action label from
 // its last content block. Returns null when no assistant message is

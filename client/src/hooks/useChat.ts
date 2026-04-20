@@ -30,6 +30,17 @@ interface UseChatReturn {
   // button (#237); use sparingly since it blocks the UI while the
   // fetch resolves.
   refetch: () => Promise<void>;
+  // Phase Y Rotation 1.5 Fix C — streaming-vs-settled signal for the
+  // transcript-authoritative `composing` subtype (Investigation C,
+  // un-deferred after Class 1 evidence in `~/.jstudio-commander/
+  // codeman-diff.jsonl` entries 1-5, 8, 12, 14). Holds the id of the
+  // last assistant message whose `content` is still growing across
+  // poll ticks. Cleared (`null`) when content has stabilized for
+  // STREAMING_STABILITY_MS (~2 poll cadences). `useToolExecutionState`
+  // gates its `composing` detection on `streamingAssistantId === tail
+  // assistant id` so a settled text tail falls through to idle instead
+  // of sticking on "Composing response..."
+  streamingAssistantId: string | null;
 }
 
 interface ChatResponse {
@@ -39,6 +50,16 @@ interface ChatResponse {
 }
 
 const PAGE_SIZE = 500;
+
+// Phase Y Rotation 1.5 Fix C — stability window for the
+// streamingAssistantId signal. `useChat`'s poll cadence is 1.5s active
+// / 5s idle; 3000ms (~2 active polls) balances: short enough that a
+// settled text tail transitions to "idle" quickly after the turn ends
+// (well under the 5s R2-2 criterion budget), long enough that a brief
+// inter-chunk pause doesn't prematurely flip the signal to null and
+// drop `composing` mid-stream. If Class 1 re-emerges at this value,
+// bump to 4500ms (~3 active polls) rather than adding a new signal.
+const STREAMING_STABILITY_MS = 3_000;
 
 // Tail-delta merge: replace messages with matching id when content has
 // changed (captures #193 in-place block growth) and append truly new
@@ -72,6 +93,14 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<ChatStats | null>(null);
   const [awaitingFirstTurn, setAwaitingFirstTurn] = useState<boolean>(false);
+  // Phase Y Rotation 1.5 Fix C — streaming-vs-settled tracking.
+  // `streamingAssistantId` holds the tail assistant id while its
+  // content is still growing across polls; `null` once stable.
+  // The snapshot + timer refs drive the transition; see the effect
+  // below that reconciles on every `messages` change.
+  const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
+  const streamingSnapshotRef = useRef<{ id: string | null; hash: string }>({ id: null, hash: '' });
+  const streamingStabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { subscribe, unsubscribe, lastEvent } = useWebSocket();
   const mountedRef = useRef(true);
   const prevSessionRef = useRef<string | undefined>(undefined);
@@ -228,6 +257,67 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     return () => clearInterval(interval);
   }, [sessionId, loading, sessionStatus]);
 
+  // Phase Y Rotation 1.5 Fix C — streaming-vs-settled reconciler. Fires
+  // on every `messages` reference change (i.e. every poll tick that
+  // produced a delta, plus any WS append / initial fetch). If the tail
+  // is an assistant text block, we mark it streaming and (re)arm a
+  // STREAMING_STABILITY_MS timer; the timer's expiry flips the signal
+  // to null, which downstream gates `composing` off in
+  // `useToolExecutionState`. Any further content change before the
+  // timer fires re-arms it — naturally extending the streaming window
+  // as long as Claude keeps adding chunks.
+  //
+  // Scope: only the ASSISTANT text tail is tracked. Non-text tails
+  // (tool_use, tool_result, compact blocks, user messages) clear the
+  // signal immediately — those states are handled by their own
+  // branches in the derivation.
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    const clearTimerAndReset = () => {
+      if (streamingStabilityTimerRef.current) {
+        clearTimeout(streamingStabilityTimerRef.current);
+        streamingStabilityTimerRef.current = null;
+      }
+      streamingSnapshotRef.current = { id: null, hash: '' };
+      setStreamingAssistantId((prev) => (prev === null ? prev : null));
+    };
+    if (!last || last.role !== 'assistant' || last.content.length === 0) {
+      clearTimerAndReset();
+      return;
+    }
+    const lastBlock = last.content[last.content.length - 1];
+    if (!lastBlock || lastBlock.type !== 'text') {
+      clearTimerAndReset();
+      return;
+    }
+    const hash = JSON.stringify(last.content);
+    const prev = streamingSnapshotRef.current;
+    if (prev.id === last.id && prev.hash === hash) {
+      // No change since last reconciliation — leave the timer running.
+      return;
+    }
+    streamingSnapshotRef.current = { id: last.id, hash };
+    setStreamingAssistantId((current) => (current === last.id ? current : last.id));
+    if (streamingStabilityTimerRef.current) {
+      clearTimeout(streamingStabilityTimerRef.current);
+    }
+    streamingStabilityTimerRef.current = setTimeout(() => {
+      streamingStabilityTimerRef.current = null;
+      setStreamingAssistantId(null);
+    }, STREAMING_STABILITY_MS);
+  }, [messages]);
+
+  // Unmount cleanup — prevent the stability timer from firing after
+  // the hook tears down (would setState on an unmounted component).
+  useEffect(() => {
+    return () => {
+      if (streamingStabilityTimerRef.current) {
+        clearTimeout(streamingStabilityTimerRef.current);
+        streamingStabilityTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const hasMore = messages.length < total;
 
   // Force re-fetch of the current session's messages + stats. Clears
@@ -269,5 +359,5 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     }
   }, [sessionId, hasMore, messages.length]);
 
-  return { messages, loading, error, hasMore, stats, loadMore, awaitingFirstTurn, refetch };
+  return { messages, loading, error, hasMore, stats, loadMore, awaitingFirstTurn, refetch, streamingAssistantId };
 };

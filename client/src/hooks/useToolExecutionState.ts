@@ -22,15 +22,16 @@ import type { ChatMessage, ContentBlock } from '@commander/shared';
 //      `text`. subtype 'composing'.
 //   4. Idle.
 //
-// Known-open rotation-1 behavior (documented per CTO Amendment 2 and
-// dispatch §1.0 Investigation C ratification): because `useChat`
-// updates ChatMessage[] on a ~1.5s poll cadence rather than per-chunk,
-// the composing subtype is a SNAPSHOT of "last assistant ends in text,
-// no unmatched tool" — it does NOT stability-gate. Post-pure-text-turn
-// the composing label will stick until the next user message or the
-// next turn arrives. The parallel-run diff logger captures this as
-// expected evidence for the rotation-2 audit; fixing post-turn
-// stickiness is explicitly deferred to rotation 2 / future hardening.
+// Rotation 1.5 Fix C (Investigation C un-deferred) — composing detection
+// is now GATED on `streamingAssistantId` threaded in from `useChat`.
+// The host hook observes tail-content stability across polls: when the
+// tail assistant text block has been stable for STREAMING_STABILITY_MS
+// (~2 poll cadences, 3s), `streamingAssistantId` flips to null and
+// composing transitions to idle. Previously a settled text tail stuck
+// on "Composing response..." — Class 1 divergence in
+// `~/.jstudio-commander/codeman-diff.jsonl` (entries 1-5, 8, 12, 14).
+// Fix closes that edge; settled tails now fall through to idle within
+// ~3s of the last content chunk.
 
 export type ToolExecutionSubtype = 'tool_exec' | 'composing' | 'compacting' | 'idle';
 
@@ -122,14 +123,17 @@ const synthesizeParallelLabel = (unmatched: Array<{ name: string }>): string => 
 };
 
 // Pure derivation. Exported for direct unit testing (no React needed).
-// Given the same `messages` input, ALWAYS returns the same output —
-// no module-level state, no time-dependent branches, no hidden refs.
+// Given the same `(messages, streamingAssistantId)` input, ALWAYS returns
+// the same output — no module-level state, no time-dependent branches
+// inside the derivation itself (the time-based stability gate lives in
+// `useChat` and is surfaced here as the `streamingAssistantId` param).
 // This guarantees per-session isolation at the function level
 // (dispatch §1.6 test 8) — the function literally has no shared state
 // to contaminate.
 export const deriveToolExecutionState = (
   messages: ChatMessage[],
   window = TAIL_SCAN_WINDOW,
+  streamingAssistantId: string | null = null,
 ): ToolExecutionState => {
   if (messages.length === 0) return IDLE_STATE;
   const start = Math.max(0, messages.length - window);
@@ -202,13 +206,16 @@ export const deriveToolExecutionState = (
     };
   }
 
-  // 3) Composing — last assistant message's final block is text.
-  // Deliberately NOT stability-gated in rotation 1; the parallel-run
-  // diff log captures any post-turn stickiness as evidence.
+  // 3) Composing — last assistant message's final block is text AND
+  // `useChat` reports its content is still actively streaming (i.e.
+  // `streamingAssistantId` matches this tail id). A settled text tail
+  // (streamingAssistantId===null, or pointing at an older id after a
+  // newer message arrived) falls through to idle — Rotation 1.5 Fix C,
+  // closes Class 1 stuck-composing evidence.
   const last = messages[messages.length - 1];
   if (last?.role === 'assistant' && last.content.length > 0) {
     const lastBlock: ContentBlock | undefined = last.content[last.content.length - 1];
-    if (lastBlock?.type === 'text') {
+    if (lastBlock?.type === 'text' && streamingAssistantId === last.id) {
       return {
         isWorking: true,
         currentTool: null,
@@ -239,6 +246,10 @@ export const deriveToolExecutionState = (
 export const useToolExecutionState = (
   _sessionId: string | undefined,
   messages: ChatMessage[],
+  streamingAssistantId: string | null = null,
 ): ToolExecutionState => {
-  return useMemo(() => deriveToolExecutionState(messages), [messages]);
+  return useMemo(
+    () => deriveToolExecutionState(messages, TAIL_SCAN_WINDOW, streamingAssistantId),
+    [messages, streamingAssistantId],
+  );
 };
