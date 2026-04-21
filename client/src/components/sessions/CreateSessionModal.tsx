@@ -1,8 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Users, Terminal, Code } from 'lucide-react';
-import type { Project, SessionType } from '@commander/shared';
-import { MODEL_PRICING, DEFAULT_MODEL, normalizeModelId, getContextLimit } from '@commander/shared';
+import type { Project, SessionType, EffortLevel } from '@commander/shared';
+import {
+  MODEL_PRICING,
+  DEFAULT_MODEL,
+  normalizeModelId,
+  getContextLimit,
+  EFFORT_LEVELS,
+  SESSION_TYPE_EFFORT_DEFAULTS,
+} from '@commander/shared';
 import { api } from '../../services/api';
 import { getProjectsCache, setProjectsCache } from '../../services/projectsCache';
 import { useModalA11y } from '../../hooks/useModalA11y';
@@ -57,8 +64,56 @@ export const MODEL_OPTIONS = [
 interface CreateSessionModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }) => Promise<void>;
+  onCreate: (opts: {
+    name?: string;
+    projectPath?: string;
+    model?: string;
+    sessionType?: SessionType;
+    // M8 Secondary — override for this spawn only. Server consumes it at
+    // `session.service.ts:523` (`opts.effortLevel ?? SESSION_TYPE_EFFORT_DEFAULTS[sessionType]`),
+    // so a missing/undefined value is already the persona-default path;
+    // a concrete value short-circuits the default lookup.
+    effortLevel?: EffortLevel;
+  }) => Promise<void>;
 }
+
+// M8 Secondary — pure helpers for the effort-selector semantics.
+// Exported so the three dispatch-required test cases (default per
+// type, reset on type change, payload round-trip) can be exercised
+// without a React renderer — matches the existing node:test + tsx
+// harness posture (no jsdom). See `phase-y-rotation-1-5-hotfix.test.ts`
+// + `CreateSessionModal-labels.test.ts` for the same pattern.
+
+// Thin wrapper that makes the default-per-type rule explicit + testable.
+// Intentionally delegates to SESSION_TYPE_EFFORT_DEFAULTS rather than
+// duplicating the map — one source of truth per dispatch §Scope — out
+// (SESSION_TYPE_EFFORT_DEFAULTS must not be modified; wrapping is safe).
+export const defaultEffortForType = (type: SessionType): EffortLevel =>
+  SESSION_TYPE_EFFORT_DEFAULTS[type];
+
+// Build the create-session API payload from the modal's raw form state.
+// Contract: whitespace-only name/projectPath collapse to `undefined`
+// (matches pre-M8-Secondary inline behavior); `effortLevel` passes
+// through verbatim so a concrete override reaches the server.
+export const buildCreateSessionPayload = (input: {
+  name?: string;
+  projectPath?: string;
+  model?: string;
+  sessionType?: SessionType;
+  effortLevel?: EffortLevel;
+}): {
+  name?: string;
+  projectPath?: string;
+  model?: string;
+  sessionType?: SessionType;
+  effortLevel?: EffortLevel;
+} => ({
+  name: input.name?.trim() || undefined,
+  projectPath: input.projectPath?.trim() || undefined,
+  model: input.model,
+  sessionType: input.sessionType,
+  effortLevel: input.effortLevel,
+});
 
 // Phase M1 — three session kinds. Order matches left-to-right layout and
 // is also the order we cycle radio buttons with arrow keys. PM auto-
@@ -104,6 +159,13 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
   const [projectPath, setProjectPath] = useState('');
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [sessionType, setSessionType] = useState<SessionType>('pm');
+  // M8 Secondary — per-spawn effort override. Initialized to the
+  // persona default for `pm` (matches the initial sessionType above).
+  // Reset logic in the sessionType-change handler keeps this in sync
+  // with the persona default whenever the user re-chooses the type.
+  const [effortLevel, setEffortLevel] = useState<EffortLevel>(() =>
+    defaultEffortForType('pm'),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -137,6 +199,8 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
       setProjectPath('');
       setModel(DEFAULT_MODEL);
       setSessionType('pm');
+      // M8 Secondary — snap effort to the initial type's persona default.
+      setEffortLevel(defaultEffortForType('pm'));
       setIsSubmitting(false);
     }
   }, [open]);
@@ -148,23 +212,32 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
     p.name.toLowerCase().includes(projectPath.toLowerCase())
   );
 
+  // M8 Secondary — reset `effortLevel` to the new persona default on
+  // sessionType change. Rationale per dispatch §Scope in: "user
+  // re-chose the session type so default expectations reset" — we
+  // don't preserve a cross-type override because the user didn't
+  // cross-select it; they picked a new type. If they still want an
+  // override, they re-click after type change (one extra click is
+  // correct surface UX vs. silently retaining a stale override).
+  const handleSessionTypeChange = useCallback((next: SessionType) => {
+    setSessionType(next);
+    setEffortLevel(defaultEffortForType(next));
+  }, []);
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      await onCreate({
-        name: name.trim() || undefined,
-        projectPath: projectPath.trim() || undefined,
-        model,
-        sessionType,
-      });
+      await onCreate(
+        buildCreateSessionPayload({ name, projectPath, model, sessionType, effortLevel }),
+      );
       onClose();
     } catch {
       setIsSubmitting(false);
     }
-  }, [isSubmitting, name, projectPath, model, onCreate, onClose]);
+  }, [isSubmitting, name, projectPath, model, sessionType, effortLevel, onCreate, onClose]);
 
   const inputStyle = {
     fontFamily: M,
@@ -247,7 +320,7 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                       <button
                         key={value}
                         type="button"
-                        onClick={() => setSessionType(value)}
+                        onClick={() => handleSessionTypeChange(value)}
                         className="flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm transition-all"
                         style={{
                           fontFamily: M,
@@ -275,6 +348,55 @@ export const CreateSessionModal = ({ open, onClose, onCreate }: CreateSessionMod
                   {sessionType === 'raw' && (
                     <>Raw sessions are plain Claude Code at <code>/effort medium</code> — no bootstrap.</>
                   )}
+                </p>
+              </div>
+
+              {/* M8 Secondary — effort override for this spawn. Resets
+                  to the new persona default on session-type change
+                  (handled in `handleSessionTypeChange`). Server plumbing
+                  already accepts `opts.effortLevel` at
+                  `session.service.ts:523` so no server change is required. */}
+              <div>
+                <label
+                  className="block text-sm font-medium mb-1.5"
+                  style={{ fontFamily: M, color: 'var(--color-text-secondary)' }}
+                >
+                  Effort level
+                </label>
+                <div className="grid grid-cols-5 gap-2">
+                  {EFFORT_LEVELS.map((level) => {
+                    const selected = effortLevel === level;
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => setEffortLevel(level)}
+                        aria-pressed={selected}
+                        className="rounded-lg px-2 py-2 text-xs font-mono-stats transition-all"
+                        style={{
+                          fontFamily: M,
+                          background: selected
+                            ? 'rgba(14, 124, 123, 0.18)'
+                            : 'rgba(255, 255, 255, 0.04)',
+                          color: selected
+                            ? 'var(--color-accent-light)'
+                            : 'var(--color-text-secondary)',
+                          border: `1px solid ${
+                            selected ? 'var(--color-accent)' : 'rgba(255, 255, 255, 0.08)'
+                          }`,
+                        }}
+                      >
+                        {level}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p
+                  className="text-xs mt-1.5"
+                  style={{ fontFamily: M, color: 'var(--color-text-tertiary)' }}
+                >
+                  Default for {sessionType}: <code>{defaultEffortForType(sessionType)}</code>.
+                  Override for this session only.
                 </p>
               </div>
 

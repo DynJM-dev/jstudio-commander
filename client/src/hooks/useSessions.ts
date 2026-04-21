@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Session, SessionType, WSEvent } from '@commander/shared';
+import type { Session, SessionType, EffortLevel, WSEvent } from '@commander/shared';
 import { api } from '../services/api';
 import { useWebSocket } from './useWebSocket';
 
@@ -12,7 +12,7 @@ interface UseSessionsReturn {
   // recent view; a "Show archived" toggle flips it per-mount.
   includeArchived: boolean;
   setIncludeArchived: (v: boolean) => void;
-  createSession: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }) => Promise<Session>;
+  createSession: (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType; effortLevel?: EffortLevel }) => Promise<Session>;
   deleteSession: (id: string) => Promise<Session>;
   sendCommand: (id: string, command: string) => Promise<void>;
   updateSession: (id: string, updates: { name?: string; model?: string }) => Promise<Session>;
@@ -93,7 +93,11 @@ export const useSessions = (): UseSessionsReturn => {
   }, [lastEvent]);
 
   const createSession = useCallback(
-    async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType }): Promise<Session> => {
+    // M8 Secondary — `effortLevel` threads through to server
+    // `session.service.ts:523` which reads `opts.effortLevel ??
+    // SESSION_TYPE_EFFORT_DEFAULTS[sessionType]`. No server change
+    // needed; this is pure payload widening.
+    async (opts: { name?: string; projectPath?: string; model?: string; sessionType?: SessionType; effortLevel?: EffortLevel }): Promise<Session> => {
       const session = await api.post<Session>('/sessions', opts);
       return session;
     },
