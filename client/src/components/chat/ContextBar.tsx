@@ -25,7 +25,10 @@ import {
   resolveActionLabel,
   resolveActionLabelForParallelRun,
   resolveEffectiveStatus,
+  shouldEngageWorkingFallback,
+  mostRecentAssistantMessageAt,
 } from '../../utils/contextBarAction';
+import { mostRecentUserMessageAt } from '../../hooks/useChat';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
 import type { ToolExecutionState } from '../../hooks/useToolExecutionState';
 import { useCodemanDiffLogger } from '../../hooks/useCodemanDiffLogger';
@@ -450,12 +453,47 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // Legacy branch (Issue 15.3 §6.1.1 upgrade) fires only when codeman
   // hasn't bootstrapped (codemanState === null). Rotation 2 deletes the
   // legacy branch entirely.
-  const effectiveStatus = resolveEffectiveStatus(
+  const rawEffectiveStatus = resolveEffectiveStatus(
     sessionStatus,
     codemanState?.isWorking,
     isWorking,
   );
-  const effectiveAction = actionLabel ?? (userJustSent ? 'Processing...' : null);
+
+  // Phase Y Rotation 1.7 Fix 1.7.A — "Working..." fallback gate.
+  // Closeout-deferred fix per `docs/phase-y-closeout.md` (commit
+  // 93312e4): the chat window's ContextBar label shouldn't read
+  // "Idle — Waiting for instructions" during an active work window
+  // just because the transcript-authoritative derivation couldn't
+  // observe the in-progress turn (the Live Terminal is the real-time
+  // ground truth; chat window is a semantic summary). This fallback
+  // surfaces a generic "Working..." so the user isn't told nothing
+  // is happening.
+  //
+  // Engages only when BOTH of:
+  //   - `rawEffectiveStatus === 'idle'` — do NOT override waiting
+  //     (Item 3 `00f1c30` approval-modal path sacred) or a concrete
+  //     codeman/legacy working verdict.
+  //   - `shouldEngageWorkingFallback(...)` — pure predicate. See
+  //     `contextBarAction.ts` for the exact contract.
+  //
+  // Dual expiry (per dispatch §2): (1) a concrete assistant block
+  // landing flips the gap predicate to FALSE; (2) `WORKING_FALLBACK_
+  // CEILING_MS` (90s) hard ceiling prevents stuck "Working..." on
+  // dropped turns. Rejection trigger (e) fires if ceiling missing.
+  const lastUserSendTs = mostRecentUserMessageAt(messages);
+  const lastAssistantBlockTs = mostRecentAssistantMessageAt(messages);
+  const workingFallbackEngaged =
+    rawEffectiveStatus === 'idle' &&
+    shouldEngageWorkingFallback({
+      userJustSent,
+      lastUserSendTs,
+      lastAssistantBlockTs,
+      nowMs: Date.now(),
+    });
+
+  const effectiveStatus = workingFallbackEngaged ? 'working' : rawEffectiveStatus;
+  const fallbackActionLabel = workingFallbackEngaged ? 'Working...' : null;
+  const effectiveAction = fallbackActionLabel ?? actionLabel ?? (userJustSent ? 'Processing...' : null);
   const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount, workingTeammateCount);
   // Drives the bar-teammate-active CSS class: only when the PM pane is idle
   // AND a teammate is working AND no user-actionable prompt is pending.

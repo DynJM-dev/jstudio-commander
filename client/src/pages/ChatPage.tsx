@@ -23,6 +23,7 @@ import { bandForPercentage, bandColor } from '../utils/contextBands';
 import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 import { hasUnmatchedToolUse } from '../utils/contextBarAction';
+import { extractLiveThinkingText } from '../utils/liveActivity';
 import { useToolExecutionState } from '../hooks/useToolExecutionState';
 import { isActiveInDifferentPane } from '../utils/paneFocus';
 
@@ -469,15 +470,15 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   // instead of the expected "Idle — Waiting for instructions" (dispatch
   // test 1 contract). Keeps ContextBar.tsx untouched per file boundary.
   const effectiveSessionStatus: string | undefined = typedIdleFreshKillSwitch ? 'idle' : session?.status;
+  // Phase Y Rotation 1.7 Fix 1.7.C — scan narrowed to pre-text
+  // thinking blocks via `extractLiveThinkingText`. Closes Candidate
+  // 42 (post-text thinking block bleeding response content into the
+  // LiveActivityRow). Gating on `isSessionWorking` stays here — the
+  // helper is a pure content extractor; the "should this render at
+  // all" decision belongs to the host.
   const liveThinking = useMemo(() => {
     if (!isSessionWorking || allMessages.length === 0) return null;
-    const last = allMessages[allMessages.length - 1];
-    if (last?.role !== 'assistant') return null;
-    for (let i = last.content.length - 1; i >= 0; i--) {
-      const b = last.content[i];
-      if (b?.type === 'thinking' && b.text) return b.text;
-    }
-    return null;
+    return extractLiveThinkingText(allMessages[allMessages.length - 1]);
   }, [isSessionWorking, allMessages]);
 
   // Live activity — surface the in-flight tool_use (skill load, agent

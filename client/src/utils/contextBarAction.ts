@@ -132,6 +132,84 @@ export const resolveActionLabelForParallelRun = (
   return codemanLabel ?? legacyActionLabel;
 };
 
+// Phase Y Rotation 1.7 Fix 1.7.A — "Working..." fallback constants.
+// Purpose: when the user just sent a prompt and no assistant block has
+// landed within WORKING_FALLBACK_MS, show a generic "Working..." label
+// instead of misleading "Idle — Waiting for instructions". This is a
+// SEMANTIC-SUMMARY fallback only — per the Phase Y closeout
+// (`docs/phase-y-closeout.md`, commit 93312e4), the chat window is
+// not the real-time ground truth and the transcript-authoritative
+// derivation has a structural ceiling for pure-text streaming. The
+// Live Terminal (Phase T mirror) is the ground-truth surface.
+//
+// Dual expiry (LOAD-BEARING invariants):
+//   1. Concrete signal — when an assistant tool_use / text / thinking
+//      block appears in `messages`, the derivation (codeman or legacy)
+//      produces a real label and the fallback disengages naturally.
+//   2. 90s failsafe ceiling — even with zero assistant signal, the
+//      fallback DISENGAGES after WORKING_FALLBACK_CEILING_MS since the
+//      last user send. Prevents a stuck "Working..." forever on a
+//      dropped turn. Rejection trigger (e).
+export const WORKING_FALLBACK_MS = 5_000;
+export const WORKING_FALLBACK_CEILING_MS = 90_000;
+
+// Scan tail for most-recent assistant message timestamp. Mirror of
+// `mostRecentUserMessageAt` (from useChat.ts) but for assistant role.
+// Returns ms epoch or null when no assistant message / unparseable
+// timestamp. Used by `shouldEngageWorkingFallback` to compute the
+// "has any assistant signal landed in the last 5s" predicate.
+export const mostRecentAssistantMessageAt = (
+  messages: ReadonlyArray<{ role: string; timestamp: string }>,
+): number | null => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m) continue;
+    if (m.role !== 'assistant') continue;
+    const t = Date.parse(m.timestamp);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+};
+
+// Phase Y Rotation 1.7 Fix 1.7.A — pure engagement predicate. Returns
+// TRUE when the "Working..." fallback should fire. Dispatch §2 contract:
+//
+//   TRUE when: userJustSent === true
+//     AND (nowMs - lastAssistantBlockTs) > WORKING_FALLBACK_MS
+//     AND (nowMs - lastUserSendTs) < WORKING_FALLBACK_CEILING_MS
+//
+// Edge handling:
+//   - `lastAssistantBlockTs === null` (no assistant message ever seen,
+//     or unparseable ts) → treated as "infinitely in the past" so the
+//     `>5s` condition is satisfied unconditionally. This is the fresh-
+//     session case where the user's first prompt hasn't produced any
+//     assistant record yet.
+//   - `lastUserSendTs === null / 0` → fallback does not engage. Without
+//     a concrete send timestamp there's no basis for the ceiling
+//     guardrail.
+//   - `userJustSent === false` → fallback does not engage. ChatPage
+//     flips `userJustSent=false` once the server confirms work; that
+//     transition is the primary disengage path for the concrete-signal
+//     expiry.
+export const shouldEngageWorkingFallback = (args: {
+  userJustSent: boolean;
+  lastUserSendTs: number | null;
+  lastAssistantBlockTs: number | null;
+  nowMs: number;
+}): boolean => {
+  if (!args.userJustSent) return false;
+  if (!args.lastUserSendTs || args.lastUserSendTs <= 0) return false;
+  // 90s ceiling — prevent forever-stuck "Working..." on dropped turns.
+  if (args.nowMs - args.lastUserSendTs >= WORKING_FALLBACK_CEILING_MS) return false;
+  // Assistant-silence gate — engage only when 5s+ have elapsed since
+  // the last assistant signal. `null` → treat as infinitely silent.
+  const assistantGapMs =
+    args.lastAssistantBlockTs === null || args.lastAssistantBlockTs <= 0
+      ? Number.POSITIVE_INFINITY
+      : args.nowMs - args.lastAssistantBlockTs;
+  return assistantGapMs > WORKING_FALLBACK_MS;
+};
+
 // Pure version of ContextBar's `getActionInfo`. Scans backward
 // for the last assistant message and derives an action label from
 // its last content block. Returns null when no assistant message is
