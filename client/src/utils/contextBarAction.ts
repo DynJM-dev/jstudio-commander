@@ -85,9 +85,15 @@ export const hasUnmatchedToolUse = (
 // Precedence:
 //   1. `sessionStatus==='waiting'` — top of chain, LOAD-BEARING for
 //      approval modal. If shadowed, Item 3 regresses.
-//   2. Codeman confident verdict (`true → 'working'`, `false → 'idle'`)
+//   2. Commander Finalizer FINAL — `paneActivelyChanging` ground-truth
+//      promotion. Phase T pane-capture is the live pane delta; when it
+//      ticks, Claude IS producing output regardless of whether codeman
+//      / legacy has noticed. Sits ABOVE codeman so silent pure-text
+//      turns (Phase Y architectural ceiling) surface "working".
+//      Does NOT shadow `sessionStatus==='waiting'` — Item 3 still wins.
+//   3. Codeman confident verdict (`true → 'working'`, `false → 'idle'`)
 //      when codemanIsWorking is a concrete boolean.
-//   3. Legacy upgrade — original `isWorking && sessionStatus !== 'working'
+//   4. Legacy upgrade — original `isWorking && sessionStatus !== 'working'
 //      ? 'working' : sessionStatus` — fires only when codeman hasn't
 //      bootstrapped (`codemanIsWorking === undefined`).
 //
@@ -103,8 +109,10 @@ export const resolveEffectiveStatus = (
   sessionStatus: string | undefined,
   codemanIsWorking: boolean | undefined,
   legacyIsWorking: boolean,
+  paneActivelyChanging: boolean = false,
 ): string | undefined => {
   if (sessionStatus === 'waiting') return 'waiting';
+  if (paneActivelyChanging) return 'working';
   if (codemanIsWorking === true) return 'working';
   if (codemanIsWorking === false) return 'idle';
   // Codeman hasn't bootstrapped (undefined) — fall through to legacy.
@@ -132,92 +140,15 @@ export const resolveActionLabelForParallelRun = (
   return codemanLabel ?? legacyActionLabel;
 };
 
-// Phase Y Rotation 1.7 Fix 1.7.A — "Working..." fallback constants.
-// Purpose: when the user just sent a prompt and no assistant block has
-// landed within WORKING_FALLBACK_MS, show a generic "Working..." label
-// instead of misleading "Idle — Waiting for instructions". This is a
-// SEMANTIC-SUMMARY fallback only — per the Phase Y closeout
-// (`docs/phase-y-closeout.md`, commit 93312e4), the chat window is
-// not the real-time ground truth and the transcript-authoritative
-// derivation has a structural ceiling for pure-text streaming. The
-// Live Terminal (Phase T mirror) is the ground-truth surface.
+// Phase Y Rotation 1.7 Fix 1.7.A deleted in Commander Finalizer FINAL.
+// The timestamp-based `shouldEngageWorkingFallback` predicate was
+// replaced by `useSessionPaneActivity`'s ground-truth pane delta signal
+// (`paneActivelyChanging`), wired into `resolveEffectiveStatus` as a
+// high-priority input above codeman. Pane deltas are the live truth;
+// a user-send-gap heuristic was guessing when pane capture could tell.
 //
-// Dual expiry (LOAD-BEARING invariants):
-//   1. Concrete signal — when an assistant tool_use / text / thinking
-//      block appears in `messages`, the derivation (codeman or legacy)
-//      produces a real label and the fallback disengages naturally.
-//   2. 90s failsafe ceiling — even with zero assistant signal, the
-//      fallback DISENGAGES after WORKING_FALLBACK_CEILING_MS since the
-//      last user send. Prevents a stuck "Working..." forever on a
-//      dropped turn. Rejection trigger (e).
-export const WORKING_FALLBACK_MS = 5_000;
-export const WORKING_FALLBACK_CEILING_MS = 90_000;
-
-// Scan tail for most-recent assistant message timestamp. Retained for
-// backward-compat with prior rotation-1.7 tests and future consumers
-// that want the assistant-side timestamp signal separately. The
-// Commander Finalizer (A.1) simplified `shouldEngageWorkingFallback`
-// to drop the `lastAssistantBlockTs` dependency — the helper is no
-// longer called by the fallback predicate but remains exported for
-// other consumers and historical tests.
-export const mostRecentAssistantMessageAt = (
-  messages: ReadonlyArray<{ role: string; timestamp: string }>,
-): number | null => {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m) continue;
-    if (m.role !== 'assistant') continue;
-    const t = Date.parse(m.timestamp);
-    return Number.isFinite(t) ? t : null;
-  }
-  return null;
-};
-
-// Phase Y Rotation 1.7 Fix 1.7.A (Commander Finalizer A.1 revision) —
-// simplified engagement predicate. The pre-finalizer contract required
-// `lastAssistantBlockTs > WORKING_FALLBACK_MS` ago, which coupled the
-// fallback to the message-tail scan. Live smoke (Case A) showed the
-// fallback never engaged in practice because ContextBar didn't re-
-// render frequently enough during silent pure-text windows for the
-// assistant-gap predicate to re-evaluate.
-//
-// Finalizer A.1 per dispatch §3 option (b): drop the assistant-gap
-// dependency entirely. Fallback now engages purely on the user-send
-// window. The render trigger lives in ContextBar (setInterval bump
-// while `userJustSent === true`).
-//
-//   TRUE when: userJustSent === true
-//     AND (nowMs - lastUserSendTs) > WORKING_FALLBACK_MS
-//     AND (nowMs - lastUserSendTs) < WORKING_FALLBACK_CEILING_MS
-//
-// Edge handling:
-//   - `lastUserSendTs === null / 0` → fallback does not engage. No
-//     concrete send timestamp means no engagement basis.
-//   - `userJustSent === false` → fallback does not engage. The outer
-//     ChatPage clears `userJustSent` on any concrete Working signal
-//     takeover (tool_use in new messages, compact_boundary, server
-//     status flip to working/waiting). After that, the Idle label
-//     is appropriate.
-//
-// Waiting-passthrough preservation is NOT the helper's responsibility
-// — the ContextBar wire combines the helper's output with a
-// `rawEffectiveStatus === 'idle'` guard so `sessionStatus === 'waiting'`
-// never gets shadowed. Item 3 approval modal path preserved.
-export const shouldEngageWorkingFallback = (args: {
-  userJustSent: boolean;
-  lastUserSendTs: number | null;
-  nowMs: number;
-}): boolean => {
-  if (!args.userJustSent) return false;
-  if (!args.lastUserSendTs || args.lastUserSendTs <= 0) return false;
-  const elapsedSinceSend = args.nowMs - args.lastUserSendTs;
-  // 90s ceiling — prevent forever-stuck "Working..." on dropped turns.
-  if (elapsedSinceSend >= WORKING_FALLBACK_CEILING_MS) return false;
-  // 5s engage threshold — avoids flashing "Working..." during the
-  // first moment after submit when `userJustSent` has just flipped
-  // true but the user hasn't visually committed to waiting yet.
-  return elapsedSinceSend > WORKING_FALLBACK_MS;
-};
+// Removed: WORKING_FALLBACK_MS, WORKING_FALLBACK_CEILING_MS,
+// shouldEngageWorkingFallback, mostRecentAssistantMessageAt.
 
 // Pure version of ContextBar's `getActionInfo`. Scans backward
 // for the last assistant message and derives an action label from

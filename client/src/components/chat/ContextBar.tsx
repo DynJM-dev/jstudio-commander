@@ -25,13 +25,11 @@ import {
   resolveActionLabel,
   resolveActionLabelForParallelRun,
   resolveEffectiveStatus,
-  shouldEngageWorkingFallback,
-  WORKING_FALLBACK_CEILING_MS,
 } from '../../utils/contextBarAction';
-import { mostRecentUserMessageAt } from '../../hooks/useChat';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
 import type { ToolExecutionState } from '../../hooks/useToolExecutionState';
 import { useCodemanDiffLogger } from '../../hooks/useCodemanDiffLogger';
+import { useSessionPaneActivity } from '../../hooks/useSessionPaneActivity';
 
 const M = 'Montserrat, sans-serif';
 
@@ -436,6 +434,18 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
     return { activeTeammateCount: active, workingTeammateCount: working };
   }, [sessions, sessionId]);
 
+  // Commander Finalizer FINAL — Phase T pane-activity ground truth.
+  // Subscribes to the same `pane-capture:<sessionId>` WS channel
+  // TmuxMirror consumes. When tmux pane content is changing, Claude is
+  // producing output live — regardless of whether the transcript-
+  // authoritative derivation (codeman / legacy) has observed the turn
+  // yet (Phase Y's architectural ceiling for pure-text streaming,
+  // `docs/phase-y-closeout.md`). `paneActive` is the primary Stop-
+  // button + "Working..." driver now; the timestamp-based fallback
+  // from Fix 1.7.A is deleted.
+  const { paneActivelyChanging } = useSessionPaneActivity(sessionId);
+  const paneActive = paneActivelyChanging;
+
   // Status info (always shown).
   //
   // Phase Y Rotation 1.5 Fix A — codeman's verdict dominates
@@ -445,57 +455,30 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // typedIdleFreshKillSwitch had forced sessionStatus='idle' upstream
   // and the rotation-1 upgrade didn't override strongly enough).
   //
-  // CRITICAL invariant preserved by the helper: `sessionStatus ===
-  // 'waiting'` passthrough sits at the TOP of the precedence chain so
-  // Item 3 (`00f1c30`) approval-modal mount path is not shadowed by
-  // codeman's verdict. Rejection trigger (f) would fire if this breaks.
+  // Commander Finalizer FINAL — `paneActive` added as a high-priority
+  // input. When the tmux pane is changing, render 'working' regardless
+  // of codeman's verdict. Preserves the `sessionStatus==='waiting'`
+  // passthrough (Item 3 `00f1c30` approval-modal path sacred) by
+  // sitting BELOW waiting in the precedence chain inside the helper.
   //
   // Legacy branch (Issue 15.3 §6.1.1 upgrade) fires only when codeman
-  // hasn't bootstrapped (codemanState === null). Rotation 2 deletes the
-  // legacy branch entirely.
+  // hasn't bootstrapped (codemanState === null).
   const rawEffectiveStatus = resolveEffectiveStatus(
     sessionStatus,
     codemanState?.isWorking,
     isWorking,
+    paneActive,
   );
 
-  // Phase Y Rotation 1.7 Fix 1.7.A — "Working..." fallback gate.
-  // Closeout-deferred fix per `docs/phase-y-closeout.md` (commit
-  // 93312e4): the chat window's ContextBar label shouldn't read
-  // "Idle — Waiting for instructions" during an active work window
-  // just because the transcript-authoritative derivation couldn't
-  // observe the in-progress turn (the Live Terminal is the real-time
-  // ground truth; chat window is a semantic summary). This fallback
-  // surfaces a generic "Working..." so the user isn't told nothing
-  // is happening.
-  //
-  // Engages only when BOTH of:
-  //   - `rawEffectiveStatus === 'idle'` — do NOT override waiting
-  //     (Item 3 `00f1c30` approval-modal path sacred) or a concrete
-  //     codeman/legacy working verdict.
-  //   - `shouldEngageWorkingFallback(...)` — pure predicate. See
-  //     `contextBarAction.ts` for the exact contract.
-  //
-  // Dual expiry (per dispatch §2): (1) a concrete assistant block
-  // landing flips the gap predicate to FALSE; (2) `WORKING_FALLBACK_
-  // CEILING_MS` (90s) hard ceiling prevents stuck "Working..." on
-  // dropped turns. Rejection trigger (e) fires if ceiling missing.
-  // Commander Finalizer A.1 — simplified predicate signature (no
-  // longer depends on `lastAssistantBlockTs`). The setInterval render-
-  // trigger above forces re-evaluation every ~1.5s while `userJustSent`
-  // is true, so the predicate always sees a fresh `nowMs`.
-  const lastUserSendTs = mostRecentUserMessageAt(messages);
-  const workingFallbackEngaged =
-    rawEffectiveStatus === 'idle' &&
-    shouldEngageWorkingFallback({
-      userJustSent,
-      lastUserSendTs,
-      nowMs: Date.now(),
-    });
-
-  const effectiveStatus = workingFallbackEngaged ? 'working' : rawEffectiveStatus;
-  const fallbackActionLabel = workingFallbackEngaged ? 'Working...' : null;
-  const effectiveAction = fallbackActionLabel ?? actionLabel ?? (userJustSent ? 'Processing...' : null);
+  const effectiveStatus = rawEffectiveStatus;
+  // Commander Finalizer FINAL — generic "Working..." label when the
+  // pane is active but neither codeman nor legacy produced a specific
+  // label. This is what Fix 1.7.A was trying to do via timestamp
+  // guesswork; now it's driven by the pane-delta ground truth.
+  const paneActiveLabel =
+    paneActive && !codemanState?.label && !legacyActionLabel ? 'Working...' : null;
+  const effectiveAction =
+    actionLabel ?? paneActiveLabel ?? (userJustSent ? 'Processing...' : null);
   const statusInfo = getStatusInfo(effectiveStatus, effectiveAction, hasPrompt, activeTeammateCount, workingTeammateCount);
   // Drives the bar-teammate-active CSS class: only when the PM pane is idle
   // AND a teammate is working AND no user-actionable prompt is pending.
@@ -695,15 +678,13 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
           polling has up to 1.5s lag, so we err on the side of keeping the
           button reachable rather than hiding it momentarily. `interrupting`
           keeps it up while feedback plays.
-          Commander Finalizer A.1 — added `workingFallbackEngaged` to the
-          visibility gate. Safety-critical: during pure-text streaming
-          windows the transcript-authoritative derivation can sit on idle
-          (Phase Y architectural ceiling) even though Claude is working;
-          the user must still be able to interrupt. Fallback only engages
-          after userJustSent + 5s without a concrete signal, and expires
-          at the 90s ceiling, so this never keeps Stop stuck on truly
-          idle sessions. */}
-      {onInterrupt && (isWorking || hasPrompt || interrupting || workingFallbackEngaged) && (
+          Commander Finalizer FINAL — `paneActive` drives visibility from
+          Phase T ground truth. During pure-text streaming windows the
+          transcript-authoritative derivation can sit on idle (Phase Y
+          architectural ceiling) even though Claude is working; the pane
+          delta shows the truth. Stop stays reachable whenever the pane
+          is changing, and hides within 3s of the pane settling. */}
+      {onInterrupt && (paneActive || isWorking || hasPrompt || interrupting) && (
         <motion.button
           onClick={onInterrupt}
           disabled={interrupting}
