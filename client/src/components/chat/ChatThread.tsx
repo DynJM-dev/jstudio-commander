@@ -428,19 +428,32 @@ export const ChatThread = ({
     }
   }, [isWorking, isAtBottom]);
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages.
+  //
+  // Candidate 39 — user-sent override. A rapid-fire submit while the
+  // user is scrolled up in history was previously silently deferred
+  // behind the "new messages" badge (non-user branch) because
+  // `isAtBottom` was false from the scroll-up position. Own submits
+  // should ALWAYS pull the viewport to the bottom — the user just
+  // committed to the new message; they want to see it land, not have
+  // it accumulate invisibly behind their reading position. Detected
+  // by inspecting the newest message's role: `user` means our own
+  // submit (vs an incoming assistant/system row).
   useEffect(() => {
     if (messages.length > prevLengthRef.current) {
-      if (isAtBottom) {
+      const newestMsg = messages[messages.length - 1];
+      const isOwnSubmit = newestMsg?.role === 'user';
+      if (isAtBottom || isOwnSubmit) {
         requestAnimationFrame(() => {
           scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
         });
+        if (isOwnSubmit) setShowNewMessages(false);
       } else {
         setShowNewMessages(true);
       }
     }
     prevLengthRef.current = messages.length;
-  }, [messages.length, isAtBottom]);
+  }, [messages.length, isAtBottom, messages]);
 
   // Initial scroll to bottom
   useEffect(() => {
@@ -490,7 +503,7 @@ export const ChatThread = ({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-2 lg:px-4 py-4"
+        className="h-full overflow-y-auto px-2 lg:px-4 pt-4 pb-8"
       >
         {/* Load more */}
         {hasMore && (

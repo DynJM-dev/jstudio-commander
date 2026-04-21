@@ -12,9 +12,9 @@ import assert from 'node:assert/strict';
 import {
   PANE_ACTIVITY_WINDOW_MS,
   paneActivityShouldBeActive,
-} from '../useSessionPaneActivity';
+} from '../../hooks/useSessionPaneActivity';
 
-import { resolveEffectiveStatus } from '../../utils/contextBarAction';
+import { resolveEffectiveStatus } from '../contextBarAction';
 
 // ========================================================================
 // Pane-activity window predicate
