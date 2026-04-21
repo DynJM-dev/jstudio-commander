@@ -115,10 +115,20 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
     // the typed text + staged files in place so the user can retry —
     // no ghost message ever appears for an unsuccessful send.
     setSending(true);
+    setSendError(null);
     attachments
       .uploadAndBuildPayload(sessionId, cmdText)
       .then((payload) => {
-        if (!payload) return;
+        // Candidate 38 defense: `buildInjectedPayload` returns empty
+        // when BOTH message and refs are empty — but we've already
+        // guarded `cmdText + hasFiles` above, so an empty payload
+        // here means the upload succeeded but returned no paths
+        // (edge case: server dropped every file). Surface as an
+        // error instead of silently no-op'ing.
+        if (!payload) {
+          if (hasFiles) setSendError('Upload returned no files — please retry');
+          return;
+        }
 
         const localMsg: ChatMessage = {
           id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -151,7 +161,13 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
             setLocalCommands((prev) => prev.filter((m) => m.id !== localMsg.id));
           });
       })
-      .catch(() => { /* upload error — no local entry added, nothing to clean */ })
+      .catch(() => {
+        // Candidate 38 — surface upload / pre-post error so the user
+        // sees feedback instead of a silent "nothing happened" on
+        // attachment-only sends. No local entry was added here, so
+        // nothing to clean up.
+        setSendError('Send failed — check connection and retry');
+      })
       .finally(() => setSending(false));
   }, [sessionId, command, sending, attachments, messages.length]);
 
@@ -270,6 +286,19 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
 
   const [interrupting, setInterrupting] = useState(false);
   const [interruptError, setInterruptError] = useState<string | null>(null);
+
+  // Candidate 38 — surface upload / send failures. Pre-finalizer the
+  // outer .catch in sendCommand swallowed errors silently, which made
+  // attachment-only submits appear to "do nothing" when the upload
+  // endpoint returned an error (too large, server 500, network flap).
+  // Small transient error state shown near the send button so the
+  // user knows to retry. Auto-clears after 4 seconds.
+  const [sendError, setSendError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!sendError) return;
+    const t = setTimeout(() => setSendError(null), 4_000);
+    return () => clearTimeout(t);
+  }, [sendError]);
 
   const interruptSession = useCallback(async () => {
     if (!sessionId) return;
@@ -967,6 +996,30 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
                 : sent ? <Check size={16} /> : <SendHorizontal size={16} />}
             </button>
           </div>
+
+          {/* Candidate 38 — transient send-error indicator. Small
+              inline surface so attachment-only submit failures stop
+              appearing as "nothing happened." Auto-clears after 4s
+              via the effect watching `sendError`. */}
+          <AnimatePresence>
+            {sendError && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="flex items-center gap-1 mt-1.5 ml-1"
+                role="status"
+              >
+                <span
+                  className="text-xs"
+                  style={{ fontFamily: M, color: 'var(--color-error)' }}
+                >
+                  {sendError}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Sent confirmation — shows "Queued" when Claude is busy */}
           <AnimatePresence>
