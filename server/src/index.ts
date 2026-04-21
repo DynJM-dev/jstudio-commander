@@ -293,14 +293,35 @@ teamConfigService.start();
         );
         continue;
       }
+      // Candidate 27 reconciliation — capture the pane's cwd at adoption
+      // time and persist it as `project_path`. Without this, synthetic
+      // rows from orphan-adoption stored `project_path = NULL`, and the
+      // hook router's `cwd-exclusive` strategy (step 3 in resolveOwner)
+      // could never bind a real Claude Code session's first hook to the
+      // synthetic row — every hook for a recovered tmux was dropped as
+      // "no owner" and the synthetic row stayed visible forever as an
+      // unclaimed placeholder. With `project_path` populated, the first
+      // hook whose `cwd` matches this row (and whose `transcript_paths`
+      // is still empty) binds the real transcript, and Phase U Patch 1's
+      // `maybeAutoLearnClaudeSessionId` writes the real Claude UUID into
+      // `claude_session_id` on that same hook. From that point on the
+      // synthetic row is fully reconciled — subsequent hooks match via
+      // the O(1) claudeSessionId fast-path. `resolvePaneCwd` returning
+      // null (tmux error / transient) leaves `projectPath` undefined,
+      // preserving the legacy "NULL project_path" shape for that row.
+      const paneCwd = tmux.resolvePaneCwd(paneId);
       sessionService.upsertSession({
         id,
         name: `recovered-${tmuxSession.name}`,
         tmuxSession: paneId,
+        projectPath: paneCwd,
         status: liveStatus,
       });
       knownTmuxNames.add(paneId);
-      console.log(`[startup] Discovered orphaned tmux session: ${tmuxSession.name} (${paneId}) → added as ${liveStatus}`);
+      console.log(
+        `[startup] Discovered orphaned tmux session: ${tmuxSession.name} (${paneId}) ` +
+        `→ added as ${liveStatus}${paneCwd ? ` cwd=${paneCwd}` : ' (no cwd — hooks won\'t reconcile)'}`,
+      );
     }
   }
 
