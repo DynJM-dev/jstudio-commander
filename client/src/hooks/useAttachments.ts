@@ -186,21 +186,35 @@ export const useAttachments = (): UseAttachmentsResult => {
   // element the pointer crosses, so a naive boolean flickers wildly.
   // Tracking a counter gives us a single boolean that's true only
   // while the pointer is actually over the drop zone.
+  //
+  // Candidate 44 — `onDragOver` / `onDrop` now `preventDefault()`
+  // unconditionally (file-ness is still used to gate the overlay UI
+  // via `isDragging`, but no longer gates preventing the browser's
+  // default drop). macOS Finder drags don't always expose 'Files' in
+  // `dataTransfer.types` during the intermediate dragover fires (the
+  // type list can narrow mid-drag), and without preventDefault on
+  // dragover the event bubbles through unhandled — the child
+  // `<textarea>` then receives the native text-insert fallback and
+  // populates the input with the dropped file's URI (surfacing as
+  // `@/absolute/path/filename.md` in the input and consuming the
+  // Enter-to-send keypress). Always eating default on the chat-input
+  // dropzone means the textarea never sees a native drop.
   const dropHandlers = {
     onDragOver: (e: React.DragEvent) => {
-      if (!hasFiles(e.dataTransfer)) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
+      if (hasFiles(e.dataTransfer)) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
     },
     onDragEnter: (e: React.DragEvent) => {
-      if (!hasFiles(e.dataTransfer)) return;
       e.preventDefault();
+      if (!hasFiles(e.dataTransfer)) return;
       dragCounterRef.current += 1;
       if (dragCounterRef.current === 1) setIsDragging(true);
     },
     onDragLeave: (e: React.DragEvent) => {
-      if (!hasFiles(e.dataTransfer)) return;
       e.preventDefault();
+      if (!hasFiles(e.dataTransfer)) return;
       dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
       if (dragCounterRef.current === 0) setIsDragging(false);
     },
