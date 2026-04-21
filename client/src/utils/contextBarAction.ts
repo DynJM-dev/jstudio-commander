@@ -153,11 +153,13 @@ export const resolveActionLabelForParallelRun = (
 export const WORKING_FALLBACK_MS = 5_000;
 export const WORKING_FALLBACK_CEILING_MS = 90_000;
 
-// Scan tail for most-recent assistant message timestamp. Mirror of
-// `mostRecentUserMessageAt` (from useChat.ts) but for assistant role.
-// Returns ms epoch or null when no assistant message / unparseable
-// timestamp. Used by `shouldEngageWorkingFallback` to compute the
-// "has any assistant signal landed in the last 5s" predicate.
+// Scan tail for most-recent assistant message timestamp. Retained for
+// backward-compat with prior rotation-1.7 tests and future consumers
+// that want the assistant-side timestamp signal separately. The
+// Commander Finalizer (A.1) simplified `shouldEngageWorkingFallback`
+// to drop the `lastAssistantBlockTs` dependency — the helper is no
+// longer called by the fallback predicate but remains exported for
+// other consumers and historical tests.
 export const mostRecentAssistantMessageAt = (
   messages: ReadonlyArray<{ role: string; timestamp: string }>,
 ): number | null => {
@@ -171,43 +173,50 @@ export const mostRecentAssistantMessageAt = (
   return null;
 };
 
-// Phase Y Rotation 1.7 Fix 1.7.A — pure engagement predicate. Returns
-// TRUE when the "Working..." fallback should fire. Dispatch §2 contract:
+// Phase Y Rotation 1.7 Fix 1.7.A (Commander Finalizer A.1 revision) —
+// simplified engagement predicate. The pre-finalizer contract required
+// `lastAssistantBlockTs > WORKING_FALLBACK_MS` ago, which coupled the
+// fallback to the message-tail scan. Live smoke (Case A) showed the
+// fallback never engaged in practice because ContextBar didn't re-
+// render frequently enough during silent pure-text windows for the
+// assistant-gap predicate to re-evaluate.
+//
+// Finalizer A.1 per dispatch §3 option (b): drop the assistant-gap
+// dependency entirely. Fallback now engages purely on the user-send
+// window. The render trigger lives in ContextBar (setInterval bump
+// while `userJustSent === true`).
 //
 //   TRUE when: userJustSent === true
-//     AND (nowMs - lastAssistantBlockTs) > WORKING_FALLBACK_MS
+//     AND (nowMs - lastUserSendTs) > WORKING_FALLBACK_MS
 //     AND (nowMs - lastUserSendTs) < WORKING_FALLBACK_CEILING_MS
 //
 // Edge handling:
-//   - `lastAssistantBlockTs === null` (no assistant message ever seen,
-//     or unparseable ts) → treated as "infinitely in the past" so the
-//     `>5s` condition is satisfied unconditionally. This is the fresh-
-//     session case where the user's first prompt hasn't produced any
-//     assistant record yet.
-//   - `lastUserSendTs === null / 0` → fallback does not engage. Without
-//     a concrete send timestamp there's no basis for the ceiling
-//     guardrail.
-//   - `userJustSent === false` → fallback does not engage. ChatPage
-//     flips `userJustSent=false` once the server confirms work; that
-//     transition is the primary disengage path for the concrete-signal
-//     expiry.
+//   - `lastUserSendTs === null / 0` → fallback does not engage. No
+//     concrete send timestamp means no engagement basis.
+//   - `userJustSent === false` → fallback does not engage. The outer
+//     ChatPage clears `userJustSent` on any concrete Working signal
+//     takeover (tool_use in new messages, compact_boundary, server
+//     status flip to working/waiting). After that, the Idle label
+//     is appropriate.
+//
+// Waiting-passthrough preservation is NOT the helper's responsibility
+// — the ContextBar wire combines the helper's output with a
+// `rawEffectiveStatus === 'idle'` guard so `sessionStatus === 'waiting'`
+// never gets shadowed. Item 3 approval modal path preserved.
 export const shouldEngageWorkingFallback = (args: {
   userJustSent: boolean;
   lastUserSendTs: number | null;
-  lastAssistantBlockTs: number | null;
   nowMs: number;
 }): boolean => {
   if (!args.userJustSent) return false;
   if (!args.lastUserSendTs || args.lastUserSendTs <= 0) return false;
+  const elapsedSinceSend = args.nowMs - args.lastUserSendTs;
   // 90s ceiling — prevent forever-stuck "Working..." on dropped turns.
-  if (args.nowMs - args.lastUserSendTs >= WORKING_FALLBACK_CEILING_MS) return false;
-  // Assistant-silence gate — engage only when 5s+ have elapsed since
-  // the last assistant signal. `null` → treat as infinitely silent.
-  const assistantGapMs =
-    args.lastAssistantBlockTs === null || args.lastAssistantBlockTs <= 0
-      ? Number.POSITIVE_INFINITY
-      : args.nowMs - args.lastAssistantBlockTs;
-  return assistantGapMs > WORKING_FALLBACK_MS;
+  if (elapsedSinceSend >= WORKING_FALLBACK_CEILING_MS) return false;
+  // 5s engage threshold — avoids flashing "Working..." during the
+  // first moment after submit when `userJustSent` has just flipped
+  // true but the user hasn't visually committed to waiting yet.
+  return elapsedSinceSend > WORKING_FALLBACK_MS;
 };
 
 // Pure version of ContextBar's `getActionInfo`. Scans backward

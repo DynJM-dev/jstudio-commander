@@ -26,7 +26,7 @@ import {
   resolveActionLabelForParallelRun,
   resolveEffectiveStatus,
   shouldEngageWorkingFallback,
-  mostRecentAssistantMessageAt,
+  WORKING_FALLBACK_CEILING_MS,
 } from '../../utils/contextBarAction';
 import { mostRecentUserMessageAt } from '../../hooks/useChat';
 import { bandForPercentage, bandColor } from '../../utils/contextBands';
@@ -480,14 +480,16 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
   // landing flips the gap predicate to FALSE; (2) `WORKING_FALLBACK_
   // CEILING_MS` (90s) hard ceiling prevents stuck "Working..." on
   // dropped turns. Rejection trigger (e) fires if ceiling missing.
+  // Commander Finalizer A.1 — simplified predicate signature (no
+  // longer depends on `lastAssistantBlockTs`). The setInterval render-
+  // trigger above forces re-evaluation every ~1.5s while `userJustSent`
+  // is true, so the predicate always sees a fresh `nowMs`.
   const lastUserSendTs = mostRecentUserMessageAt(messages);
-  const lastAssistantBlockTs = mostRecentAssistantMessageAt(messages);
   const workingFallbackEngaged =
     rawEffectiveStatus === 'idle' &&
     shouldEngageWorkingFallback({
       userJustSent,
       lastUserSendTs,
-      lastAssistantBlockTs,
       nowMs: Date.now(),
     });
 
@@ -692,8 +694,16 @@ export const ContextBar = ({ model, totalTokens, totalCost, contextTokens, conte
       {/* Stop button — visible whenever Claude may still be running. Status
           polling has up to 1.5s lag, so we err on the side of keeping the
           button reachable rather than hiding it momentarily. `interrupting`
-          keeps it up while feedback plays. */}
-      {onInterrupt && (isWorking || hasPrompt || interrupting) && (
+          keeps it up while feedback plays.
+          Commander Finalizer A.1 — added `workingFallbackEngaged` to the
+          visibility gate. Safety-critical: during pure-text streaming
+          windows the transcript-authoritative derivation can sit on idle
+          (Phase Y architectural ceiling) even though Claude is working;
+          the user must still be able to interrupt. Fallback only engages
+          after userJustSent + 5s without a concrete signal, and expires
+          at the 90s ceiling, so this never keeps Stop stuck on truly
+          idle sessions. */}
+      {onInterrupt && (isWorking || hasPrompt || interrupting || workingFallbackEngaged) && (
         <motion.button
           onClick={onInterrupt}
           disabled={interrupting}

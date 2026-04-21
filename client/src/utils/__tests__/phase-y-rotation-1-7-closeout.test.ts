@@ -60,75 +60,72 @@ const userMsg = (text: string, timestamp?: string): ChatMessage => ({
 // Fix 1.7.A — shouldEngageWorkingFallback + mostRecentAssistantMessageAt
 // ========================================================================
 
-describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 1: fallback engages', () => {
-  test('userJustSent=true + assistant 6s ago + user send 3s ago → TRUE', () => {
-    // Dispatch §2 Test 1 shape verbatim.
+// Commander Finalizer A.1 — predicate simplified to drop
+// `lastAssistantBlockTs`. The engagement window is now a pure function
+// of `(userJustSent, lastUserSendTs, nowMs)`. Tests updated accordingly.
+
+describe('Phase Y Rotation 1.7 Fix 1.7.A (Finalizer A.1) — Test 1: fallback engages past 5s send threshold', () => {
+  test('userJustSent=true + user send 6s ago → TRUE', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - 6_000,
+      lastUserSendTs: now - 6_000,
       nowMs: now,
     });
     assert.equal(engaged, true);
   });
 
-  test('first prompt of session (no prior assistant) → TRUE immediately after threshold', () => {
+  test('user send WORKING_FALLBACK_MS + 1ms ago → TRUE (strictly past threshold)', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
-      lastUserSendTs: now - 6_000,
-      lastAssistantBlockTs: null, // fresh session, no assistant ever
+      lastUserSendTs: now - (WORKING_FALLBACK_MS + 1),
       nowMs: now,
     });
     assert.equal(engaged, true);
   });
 });
 
-describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 2: fallback NOT engaged within 5s window', () => {
-  test('assistant block 2s ago (within 5s window) → FALSE', () => {
-    // Dispatch §2 Test 2 shape verbatim.
+describe('Phase Y Rotation 1.7 Fix 1.7.A (Finalizer A.1) — Test 2: fallback NOT engaged within 5s window', () => {
+  test('user send 3s ago (within 5s window) → FALSE', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
       lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - 2_000,
       nowMs: now,
     });
     assert.equal(engaged, false);
   });
 
-  test('assistant block exactly at 5s threshold → FALSE (strict >, not >=)', () => {
+  test('user send exactly at 5s threshold → FALSE (strict >, not >=)', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - WORKING_FALLBACK_MS,
+      lastUserSendTs: now - WORKING_FALLBACK_MS,
       nowMs: now,
     });
     assert.equal(engaged, false, 'gap === 5s should NOT engage; gap > 5s required');
   });
 
-  test('assistant block 5001ms ago → TRUE (strictly past threshold)', () => {
+  test('fresh submit (user send at T=0) → FALSE', () => {
+    // Covers the T=0 edge: the setInterval render-trigger ticks start
+    // at 1.5s, so re-evaluation will pick up the threshold crossing.
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - (WORKING_FALLBACK_MS + 1),
+      lastUserSendTs: now,
       nowMs: now,
     });
-    assert.equal(engaged, true);
+    assert.equal(engaged, false);
   });
 });
 
-describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 3: fallback expires at 90s ceiling', () => {
-  test('user send 91s ago, no assistant → FALSE (ceiling guards stuck Working...)', () => {
-    // Dispatch §2 Test 3 shape verbatim.
+describe('Phase Y Rotation 1.7 Fix 1.7.A (Finalizer A.1) — Test 3: fallback expires at 90s ceiling', () => {
+  test('user send 91s ago → FALSE (ceiling guards stuck Working...)', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
       lastUserSendTs: now - 91_000,
-      lastAssistantBlockTs: null,
       nowMs: now,
     });
     assert.equal(engaged, false);
@@ -139,7 +136,6 @@ describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 3: fallback expires at 90s cei
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
       lastUserSendTs: now - WORKING_FALLBACK_CEILING_MS,
-      lastAssistantBlockTs: null,
       nowMs: now,
     });
     assert.equal(engaged, false, 'gap === 90s ceiling exits the fallback');
@@ -150,25 +146,23 @@ describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 3: fallback expires at 90s cei
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
       lastUserSendTs: now - 89_900,
-      lastAssistantBlockTs: null,
       nowMs: now,
     });
     assert.equal(engaged, true);
   });
 });
 
-describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 4: waiting passthrough NOT shadowed (Item 3 sacred)', () => {
+describe('Phase Y Rotation 1.7 Fix 1.7.A (Finalizer A.1) — Test 4: waiting passthrough NOT shadowed (Item 3 sacred)', () => {
   // Integration-style: compose resolveEffectiveStatus (pre-fallback
   // output) with the ContextBar-layer gate (`rawEffectiveStatus ===
-  // 'idle' && shouldEngageWorkingFallback(...)`). This mirrors the
-  // actual wiring in ContextBar.tsx.
+  // 'idle' && shouldEngageWorkingFallback(...)`). Mirrors actual
+  // ContextBar.tsx wiring.
   const computeEffectiveStatusWithFallback = (args: {
     sessionStatus: string | undefined;
     codemanIsWorking: boolean | undefined;
     legacyIsWorking: boolean;
     userJustSent: boolean;
     lastUserSendTs: number | null;
-    lastAssistantBlockTs: number | null;
     nowMs: number;
   }): string | undefined => {
     const raw = resolveEffectiveStatus(args.sessionStatus, args.codemanIsWorking, args.legacyIsWorking);
@@ -177,31 +171,28 @@ describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 4: waiting passthrough NOT sha
       shouldEngageWorkingFallback({
         userJustSent: args.userJustSent,
         lastUserSendTs: args.lastUserSendTs,
-        lastAssistantBlockTs: args.lastAssistantBlockTs,
         nowMs: args.nowMs,
       });
     return engaged ? 'working' : raw;
   };
 
-  test('sessionStatus=waiting + userJustSent + stale assistant → stays waiting (fallback does NOT shadow)', () => {
+  test('sessionStatus=waiting + userJustSent + past 5s → stays waiting (fallback does NOT shadow)', () => {
     const now = 1_800_000_000_000;
     const status = computeEffectiveStatusWithFallback({
       sessionStatus: 'waiting',
       codemanIsWorking: false,
       legacyIsWorking: false,
       userJustSent: true,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - 60_000,
+      lastUserSendTs: now - 10_000,
       nowMs: now,
     });
     assert.equal(status, 'waiting', 'waiting passthrough preserved — Item 3 modal mount path intact');
   });
 
   test('sessionStatus=waiting + all fallback conditions met → stays waiting', () => {
-    // Belt-and-braces: even when the fallback's pure predicate would
-    // return TRUE in isolation, the ContextBar gate checks
+    // Belt-and-braces: the ContextBar gate checks
     // `rawEffectiveStatus === 'idle'` FIRST. Waiting never becomes
-    // the fallback's target.
+    // the fallback's target even if the helper's pure predicate is TRUE.
     const now = 1_800_000_000_000;
     const status = computeEffectiveStatusWithFallback({
       sessionStatus: 'waiting',
@@ -209,26 +200,24 @@ describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 4: waiting passthrough NOT sha
       legacyIsWorking: false,
       userJustSent: true,
       lastUserSendTs: now - 10_000,
-      lastAssistantBlockTs: null,
       nowMs: now,
     });
     assert.equal(status, 'waiting');
   });
 });
 
-describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 5: concrete assistant signal preempts fallback', () => {
+describe('Phase Y Rotation 1.7 Fix 1.7.A (Finalizer A.1) — Test 5: concrete signal preempts fallback', () => {
   test('codeman says working → fallback does NOT override; concrete wins', () => {
-    // When codeman returns `isWorking=true`, resolveEffectiveStatus
-    // returns 'working'. The ContextBar gate's `raw === 'idle'`
-    // short-circuit prevents the fallback from firing. Compose the
-    // final status FIRST (before any assert narrowing) so TS doesn't
-    // narrow `raw` to the literal 'working' and reject the comparison.
+    // When codeman returns isWorking=true, resolveEffectiveStatus
+    // returns 'working'. The gate's `raw === 'idle'` short-circuit
+    // prevents the fallback from firing. Compose the final status
+    // FIRST (before assert narrowing) so TS doesn't narrow `raw` to
+    // the literal 'working' and reject the comparison.
     const now = 1_800_000_000_000;
     const raw = resolveEffectiveStatus('idle', true, false);
     const wouldEngageInIsolation = shouldEngageWorkingFallback({
       userJustSent: true,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - 60_000,
+      lastUserSendTs: now - 10_000,
       nowMs: now,
     });
     const finalStatus = raw === 'idle' && wouldEngageInIsolation ? 'working' : raw;
@@ -241,22 +230,117 @@ describe('Phase Y Rotation 1.7 Fix 1.7.A — Test 5: concrete assistant signal p
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: false,
-      lastUserSendTs: now - 3_000,
-      lastAssistantBlockTs: now - 60_000,
+      lastUserSendTs: now - 10_000,
       nowMs: now,
     });
     assert.equal(engaged, false);
   });
 
-  test('lastUserSendTs null → fallback does not engage (no ceiling basis)', () => {
+  test('lastUserSendTs null → fallback does not engage', () => {
     const now = 1_800_000_000_000;
     const engaged = shouldEngageWorkingFallback({
       userJustSent: true,
       lastUserSendTs: null,
-      lastAssistantBlockTs: null,
       nowMs: now,
     });
     assert.equal(engaged, false);
+  });
+
+  test('lastUserSendTs <= 0 → fallback does not engage', () => {
+    const now = 1_800_000_000_000;
+    const engaged = shouldEngageWorkingFallback({
+      userJustSent: true,
+      lastUserSendTs: 0,
+      nowMs: now,
+    });
+    assert.equal(engaged, false);
+  });
+});
+
+// Commander Finalizer A.1 — Stop button visibility gate integration.
+// Mirrors ContextBar.tsx:696 gate: Stop renders when
+// `(isWorking || hasPrompt || interrupting || workingFallbackEngaged)`.
+// Fallback activation is safety-critical: during pure-text streaming
+// windows where codeman is dormant (Phase Y ceiling), the user must
+// still be able to interrupt.
+
+describe('Commander Finalizer A.1 — Stop button visibility with fallback wired', () => {
+  const stopVisible = (args: {
+    isWorking: boolean;
+    hasPrompt: boolean;
+    interrupting: boolean;
+    workingFallbackEngaged: boolean;
+  }): boolean =>
+    args.isWorking || args.hasPrompt || args.interrupting || args.workingFallbackEngaged;
+
+  test('Stop visible when isWorking=true (pre-existing non-regression)', () => {
+    assert.equal(stopVisible({ isWorking: true, hasPrompt: false, interrupting: false, workingFallbackEngaged: false }), true);
+  });
+
+  test('Stop visible when fallback engages (userJustSent + 6s elapsed)', () => {
+    // Simulate the full chain: resolve fallback engagement, then gate.
+    const now = 1_800_000_000_000;
+    const fallback = shouldEngageWorkingFallback({
+      userJustSent: true,
+      lastUserSendTs: now - 6_000,
+      nowMs: now,
+    });
+    assert.equal(fallback, true);
+    assert.equal(
+      stopVisible({ isWorking: false, hasPrompt: false, interrupting: false, workingFallbackEngaged: fallback }),
+      true,
+      'fallback drives Stop visibility when codeman dormant',
+    );
+  });
+
+  test('Stop HIDDEN when idle + no recent userJustSent (non-regression)', () => {
+    const now = 1_800_000_000_000;
+    const fallback = shouldEngageWorkingFallback({
+      userJustSent: false,
+      lastUserSendTs: now - 10_000,
+      nowMs: now,
+    });
+    assert.equal(fallback, false);
+    assert.equal(
+      stopVisible({ isWorking: false, hasPrompt: false, interrupting: false, workingFallbackEngaged: fallback }),
+      false,
+      'Stop stays hidden on truly idle sessions',
+    );
+  });
+
+  test('Stop HIDDEN at ceiling (user send 91s ago without concrete signal)', () => {
+    // Dropped-turn failsafe: even with userJustSent still true (e.g.
+    // the clearing signal never fired because the server never got
+    // our input), the 90s ceiling kills the fallback so Stop doesn't
+    // stick forever.
+    const now = 1_800_000_000_000;
+    const fallback = shouldEngageWorkingFallback({
+      userJustSent: true,
+      lastUserSendTs: now - 91_000,
+      nowMs: now,
+    });
+    assert.equal(fallback, false);
+    assert.equal(
+      stopVisible({ isWorking: false, hasPrompt: false, interrupting: false, workingFallbackEngaged: fallback }),
+      false,
+    );
+  });
+
+  test('Stop visible when interrupting (feedback keeps button up during stop ack)', () => {
+    assert.equal(
+      stopVisible({ isWorking: false, hasPrompt: false, interrupting: true, workingFallbackEngaged: false }),
+      true,
+    );
+  });
+
+  test('Stop visible when waiting + hasPrompt (Item 3 approval path)', () => {
+    // The Stop button does NOT depend on sessionStatus; it depends on
+    // hasPrompt as a proxy for "approval pending" which flags the
+    // waiting branch. Non-regression: Item 3 path still shows Stop.
+    assert.equal(
+      stopVisible({ isWorking: false, hasPrompt: true, interrupting: false, workingFallbackEngaged: false }),
+      true,
+    );
   });
 });
 
