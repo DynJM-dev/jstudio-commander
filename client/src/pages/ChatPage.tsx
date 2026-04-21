@@ -24,6 +24,10 @@ import { api } from '../services/api';
 import { getActivePlan } from '../utils/plans';
 import { hasUnmatchedToolUse } from '../utils/contextBarAction';
 import { extractLiveThinkingText } from '../utils/liveActivity';
+import {
+  buildJsonlUserTextsSet,
+  shouldKeepPendingLocalEntry,
+} from '../utils/pendingLocalFilter';
 import { useToolExecutionState } from '../hooks/useToolExecutionState';
 import { isActiveInDifferentPane } from '../utils/paneFocus';
 
@@ -134,9 +138,20 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
         setTimeout(() => setSent(false), 2000);
         attachments.clearAll();
 
-        return api.post(`/sessions/${sessionId}/command`, { command: payload });
+        // Candidate 38/41 — mode-3 cleanup: if the send POST fails
+        // (network flap, server restart, etc.), drop the just-added
+        // local bubble so it doesn't stick at the bottom of the chat
+        // forever with no server record behind it. The inner .catch
+        // is scoped to the post specifically; the outer .catch below
+        // still handles the upload-failure path (in which case no
+        // local entry was ever added and there's nothing to clean).
+        return api
+          .post(`/sessions/${sessionId}/command`, { command: payload })
+          .catch(() => {
+            setLocalCommands((prev) => prev.filter((m) => m.id !== localMsg.id));
+          });
       })
-      .catch(() => { /* upload or send error — leave files staged for retry */ })
+      .catch(() => { /* upload error — no local entry added, nothing to clean */ })
       .finally(() => setSending(false));
   }, [sessionId, command, sending, attachments, messages.length]);
 
@@ -288,37 +303,20 @@ export const ChatPage = ({ sessionIdOverride }: ChatPageProps = {}) => {
   const activeSessions = sessions.filter((s) => s.status !== 'stopped');
   const totalTokens = stats?.totalTokens ?? 0;
 
-  // Keep local commands until JSONL contains a user message with matching text
-  // — or until Claude clearly received our input another way. #224 hardens the
-  // prior trim-equality dedup that produced duplicate bubbles when JSONL text
-  // had trailing whitespace variations, mixed case, or collapsed newlines.
-  //
-  // Normalization — lowercase, trim, collapse every whitespace run to a single
-  // space. Matches even when Claude Code mangles or reflows the original input.
-  const normalize = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
-  const jsonlUserTexts = new Set(
-    messages
-      .filter((m) => m.role === 'user')
-      .flatMap((m) => m.content)
-      .filter((b) => b.type === 'text')
-      .map((b) => normalize((b as { type: 'text'; text: string }).text))
-  );
+  // Candidate 38/41 — pending-local retention extracted to a pure
+  // helper at `utils/pendingLocalFilter.ts` for testability + to
+  // close the "stuck bubble" failure modes (slash commands, classifier
+  // lag, api.post failures). See helper file for full rationale.
+  const jsonlUserTexts = buildJsonlUserTextsSet(messages);
   const now = Date.now();
-  const pendingLocal = localCommands.filter((lc) => {
-    const text = lc.content[0]?.type === 'text' ? lc.content[0].text : '';
-    const normalized = normalize(text);
-    if (jsonlUserTexts.has(normalized)) return false;
-
-    // Time-based safety valve: once the session has clearly ingested the input
-    // (transitioned to working or waiting) AND the local is older than 10s,
-    // drop it regardless of text match. Prevents the local bubble from lingering
-    // forever when the JSONL capture is delayed or text normalization misses.
-    const age = now - new Date(lc.timestamp).getTime();
-    const sessionAck = session?.status === 'working' || session?.status === 'waiting';
-    if (age > 10_000 && sessionAck) return false;
-
-    return true;
-  });
+  const pendingLocal = localCommands.filter((lc) =>
+    shouldKeepPendingLocalEntry({
+      entry: lc,
+      jsonlUserTexts,
+      sessionStatus: session?.status,
+      nowMs: now,
+    }),
+  );
   const allMessages = [...messages, ...pendingLocal];
 
   // Phase Y Rotation 1 — codeman-pattern transcript-authoritative state.
