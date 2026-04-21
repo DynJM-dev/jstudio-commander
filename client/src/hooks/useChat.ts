@@ -61,6 +61,148 @@ const PAGE_SIZE = 500;
 // bump to 4500ms (~3 active polls) rather than adding a new signal.
 const STREAMING_STABILITY_MS = 3_000;
 
+// Phase Y Rotation 1.6.B Fix E — active-poll window after user send.
+// Per 1.6 diagnostic: server `session.status` classifier can lag on real
+// streaming, dropping the poll to the idle 5s cadence and missing most
+// of Claude's text-block growth. Widen the active-poll predicate to
+// fire for 30s after the most recent user message, regardless of
+// `sessionStatus`. 30s matches the dispatch spec — do NOT bikeshed
+// without flagging per rejection trigger (h).
+export const ACTIVE_AFTER_SEND_MS = 30_000;
+export const ACTIVE_POLL_INTERVAL_MS = 1_500;
+export const IDLE_POLL_INTERVAL_MS = 5_000;
+
+// Phase Y Rotation 1.6.B Fix D — role-stability tuple for the
+// streaming reconciler. Pre-1.6.B, the reconciler relied on
+// (snapshot.id, snapshot.hash) equality to short-circuit the "stable"
+// branch. A role/block transition within the same message id (e.g.
+// assistant text → assistant tool_use during a turn) could slip
+// through under reference-equality false negatives. The tuple sig
+// `(tail.id, tail.role, lastBlock.type)` forces an explicit clear +
+// re-arm on ANY of those axes changing, closing the 1.6 diagnostic's
+// Failure Mode A where `setStreamingAssistantId` did not propagate
+// after a rapid role flip.
+export const computeTailSignature = (last: ChatMessage | undefined): string => {
+  const lastBlock = last?.content?.[last.content.length - 1];
+  return `${last?.id ?? '∅'}|${last?.role ?? '∅'}|${lastBlock?.type ?? '∅'}`;
+};
+
+// Snapshot the reconciler stores in a ref between passes. `tupleSig`
+// is the Fix D addition; `id` + `hash` preserve the Fix C content-
+// change re-arm behavior.
+export interface StreamingSnapshot {
+  id: string | null;
+  hash: string;
+  tupleSig: string;
+}
+
+export const INITIAL_STREAMING_SNAPSHOT: StreamingSnapshot = {
+  id: null,
+  hash: '',
+  tupleSig: '',
+};
+
+// Directive the reconciler returns per pass. `kind='stable'` means no
+// action; `kind='clear'` means flip streamingAssistantId to null and
+// cancel any pending timer; `kind='set'` means flip to the new id and
+// (re)arm the stability timer.
+export type StreamingReconcileDirective =
+  | { kind: 'stable' }
+  | { kind: 'clear'; snapshot: StreamingSnapshot; reason: 'non-assistant' | 'non-text' }
+  | {
+      kind: 'set';
+      id: string;
+      snapshot: StreamingSnapshot;
+      armTimer: true;
+      reason: 'tail-changed' | 'hash-changed' | 'tuple-changed';
+    };
+
+// Pure reconciler — exported for test isolation (no React needed).
+// Closes Fix D: a tuple-sig change between passes is an immediate
+// clear-or-set signal independent of the id+hash comparison.
+export const reconcileStreamingState = (
+  last: ChatMessage | undefined,
+  prevSnapshot: StreamingSnapshot,
+): StreamingReconcileDirective => {
+  const tupleSig = computeTailSignature(last);
+  const lastBlock = last?.content?.[last.content.length - 1];
+
+  // Non-assistant tail (or empty content) — immediate clear. Fix D (a).
+  if (!last || last.role !== 'assistant' || last.content.length === 0) {
+    return {
+      kind: 'clear',
+      snapshot: { id: null, hash: '', tupleSig },
+      reason: 'non-assistant',
+    };
+  }
+  // Assistant tail but non-text block — immediate clear. Fix D (b).
+  if (!lastBlock || lastBlock.type !== 'text') {
+    return {
+      kind: 'clear',
+      snapshot: { id: null, hash: '', tupleSig },
+      reason: 'non-text',
+    };
+  }
+
+  // Assistant/text tail.
+  const hash = JSON.stringify(last.content);
+  const idChanged = prevSnapshot.id !== last.id;
+  const hashChanged = prevSnapshot.hash !== hash;
+  const tupleChanged = prevSnapshot.tupleSig !== tupleSig;
+
+  if (!idChanged && !hashChanged && !tupleChanged) {
+    return { kind: 'stable' };
+  }
+  // Any change → set + re-arm. Reason prefers the most specific
+  // discriminator for diagnostic clarity.
+  const reason: 'tail-changed' | 'hash-changed' | 'tuple-changed' = idChanged
+    ? 'tail-changed'
+    : tupleChanged
+      ? 'tuple-changed'
+      : 'hash-changed';
+  return {
+    kind: 'set',
+    id: last.id,
+    snapshot: { id: last.id, hash, tupleSig },
+    armTimer: true,
+    reason,
+  };
+};
+
+// Fix E predicates — pure.
+export const computeActivePollWindow = (
+  lastUserMessageAt: number | null,
+  now: number = Date.now(),
+): boolean => {
+  if (!lastUserMessageAt || lastUserMessageAt <= 0) return false;
+  return now - lastUserMessageAt < ACTIVE_AFTER_SEND_MS;
+};
+
+export const selectPollInterval = (
+  sessionStatus: string | undefined,
+  activePollWindow: boolean,
+): number => {
+  const isActive =
+    sessionStatus === 'working' || sessionStatus === 'waiting' || activePollWindow;
+  return isActive ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+};
+
+// Extract the most-recent user-message timestamp from `messages` tail.
+// In-useChat detection path for Fix E — avoids a ChatPage prop
+// (scope-locked to `useChat.ts + useToolExecutionState.ts` for this
+// rotation). Returns null when no user message is visible or timestamp
+// is unparseable.
+export const mostRecentUserMessageAt = (messages: ChatMessage[]): number | null => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m) continue;
+    if (m.role !== 'user') continue;
+    const t = Date.parse(m.timestamp);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+};
+
 // Tail-delta merge: replace messages with matching id when content has
 // changed (captures #193 in-place block growth) and append truly new
 // ids. Returns prev unchanged when nothing differs so React keeps a
@@ -93,14 +235,24 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<ChatStats | null>(null);
   const [awaitingFirstTurn, setAwaitingFirstTurn] = useState<boolean>(false);
-  // Phase Y Rotation 1.5 Fix C — streaming-vs-settled tracking.
-  // `streamingAssistantId` holds the tail assistant id while its
-  // content is still growing across polls; `null` once stable.
+  // Phase Y Rotation 1.5 Fix C + 1.6.B Fix D — streaming-vs-settled
+  // tracking. `streamingAssistantId` holds the tail assistant id while
+  // its content is still growing across polls; `null` once stable OR
+  // when the tail transitions to a non-assistant / non-text block.
   // The snapshot + timer refs drive the transition; see the effect
-  // below that reconciles on every `messages` change.
+  // below that reconciles on every `messages` change via the pure
+  // `reconcileStreamingState` helper.
   const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
-  const streamingSnapshotRef = useRef<{ id: string | null; hash: string }>({ id: null, hash: '' });
+  const streamingSnapshotRef = useRef<StreamingSnapshot>(INITIAL_STREAMING_SNAPSHOT);
   const streamingStabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Phase Y Rotation 1.6.B Fix E — active-poll window state. Driven by
+  // the most recent user message's timestamp; flips off after
+  // ACTIVE_AFTER_SEND_MS via setTimeout. Threaded into the poll
+  // useEffect's pollInterval selection so we stay on the active
+  // cadence (1.5s) for 30s post-send regardless of `sessionStatus`.
+  const [activePollWindow, setActivePollWindow] = useState(false);
+  const activePollWindowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { subscribe, unsubscribe, lastEvent } = useWebSocket();
   const mountedRef = useRef(true);
   const prevSessionRef = useRef<string | undefined>(undefined);
@@ -204,11 +356,17 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   // SECOND-to-last message id so the actual last message (which may
   // still be growing in-place) is always re-fetched and merged. When
   // the list has < 2 messages we fall back to a full fetch.
+  //
+  // Phase Y Rotation 1.6.B Fix E — `activePollWindow` is OR'd into the
+  // active predicate so a freshly-sent user message keeps the poll on
+  // the 1.5s cadence for 30s even when the server classifier is still
+  // stuck on `idle`. This closes the 1.6 diagnostic's under-fire
+  // composing where useChat missed streaming content between 5s polls.
   useEffect(() => {
     if (!sessionId || loading) return;
 
-    const isActive = sessionStatus === 'working' || sessionStatus === 'waiting';
-    const pollInterval = isActive ? 1500 : 5000;
+    const pollInterval = selectPollInterval(sessionStatus, activePollWindow);
+    const isActive = pollInterval === ACTIVE_POLL_INTERVAL_MS;
 
     const poll = async () => {
       try {
@@ -255,7 +413,7 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
 
     const interval = setInterval(poll, pollInterval);
     return () => clearInterval(interval);
-  }, [sessionId, loading, sessionStatus]);
+  }, [sessionId, loading, sessionStatus, activePollWindow]);
 
   // Phase Y Rotation 1.5 Fix C — streaming-vs-settled reconciler. Fires
   // on every `messages` reference change (i.e. every poll tick that
@@ -273,31 +431,25 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
   // branches in the derivation.
   useEffect(() => {
     const last = messages[messages.length - 1];
-    const clearTimerAndReset = () => {
+    const directive = reconcileStreamingState(last, streamingSnapshotRef.current);
+
+    if (directive.kind === 'stable') return;
+
+    if (directive.kind === 'clear') {
+      streamingSnapshotRef.current = directive.snapshot;
       if (streamingStabilityTimerRef.current) {
         clearTimeout(streamingStabilityTimerRef.current);
         streamingStabilityTimerRef.current = null;
       }
-      streamingSnapshotRef.current = { id: null, hash: '' };
       setStreamingAssistantId((prev) => (prev === null ? prev : null));
-    };
-    if (!last || last.role !== 'assistant' || last.content.length === 0) {
-      clearTimerAndReset();
       return;
     }
-    const lastBlock = last.content[last.content.length - 1];
-    if (!lastBlock || lastBlock.type !== 'text') {
-      clearTimerAndReset();
-      return;
-    }
-    const hash = JSON.stringify(last.content);
-    const prev = streamingSnapshotRef.current;
-    if (prev.id === last.id && prev.hash === hash) {
-      // No change since last reconciliation — leave the timer running.
-      return;
-    }
-    streamingSnapshotRef.current = { id: last.id, hash };
-    setStreamingAssistantId((current) => (current === last.id ? current : last.id));
+
+    // kind === 'set' — new assistant/text tail (role-changed, tuple-
+    // changed, or hash-changed). Flip streamingAssistantId + (re)arm
+    // the 3s stability timer.
+    streamingSnapshotRef.current = directive.snapshot;
+    setStreamingAssistantId((current) => (current === directive.id ? current : directive.id));
     if (streamingStabilityTimerRef.current) {
       clearTimeout(streamingStabilityTimerRef.current);
     }
@@ -307,13 +459,46 @@ export const useChat = (sessionId: string | undefined, sessionStatus?: string): 
     }, STREAMING_STABILITY_MS);
   }, [messages]);
 
-  // Unmount cleanup — prevent the stability timer from firing after
-  // the hook tears down (would setState on an unmounted component).
+  // Phase Y Rotation 1.6.B Fix E — track most-recent user-message
+  // timestamp. In-useChat detection path (no ChatPage prop required
+  // per this rotation's scope). When a new user message appears in
+  // the tail (WS append or poll merge), activate the 30s post-send
+  // poll window. Pure `computeActivePollWindow` predicate seeds the
+  // initial state; the timer flips the window off at expiry.
+  useEffect(() => {
+    const at = mostRecentUserMessageAt(messages);
+    const shouldBeActive = computeActivePollWindow(at);
+    setActivePollWindow((prev) => (prev === shouldBeActive ? prev : shouldBeActive));
+
+    if (activePollWindowTimerRef.current) {
+      clearTimeout(activePollWindowTimerRef.current);
+      activePollWindowTimerRef.current = null;
+    }
+    if (!shouldBeActive || at === null) return;
+
+    const remainingMs = ACTIVE_AFTER_SEND_MS - (Date.now() - at);
+    if (remainingMs <= 0) {
+      setActivePollWindow((prev) => (prev === false ? prev : false));
+      return;
+    }
+    activePollWindowTimerRef.current = setTimeout(() => {
+      activePollWindowTimerRef.current = null;
+      setActivePollWindow(false);
+    }, remainingMs);
+  }, [messages]);
+
+  // Unmount cleanup — prevent the stability timer AND the active-poll
+  // window timer from firing after the hook tears down (would setState
+  // on an unmounted component).
   useEffect(() => {
     return () => {
       if (streamingStabilityTimerRef.current) {
         clearTimeout(streamingStabilityTimerRef.current);
         streamingStabilityTimerRef.current = null;
+      }
+      if (activePollWindowTimerRef.current) {
+        clearTimeout(activePollWindowTimerRef.current);
+        activePollWindowTimerRef.current = null;
       }
     };
   }, []);
