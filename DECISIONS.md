@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-04-22 — N1 ACCEPTANCE MEMO + ARCHITECTURE_SPEC v1.3 + N2 DISPATCH READY
+
+**Context:** CTO filed `N1_ACCEPTANCE_MEMO.md` + `N2_DISPATCH_UI_SURFACES.md`. Signing decision crystallized (deferred indefinitely, not N1.1). v1.3 spec corrections folded by PM. N2 ready to fire.
+
+### D5 — Signing DEFERRED INDEFINITELY (supersedes earlier D2 "dedicated N1.1")
+
+Code signing + notarization deferred until external distribution becomes real. **No N1.1 dispatch drafted.** Signing is a parked item, not a pending dispatch. Jose is sole user per §16.10 ratification; Gatekeeper right-click on first launch of each new build is acceptable personal-use friction vs $99/year Apple Developer Program enrollment for unused distribution capability.
+
+**Un-defer triggers** (any one):
+- Jose shares Commander v1 with anyone beyond himself (team, client, collaborator).
+- Jose pursues Commander v1 (or successor) as an external product.
+- Gatekeeper per-build friction exceeds perceived $99/year cost.
+
+When un-deferral triggers, CTO drafts a narrow dispatch: Apple Developer Program enrollment → cert install → `tauri.conf.json` signingIdentity → rebuild → notarytool → Gatekeeper smoke. Estimated <1hr CODER time once cert on build machine.
+
+### D6 — ARCHITECTURE_SPEC.md folded to v1.3 by PM at 2026-04-22
+
+Two CODER-surfaced N1 deviations fold back into the canonical spec per N1_ACCEPTANCE_MEMO §7:
+
+- **§5.4 FSEvents plugin correction** — `tauri-plugin-fs-watch` (v1-only crate, doesn't exist in v2) → `tauri-plugin-fs` (Tauri v2's unified fs plugin). Matches DEV5.
+- **§8.2 WebviewWindow origin revision** — previous draft specified sidecar HTTP URL; corrected to Tauri's standard `frontendDist` / `devUrl` pattern with `/api/health` probe at 11002..11011 for sidecar URL discovery. `get_sidecar_url()` Tauri IPC command implemented but unused in default path. Matches DEV3.
+
+**Lesson banked:** spec should cite substrate conventions where they exist rather than derive orthogonally. Before specifying an implementation model, check whether the substrate has a conventional pattern that already solves the problem.
+
+### D7 — N2 dispatch ratified, ready to fire
+
+`N2_DISPATCH_UI_SURFACES.md` reviewed against v1.3 + N1_ACCEPTANCE_MEMO:
+- §1 10 acceptance criteria map cleanly to v1.2/v1.3 §9 primitives.
+- §3 Task 1 (SEA bundling) correctly HIGH-effort with Option A (Node SEA) / Option B (@yao-pkg/pkg) escalation path.
+- §3 Task 4 (split view) acceptance exhaustive against §1.4 observable behaviors.
+- §4 non-scope complete (nothing misplaced or missing).
+- §5 guardrails carry N1 lessons + new addition: "surface better approaches with deviation report, never silently second-guess" — codifies DEV3 discipline.
+- §8 PHASE_REPORT template reference correct per `feedback_dispatch_references_phase_report_template`.
+
+**Fires with continuing CODER spawn**, not architectural reset — N1 foundation stands, N2 builds on it. Fresh spawn not needed; CODER's N1 context is directly applicable.
+
+---
+
 ## 2026-04-22 — Native v1 N1 acceptance + CTO §8 ratifications
 
 **Context:** CTO ratified PHASE_N1_REPORT for Native Commander v1 Phase N1 (foundation). 9 of 10 §1 acceptance criteria ship-green; criterion 9 (signing + notarization) formally deferred to dedicated N1.1 dispatch pending Apple Developer cert acquisition.
