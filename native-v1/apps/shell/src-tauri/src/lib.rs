@@ -12,7 +12,12 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-const SIDECAR_BIN: &str = "jstudio-commander-sidecar";
+// N2.1 hotfix: this must match the basename used in tauri.conf.json's
+// bundle.externalBin entry ("../../sidecar/bundle/sidecar-bin" → "sidecar-bin").
+// Previous value "jstudio-commander-sidecar" was descriptive but did not match
+// the actual externalBin name, causing app.shell().sidecar() to return ENOENT
+// on production Finder-launched builds (PHASE_N2.1_REPORT §5 issue A).
+const SIDECAR_BIN: &str = "sidecar-bin";
 const RESTART_WINDOW: Duration = Duration::from_secs(60);
 const BACKOFFS_S: [u64; 3] = [1, 3, 9];
 

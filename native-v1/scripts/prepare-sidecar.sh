@@ -160,6 +160,14 @@ find "$BUNDLE_DIR/node_modules" -type d -path '*/node-pty/scripts' -exec rm -rf 
 # tauri.conf.json's bundle.resources map. In dev (running the staged bundle
 # directly), everything sits in the same directory. The wrapper tests for
 # the Resources layout first and falls back to the local layout.
+#
+# Node discovery (N2.1 hotfix): Finder-launched macOS apps inherit only
+# PATH=/usr/bin:/bin:/usr/sbin:/sbin, so `node` via $PATH fails when the
+# user installed Node under NVM / Homebrew / Volta / etc. The wrapper
+# walks the common install paths before giving up. If none match, it
+# prints a user-facing guidance message to stderr and exits 127 — the
+# Rust shell logs that, and the frontend's "Sidecar unreachable" banner
+# points at a clear cause.
 cat > "$BUNDLE_DIR/$WRAPPER_NAME" <<'WRAPPER_EOF'
 #!/usr/bin/env bash
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -169,8 +177,62 @@ if [ -n "$APP_RESOURCES" ] && [ -f "$APP_RESOURCES/dist/index.js" ]; then
 else
   SIDECAR_DIR="$WRAPPER_DIR"
 fi
+
+# Respect an explicit override first — Jose can point at a specific Node
+# via the env if he has an unusual layout (and tests can do the same).
+if [ -n "$JSTUDIO_NODE_BIN" ] && [ -x "$JSTUDIO_NODE_BIN" ]; then
+  NODE_BIN="$JSTUDIO_NODE_BIN"
+fi
+
+# Otherwise try PATH (works in dev-terminal launches) ...
+if [ -z "$NODE_BIN" ]; then
+  if command -v node >/dev/null 2>&1; then
+    NODE_BIN="$(command -v node)"
+  fi
+fi
+
+# ... then walk standard install locations. First match wins.
+if [ -z "$NODE_BIN" ]; then
+  for candidate in \
+    "/opt/homebrew/bin/node" \
+    "/usr/local/bin/node" \
+    "/opt/local/bin/node" \
+    "/usr/local/opt/node/bin/node" \
+    "$HOME/.volta/bin/node" \
+    "$HOME/.fnm/current/bin/node" \
+    "$HOME/n/bin/node"; do
+    if [ -x "$candidate" ]; then
+      NODE_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+# ... finally probe NVM, picking the highest installed version.
+if [ -z "$NODE_BIN" ]; then
+  nvm_root="${NVM_DIR:-$HOME/.nvm}"
+  if [ -d "$nvm_root/versions/node" ]; then
+    latest="$(ls -1 "$nvm_root/versions/node" 2>/dev/null | sort -V | tail -1)"
+    if [ -n "$latest" ] && [ -x "$nvm_root/versions/node/$latest/bin/node" ]; then
+      NODE_BIN="$nvm_root/versions/node/$latest/bin/node"
+    fi
+  fi
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  cat >&2 <<'ERR'
+[commander-sidecar] Node >= 22 not found on PATH or standard install locations.
+[commander-sidecar] Install via `brew install node` (Apple Silicon) or from
+[commander-sidecar] https://nodejs.org/en/download/prebuilt-installer, then
+[commander-sidecar] relaunch Commander. (N1 ships with a Node-prereq sidecar —
+[commander-sidecar] SEA self-contained sidecar is tracked in PHASE_N2_REPORT §8
+[commander-sidecar] for a future phase.)
+ERR
+  exit 127
+fi
+
 export NODE_PATH="$SIDECAR_DIR/node_modules"
-exec node "$SIDECAR_DIR/dist/index.js" "$@"
+exec "$NODE_BIN" "$SIDECAR_DIR/dist/index.js" "$@"
 WRAPPER_EOF
 chmod 755 "$BUNDLE_DIR/$WRAPPER_NAME"
 
