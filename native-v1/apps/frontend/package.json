@@ -14,6 +14,7 @@
   "dependencies": {
     "@jstudio-commander/shared": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
+    "@tauri-apps/plugin-dialog": "^2.7.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
     "@xterm/addon-serialize": "^0.13.0",

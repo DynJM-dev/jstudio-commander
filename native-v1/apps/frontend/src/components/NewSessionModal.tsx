@@ -1,8 +1,20 @@
+// NewSessionModal — N2.1 rework. All four surfaces (path picker, session
+// type, effort, submit) render unconditionally, with explicit loading /
+// error / retry states for the session-types dependency (Task 4 defensive
+// wiring).
+//
+// Path defaults:
+//   - PM / Coder: no pre-fill; user must explicitly pick.
+//   - Raw: pre-fills from preferences.rawSession.defaultCwd (default "~").
+
 import { useEffect, useState } from 'react';
 import type { SessionEffort, SessionTypeId } from '@jstudio-commander/shared';
 import { useSessionTypes } from '../queries/sessionTypes.js';
 import { useCreateSession } from '../queries/sessions.js';
 import { useSessionStore } from '../stores/sessionStore.js';
+import { useWorkspaceStore } from '../stores/workspaceStore.js';
+import { usePreference } from '../queries/preferences.js';
+import { ProjectPathPicker } from './path-picker/ProjectPathPicker.js';
 
 const EFFORTS: SessionEffort[] = ['low', 'medium', 'high', 'xhigh'];
 const M = 'Montserrat, system-ui, sans-serif';
@@ -11,25 +23,42 @@ export function NewSessionModal() {
   const open = useSessionStore((s) => s.newSessionModalOpen);
   const close = useSessionStore((s) => s.closeNewSessionModal);
   const setActive = useSessionStore((s) => s.setActiveSessionId);
+  const setPaneSession = useWorkspaceStore((s) => s.setPaneSession);
+  const focusedIndex = useWorkspaceStore((s) => s.layout.focusedIndex);
   const typesQuery = useSessionTypes();
   const createMutation = useCreateSession();
+  const rawCwdPref = usePreference('rawSession.defaultCwd');
 
   const [projectPath, setProjectPath] = useState('');
   const [sessionTypeId, setSessionTypeId] = useState<SessionTypeId>('pm');
   const [effort, setEffort] = useState<SessionEffort>('high');
 
-  // Reset form when opened, and snap effort default to selected session type.
+  // Reset on open.
   useEffect(() => {
     if (open) {
       createMutation.reset();
       setProjectPath('');
+      setSessionTypeId('pm');
     }
   }, [open, createMutation]);
 
+  // Snap effort to the selected session type's default.
   useEffect(() => {
     const match = typesQuery.data?.find((t) => t.id === sessionTypeId);
     if (match) setEffort(match.effortDefault);
   }, [sessionTypeId, typesQuery.data]);
+
+  // Raw session pre-fills default cwd; PM / Coder leaves empty.
+  useEffect(() => {
+    if (sessionTypeId === 'raw') {
+      if (!projectPath) {
+        const defaultCwd = rawCwdPref.data?.value ?? '~';
+        setProjectPath(defaultCwd);
+      }
+    }
+    // No effect on PM/Coder — user explicitly picks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionTypeId, rawCwdPref.data?.value]);
 
   if (!open) return null;
 
@@ -41,8 +70,14 @@ export function NewSessionModal() {
       effort,
     });
     setActive(res.session.id);
+    setPaneSession(focusedIndex, res.session.id);
     close();
   };
+
+  const typesErrored = typesQuery.isError;
+  const typesLoading = typesQuery.isLoading;
+  const typesAvailable = (typesQuery.data ?? []).length > 0;
+  const canSubmit = !!projectPath.trim() && typesAvailable && !createMutation.isPending;
 
   return (
     <div
@@ -66,7 +101,7 @@ export function NewSessionModal() {
           border: '1px solid var(--color-border)',
           borderRadius: 12,
           padding: 24,
-          width: 440,
+          width: 520,
           maxWidth: '92vw',
           boxShadow: '0 30px 60px rgba(0, 0, 0, 0.55)',
         }}
@@ -76,36 +111,64 @@ export function NewSessionModal() {
           Spawn a Commander session on a project directory.
         </p>
 
-        <label style={{ display: 'block', fontSize: 12, marginBottom: 4, opacity: 0.75 }}>
-          Project path
-        </label>
-        <input
-          type="text"
+        <label style={labelStyle}>Project path</label>
+        <ProjectPathPicker
           value={projectPath}
-          onChange={(e) => setProjectPath(e.target.value)}
-          placeholder="/Users/you/Desktop/Projects/..."
-          style={inputStyle}
+          onChange={setProjectPath}
+          placeholder={sessionTypeId === 'raw' ? '~ (home)' : 'Pick a project path…'}
           autoFocus
         />
 
-        <label style={{ display: 'block', fontSize: 12, margin: '14px 0 4px', opacity: 0.75 }}>
-          Session type
-        </label>
-        <select
-          value={sessionTypeId}
-          onChange={(e) => setSessionTypeId(e.target.value as SessionTypeId)}
-          style={inputStyle}
-        >
-          {typesQuery.data?.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label} ({t.id})
-            </option>
-          ))}
-        </select>
+        <label style={{ ...labelStyle, marginTop: 14 }}>Session type</label>
+        {typesErrored ? (
+          <div
+            style={{
+              padding: '10px 12px',
+              background: 'rgba(255, 80, 80, 0.08)',
+              border: '1px solid var(--color-danger)',
+              borderRadius: 8,
+              color: 'var(--color-danger)',
+              fontSize: 12,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              Failed to load session types — is the sidecar running? ({
+                (typesQuery.error as Error).message
+              })
+            </span>
+            <button
+              type="button"
+              onClick={() => void typesQuery.refetch()}
+              style={retryBtnStyle}
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <select
+            value={sessionTypeId}
+            onChange={(e) => setSessionTypeId(e.target.value as SessionTypeId)}
+            disabled={typesLoading || !typesAvailable}
+            style={inputStyle}
+          >
+            {typesLoading ? (
+              <option>Loading session types…</option>
+            ) : !typesAvailable ? (
+              <option>No session types available</option>
+            ) : (
+              typesQuery.data!.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label} ({t.id})
+                </option>
+              ))
+            )}
+          </select>
+        )}
 
-        <label style={{ display: 'block', fontSize: 12, margin: '14px 0 4px', opacity: 0.75 }}>
-          Effort
-        </label>
+        <label style={{ ...labelStyle, marginTop: 14 }}>Effort</label>
         <select
           value={effort}
           onChange={(e) => setEffort(e.target.value as SessionEffort)}
@@ -130,8 +193,12 @@ export function NewSessionModal() {
           </button>
           <button
             onClick={() => void submit()}
-            disabled={createMutation.isPending || !projectPath.trim()}
-            style={btnPrimaryStyle}
+            disabled={!canSubmit}
+            style={{
+              ...btnPrimaryStyle,
+              opacity: canSubmit ? 1 : 0.5,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+            }}
             type="button"
           >
             {createMutation.isPending ? 'Spawning…' : 'Spawn session'}
@@ -141,6 +208,13 @@ export function NewSessionModal() {
     </div>
   );
 }
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontSize: 12,
+  marginBottom: 4,
+  opacity: 0.75,
+};
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -152,6 +226,17 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--color-border-strong)',
   borderRadius: 8,
   outline: 'none',
+};
+
+const retryBtnStyle: React.CSSProperties = {
+  fontFamily: M,
+  fontSize: 11,
+  padding: '4px 10px',
+  background: 'var(--color-muted)',
+  color: 'var(--color-foreground)',
+  border: '1px solid var(--color-border-strong)',
+  borderRadius: 4,
+  cursor: 'pointer',
 };
 
 const btnSecondaryStyle: React.CSSProperties = {

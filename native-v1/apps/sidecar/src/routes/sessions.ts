@@ -5,7 +5,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import type { InitializedDb, NewSession } from '@jstudio-commander/db';
-import { sessions, projects, sessionTypes } from '@jstudio-commander/db';
+import { sessions, projects, sessionTypes, preferences } from '@jstudio-commander/db';
 import { eq } from 'drizzle-orm';
 import type {
   SessionTypeId,
@@ -13,6 +13,14 @@ import type {
   SessionStatus,
 } from '@jstudio-commander/shared';
 import { EventBus, channelForSession } from '../ws/event-bus.js';
+
+const RECENT_PATHS_KEY = 'recentProjectPaths';
+const RECENT_PATHS_CAP = 10;
+
+interface RecentPathEntry {
+  path: string;
+  lastUsedAt: number;
+}
 
 export interface SpawnSessionInput {
   projectPath: string;
@@ -106,6 +114,10 @@ export const sessionRoutes = (
 
     try {
       const spawned = await orchestrator.spawnSession(req.body);
+      // Fire-and-forget recent-paths update — never block spawn on prefs write.
+      void appendRecentPath(db, req.body.projectPath).catch((err: Error) =>
+        console.error('[sessions] recent-paths update failed:', err.message),
+      );
       return { session: spawned, channel: channelForSession(spawned.id) };
     } catch (err) {
       reply.code(500);
@@ -165,6 +177,48 @@ export const sessionRoutes = (
     },
   );
 };
+
+// Upsert the spawn path into preferences.recentProjectPaths (N2.1). Move-to-
+// front on repeat use; cap at RECENT_PATHS_CAP entries. JSON-serialized list
+// stored under scope='global'. Exported for testability.
+export async function appendRecentPath(
+  db: InitializedDb,
+  path: string,
+): Promise<void> {
+  if (!path) return;
+  const existing = db.drizzle
+    .select()
+    .from(preferences)
+    .where(eq(preferences.key, RECENT_PATHS_KEY))
+    .get();
+  let list: RecentPathEntry[] = [];
+  if (existing) {
+    try {
+      const parsed = JSON.parse(existing.value);
+      if (Array.isArray(parsed)) list = parsed as RecentPathEntry[];
+    } catch {
+      list = [];
+    }
+  }
+  const now = Date.now();
+  list = list.filter((e) => e.path !== path);
+  list.unshift({ path, lastUsedAt: now });
+  if (list.length > RECENT_PATHS_CAP) list = list.slice(0, RECENT_PATHS_CAP);
+  const row = {
+    key: RECENT_PATHS_KEY,
+    value: JSON.stringify(list),
+    scope: 'global' as const,
+    scopeId: null,
+    updatedAt: new Date(now),
+  };
+  await db.drizzle
+    .insert(preferences)
+    .values(row)
+    .onConflictDoUpdate({
+      target: preferences.key,
+      set: { value: row.value, scope: row.scope, scopeId: row.scopeId, updatedAt: row.updatedAt },
+    });
+}
 
 // Helpers shared with Task 6's PtyManager orchestrator.
 export async function upsertProject(
