@@ -44,6 +44,18 @@ fn spawn_sidecar(app: &AppHandle) -> Result<CommandChild, String> {
     } else {
         app.shell().sidecar(SIDECAR_BIN).map_err(|e| format!("sidecar: {e}"))?
     };
+    // N2.1.3: Tauri-resolved resource paths → sidecar env. Sidecar's
+    // hook-path.ts honors JSTUDIO_OSC133_HOOK_PATH (line 21). Skipped
+    // cleanly in dev mode without staged resources — sidecar falls back
+    // to its devPath probe against native-v1/resources/osc133-hook.sh.
+    let command = if let Ok(resource_dir) = app.path().resource_dir() {
+        let hook = resource_dir.join("resources").join("osc133-hook.sh");
+        if hook.exists() {
+            command
+                .env("JSTUDIO_RESOURCE_DIR", resource_dir.to_string_lossy().to_string())
+                .env("JSTUDIO_OSC133_HOOK_PATH", hook.to_string_lossy().to_string())
+        } else { command }
+    } else { command };
     let (mut rx, child) = command.spawn().map_err(|e| format!("spawn: {e}"))?;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
