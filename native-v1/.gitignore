@@ -41,3 +41,17 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Task 10 build artifacts
+apps/sidecar/bundle/
+apps/sidecar/dist/
+apps/shell/src-tauri/target/
+apps/shell/src-tauri/icons/source-1024.png
+apps/shell/src-tauri/icons/android/
+apps/shell/src-tauri/icons/ios/
+apps/shell/src-tauri/icons/Square*.png
+apps/shell/src-tauri/icons/StoreLogo.png
+apps/shell/src-tauri/icons/64x64.png
+apps/shell/src-tauri/icons/icon.ico
+apps/shell/src-tauri/gen/
+packages/*/dist/

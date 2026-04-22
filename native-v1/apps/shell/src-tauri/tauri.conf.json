@@ -5,7 +5,7 @@
   "identifier": "studio.jstudio.commander",
   "build": {
     "beforeDevCommand": "pnpm --filter @jstudio-commander/frontend dev",
-    "beforeBuildCommand": "pnpm --filter @jstudio-commander/frontend build",
+    "beforeBuildCommand": "pnpm -w build:prep",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../frontend/dist"
   },
@@ -34,12 +34,27 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.icns"
     ],
+    "externalBin": ["../../sidecar/bundle/sidecar-bin"],
+    "resources": {
+      "../../sidecar/bundle/dist": "sidecar/dist",
+      "../../sidecar/bundle/node_modules": "sidecar/node_modules",
+      "../../sidecar/bundle/package.json": "sidecar/package.json",
+      "../../sidecar/bundle/resources/osc133-hook.sh": "resources/osc133-hook.sh"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "signingIdentity": null
+      "signingIdentity": null,
+      "entitlements": null
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [],
+      "pubkey": ""
+    }
+  }
 }

@@ -3,12 +3,21 @@
   "version": "0.1.0-n1",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./events": "./src/events.ts",
-    "./session-types": "./src/session-types.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
+    },
+    "./session-types": {
+      "types": "./dist/session-types.d.ts",
+      "default": "./dist/session-types.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

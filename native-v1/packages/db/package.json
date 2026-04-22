@@ -3,16 +3,29 @@
   "version": "0.1.0-n1",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema.ts",
-    "./migrations": "./src/migrations/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "default": "./dist/schema.js"
+    },
+    "./migrations": {
+      "types": "./dist/migrations/index.d.ts",
+      "default": "./dist/migrations/index.js"
+    }
   },
+  "files": [
+    "dist",
+    "src/migrations"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "tsc && cp -r src/migrations dist/ 2>/dev/null || true",
     "test": "vitest run",
     "lint": "tsc --noEmit",
     "drizzle:generate": "drizzle-kit generate"
