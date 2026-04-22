@@ -6,6 +6,7 @@ import { NewSessionModal } from './components/NewSessionModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ConnectionBanner } from './components/ConnectionBanner.js';
 import { ContextBar } from './components/ContextBar.js';
+import { StateMdDrawer } from './components/StateMdDrawer.js';
 import { useSessionStore } from './stores/sessionStore.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
@@ -29,7 +30,10 @@ function Shell() {
         {activeSessionId ? (
           <>
             <ContextBar sessionId={activeSessionId} />
-            <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
+            <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+              <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
+              <StateMdDrawer key={`drawer-${activeSessionId}`} sessionId={activeSessionId} />
+            </div>
           </>
         ) : (
           <EmptyPane />

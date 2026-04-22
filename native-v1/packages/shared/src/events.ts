@@ -112,6 +112,13 @@ export interface SessionStateEvent {
   timestamp: number;
 }
 
+export interface ProjectFileChangedEvent {
+  type: 'project:file-changed';
+  projectId: string;
+  file: 'STATE.md' | 'DECISIONS.md' | 'PROJECT_DOCUMENTATION.md' | 'CLAUDE.md';
+  timestamp: number;
+}
+
 // ============================================================
 // union + discriminator helpers
 // ============================================================
@@ -129,7 +136,8 @@ export type WsEvent =
   | SystemWarningEvent
   | SystemInfoEvent
   | PongEvent
-  | SessionStateEvent;
+  | SessionStateEvent
+  | ProjectFileChangedEvent;
 
 export type WsEventType = WsEvent['type'];
 

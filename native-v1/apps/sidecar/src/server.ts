@@ -23,6 +23,7 @@ import { sessionTypesRoutes } from './routes/session-types.js';
 import { preferencesRoutes } from './routes/preferences.js';
 import { sessionRoutes, type SessionOrchestrator } from './routes/sessions.js';
 import { scrollbackRoutes } from './routes/scrollback.js';
+import { projectRoutes } from './routes/projects.js';
 
 export const DEFAULT_PORT_START = 11002;
 export const DEFAULT_PORT_END = 11011;
@@ -51,6 +52,7 @@ export function createServer(deps: ServerDeps): FastifyInstance {
   app.register(preferencesRoutes(deps.db));
   app.register(sessionRoutes(deps.db, deps.bus, deps.orchestrator));
   app.register(scrollbackRoutes(deps.db, deps.bus));
+  app.register(projectRoutes(deps.db));
 
   app.register(async (inst) => {
     inst.get('/ws', { websocket: true }, (socket) => {

@@ -29,6 +29,8 @@ import { PtyPool, clampPoolSize, POOL_SIZE_DEFAULT } from './pool.js';
 import type { Osc133Event } from '../osc133/parser.js';
 import { BootstrapLauncher, planBootstrap } from './bootstrap.js';
 import { sessionTypes as sessionTypesTable } from '@jstudio-commander/db';
+import { ProjectFileWatcher } from '../watch/project-watcher.js';
+import { ALLOWED_PROJECT_FILES } from '../routes/projects.js';
 
 export interface PtyOrchestratorDeps {
   db: InitializedDb;
@@ -52,6 +54,10 @@ export class PtyOrchestrator implements SessionOrchestrator {
   // Current SessionState per session — source of truth for the state
   // machine. Transitions are emitted as session:state events on every write.
   private readonly states = new Map<string, SessionState>();
+  // Per-session ref to the project-path watcher bracket so we can decrement
+  // on session stop without tracking the filename list twice.
+  private readonly watchedProjects = new Map<string, { projectId: string; projectPath: string }>();
+  private readonly projectWatcher: ProjectFileWatcher;
   private shuttingDown = false;
   private warmupPromise: Promise<void> | null = null;
 
@@ -61,6 +67,7 @@ export class PtyOrchestrator implements SessionOrchestrator {
     // effect on the next session without restarting the sidecar.
     const { zdotdir } = ensureZdotdir({ sourceUserRc: this.readSourceUserRc() });
     this.zdotdir = zdotdir;
+    this.projectWatcher = new ProjectFileWatcher(deps.bus);
 
     const size = deps.disablePool ? 0 : this.resolvePoolSize();
     this.pool = new PtyPool(
@@ -150,6 +157,13 @@ export class PtyOrchestrator implements SessionOrchestrator {
 
     const projectName = input.projectName ?? (basename(input.projectPath) || 'project');
     const projectId = await upsertProject(this.deps.db, input.projectPath, projectName);
+
+    // Arm file watchers for the four canonical project files. Ref-counted —
+    // the first session per project adds; further sessions bump refcount.
+    for (const file of ALLOWED_PROJECT_FILES) {
+      this.projectWatcher.addWatch(projectId, input.projectPath, file);
+    }
+    this.watchedProjects.set(sessionId, { projectId, projectPath: input.projectPath });
 
     const callbacks = this.buildCallbacks(sessionId);
 
@@ -278,6 +292,8 @@ export class PtyOrchestrator implements SessionOrchestrator {
       handle.kill('SIGTERM');
     }
     this.handles.clear();
+    this.projectWatcher.shutdown();
+    this.watchedProjects.clear();
   }
 
   private rebindWithLauncher(
@@ -387,6 +403,13 @@ export class PtyOrchestrator implements SessionOrchestrator {
     if (launcher) {
       launcher.cancel();
       this.launchers.delete(sessionId);
+    }
+    const watched = this.watchedProjects.get(sessionId);
+    if (watched) {
+      for (const file of ALLOWED_PROJECT_FILES) {
+        this.projectWatcher.removeWatch(watched.projectId, file);
+      }
+      this.watchedProjects.delete(sessionId);
     }
     // Always transition to 'stopped' so subscribers see the terminal state
     // even during sidecar shutdown (the session:stopped event may not reach
