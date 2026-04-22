@@ -6,6 +6,41 @@
 
 ---
 
+## 2026-04-22 — N2 CLOSED + CTO §8 ratifications + v1.4 spec fold queue
+
+**Context:** CTO ratified PHASE_N2_REPORT 2026-04-22. All 6 §4 deviations ACCEPTED as §5-authorized. All 3 §8 PM recommendations ratified verbatim. v1.4 spec fold queue staged (3 minor corrections, batch-fold at PM convenience, NOT blocking N3). Jose answering one sequencing question on CTO side.
+
+### D11 — §8 Q1/Q2/Q3 CTO ratifications (verbatim PM recommendations)
+
+**Q1 — Bundle size target revision.** RATIFIED: accept wrapper+dist indefinitely for personal-use v1.0. Ties to D5 signing-deferred philosophy. External-distribution trigger un-defers alongside signing. §16.5 target language revised in v1.4 fold queue.
+
+**Q2 — ContextBar data hydration path.** RATIFIED: N3 dispatch §2 architectural contract specifies event-shape → cost_entries mapping up front. ContextBar placeholders become live data via one-line useQuery addition per CODER §9 recommendation. No architectural rework mid-N3.
+
+**Q3 — Frontend test coverage carry-over.** RATIFIED: fold into N3, NOT dedicated N2.5 phase. N3 target: 70%+ frontend coverage. Explicit RTL requirements in N3 §6 for ContextBar + SessionPane + WorkspaceLayout (N2 carry-over debt) + renderer registry + approval modal + ChatThread (N3 scope).
+
+### D12 — v1.4 spec fold queue (PM batch-folds at convenient moment)
+
+Three minor corrections accumulated across N1 + N2 deviations. CTO notes these are NOT blocking N3; PM folds as one batch.
+
+- **§8.2 WebviewWindow origin** (from N1 D3) — already folded in v1.3 2026-04-22. Re-listed by CTO for batch context; no action needed in v1.4 if v1.3 already has it.
+- **§5.4 FSEvents via `tauri-plugin-fs` OR sidecar Node fs.watch** (from N1 D5 + N2 D4) — v1.3 folded the plugin-name correction. v1.4 EXTENSION: adds explicit preference for sidecar fs.watch when sidecar owns file I/O domain (matches N2's STATE.md drawer implementation). New content vs v1.3.
+- **§16.5 Bundle target revised** (from N2 D1 SEA escalation) — wrapper+dist layout inside `.app` with single-binary SEA deferred pending Node runtime shrink or external distribution trigger. New content.
+
+### D13 — Calibration datum banked for future dispatch sizing
+
+CTO banked: 2.5h wall-clock N2 vs 6-8 day estimate = ~0.15-0.25× estimate when continuing spawn + xhigh effort + additive UI scope. Factor to apply in future dispatch duration estimates matching those conditions. N3 at estimated 7-10 days with CONTINUING spawn + substantial new scope (renderer registry + ChatThread + approval modal + frontend tests) may come in at 2-3× faster if pattern holds — worth tracking.
+
+### D14 — N3 sequencing question pending Jose answer
+
+Three options Jose evaluates on CTO side:
+- (A) Draft N3 now in parallel with Jose dogfood. Lower latency. Risks CTO tokens on scope dogfood may invalidate.
+- (B) Pause-to-dogfood first, then CTO drafts N3 with dogfood feedback incorporated. PM recommendation — cleanest data flow.
+- (C) N3a+N3b split. CTO returns with split definition if Jose picks this.
+
+**PM lean (B)** per `feedback_understand_before_patching` + investigation-first discipline: N3 scope depends on dogfood outcomes (ContextBar shape validation, split view UX feedback, STATE.md drawer behavior). Better to have that input before N3 draft than to amend after.
+
+---
+
 ## 2026-04-22 — Native v1 N2 SHIPPED + §8 PM recommendations ready for CTO relay
 
 **Context:** CODER M2.2 (continuing spawn) shipped N2 in ~2.5h wall-clock, 9 commits, 58/58 sidecar + 10/10 shared + 10/10 db tests passing, bundle 35 MB (+1 MB for all N2 features). 8 of 10 §1 criteria fully demonstrable; §1.1 SEA ESCALATED per dispatch §3 Task 1 explicit fallback; §1.2 ContextBar PARTIAL (shape final, live metrics pending N3). §1.10 N1 regression guard HELD.
