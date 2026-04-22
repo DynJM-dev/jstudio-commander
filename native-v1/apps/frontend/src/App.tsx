@@ -1,18 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Sidebar } from './components/Sidebar.js';
-import { TerminalPane } from './components/TerminalPane.js';
 import { NewSessionModal } from './components/NewSessionModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ConnectionBanner } from './components/ConnectionBanner.js';
-import { ContextBar } from './components/ContextBar.js';
-import { StateMdDrawer } from './components/StateMdDrawer.js';
+import { WorkspaceLayout } from './components/WorkspaceLayout.js';
 import { useSessionStore } from './stores/sessionStore.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
 
 function Shell() {
-  const activeSessionId = useSessionStore((s) => s.activeSessionId);
   return (
     <div
       style={{
@@ -27,17 +24,7 @@ function Shell() {
       <Sidebar />
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <ConnectionBanner />
-        {activeSessionId ? (
-          <>
-            <ContextBar sessionId={activeSessionId} />
-            <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-              <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
-              <StateMdDrawer key={`drawer-${activeSessionId}`} sessionId={activeSessionId} />
-            </div>
-          </>
-        ) : (
-          <EmptyPane />
-        )}
+        <WorkspaceLayout />
       </main>
       <NewSessionModal />
       <PreferencesModal />
@@ -45,46 +32,11 @@ function Shell() {
   );
 }
 
-function EmptyPane() {
-  const openNew = useSessionStore((s) => s.openNewSessionModal);
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 12,
-        padding: 24,
-        textAlign: 'center',
-      }}
-    >
-      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Commander v1</h1>
-      <p style={{ margin: 0, opacity: 0.65, fontSize: 13, maxWidth: 420 }}>
-        Spawn a PM, Coder, or Raw session on a JStudio project directory to
-        begin. Sessions attach to a live zsh with OSC 133 shell integration.
-      </p>
-      <button
-        onClick={openNew}
-        type="button"
-        style={{
-          padding: '10px 18px',
-          fontSize: 13,
-          fontFamily: M,
-          fontWeight: 600,
-          background: 'var(--color-primary)',
-          color: 'var(--color-primary-foreground)',
-          border: 'none',
-          borderRadius: 8,
-          cursor: 'pointer',
-        }}
-      >
-        Spawn first session
-      </button>
-    </div>
-  );
-}
+// EmptyPane CTA is rendered inside SessionPane's EmptyPaneBody when a pane
+// has no session. The top-level shell always mounts WorkspaceLayout now.
+// Marker use to keep useSessionStore import from going unused on trees that
+// don't read it directly.
+void useSessionStore;
 
 export function App() {
   const queryClient = useMemo(
