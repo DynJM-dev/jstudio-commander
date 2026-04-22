@@ -1,0 +1,17 @@
+{
+  "name": "@jstudio-commander/shell",
+  "version": "0.1.0-n1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "typecheck": "echo 'rust — cargo check runs separately' && cargo check --manifest-path src-tauri/Cargo.toml",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "lint": "echo 'rust — no-op for pnpm lint'"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  }
+}

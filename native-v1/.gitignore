@@ -1,0 +1,43 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# build outputs
+dist
+build
+out
+.turbo
+*.tsbuildinfo
+
+# rust
+target
+Cargo.lock
+
+# tauri
+apps/shell/src-tauri/gen
+apps/shell/src-tauri/target
+
+# local runtime (sidecar PID/port, commander DB)
+# (lives at ~/.jstudio-commander-v1/, not in repo; this is safety belt)
+.jstudio-commander-v1
+runtime.json
+sidecar.lock
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea

@@ -1,0 +1,31 @@
+{
+  "name": "@jstudio-commander/sidecar",
+  "version": "0.1.0-n1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "build": "tsc && cp -r src/db/migrations dist/db/ 2>/dev/null || true",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.0.1",
+    "@jstudio-commander/db": "workspace:*",
+    "@jstudio-commander/shared": "workspace:*",
+    "better-sqlite3": "^11.5.0",
+    "drizzle-orm": "^0.36.4",
+    "fastify": "^5.1.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
