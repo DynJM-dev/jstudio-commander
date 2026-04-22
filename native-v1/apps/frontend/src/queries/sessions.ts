@@ -72,3 +72,23 @@ export function useStopSession() {
     },
   });
 }
+
+export interface SessionPatch {
+  effort?: SessionEffort;
+  displayName?: string;
+}
+
+export function useUpdateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: SessionPatch }) =>
+      httpJson<{ session: SessionRecord }>(`/api/sessions/${id}`, {
+        method: 'PATCH',
+        body: patch,
+      }),
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: ['sessions'] });
+      void qc.invalidateQueries({ queryKey: ['sessions', variables.id] });
+    },
+  });
+}

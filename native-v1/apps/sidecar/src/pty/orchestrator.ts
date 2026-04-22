@@ -12,6 +12,7 @@ import { eq } from 'drizzle-orm';
 import type {
   SessionTypeId,
   SessionEffort,
+  SessionState,
   WsEvent,
 } from '@jstudio-commander/shared';
 
@@ -48,6 +49,9 @@ export class PtyOrchestrator implements SessionOrchestrator {
   // prior command observed"; D arriving in that state emits durationMs=0 +
   // a system:warning (dispatch §1.8 + §3 Task 8 edge case).
   private readonly lastCommandStartedAt = new Map<string, number>();
+  // Current SessionState per session — source of truth for the state
+  // machine. Transitions are emitted as session:state events on every write.
+  private readonly states = new Map<string, SessionState>();
   private shuttingDown = false;
   private warmupPromise: Promise<void> | null = null;
 
@@ -209,6 +213,7 @@ export class PtyOrchestrator implements SessionOrchestrator {
       status: 'active',
       timestamp: now,
     });
+    this.transitionTo(sessionId, { kind: 'active', since: now });
 
     if (!warmClaimed) {
       // Cold spawn didn't visit `cd`; caller's cwd came from the spawn opts.
@@ -234,9 +239,34 @@ export class PtyOrchestrator implements SessionOrchestrator {
     if (handle) handle.kill('SIGTERM');
   }
 
+  /**
+   * Ctrl+C into the pty — interrupts a running command without killing the
+   * shell. Wired to the ContextBar stop button. SIGINT is the Unix
+   * equivalent of ^C; node-pty's signal model routes `pty.write('\x03')`
+   * through the pty's line discipline.
+   */
+  interruptSession(sessionId: string): void {
+    const handle = this.handles.get(sessionId);
+    if (handle) handle.write('\x03');
+  }
+
+  getSessionState(sessionId: string): SessionState | undefined {
+    return this.states.get(sessionId);
+  }
+
   writeInput(sessionId: string, data: string): void {
     const handle = this.handles.get(sessionId);
     if (handle) handle.write(data);
+  }
+
+  private transitionTo(sessionId: string, state: SessionState): void {
+    this.states.set(sessionId, state);
+    this.emit(sessionId, {
+      type: 'session:state',
+      sessionId,
+      state,
+      timestamp: Date.now(),
+    });
   }
 
   async shutdown(): Promise<void> {
@@ -302,6 +332,9 @@ export class PtyOrchestrator implements SessionOrchestrator {
             sessionId,
             timestamp: now,
           });
+          // State machine: A means zsh is at an idle prompt. The first A
+          // transitions from 'active' to 'idle'; subsequent As re-assert it.
+          this.transitionTo(sessionId, { kind: 'idle', sinceCommandEndedAt: now });
         } else if (event.marker === 'B') {
           // Command-start: authoritative "user pressed Enter, command is
           // about to run". Overwrite any A-recorded timestamp with this
@@ -312,6 +345,7 @@ export class PtyOrchestrator implements SessionOrchestrator {
             sessionId,
             timestamp: now,
           });
+          this.transitionTo(sessionId, { kind: 'working', commandStartedAt: now });
         } else if (event.marker === 'D') {
           const startedAt = this.lastCommandStartedAt.get(sessionId);
           let durationMs: number;
@@ -337,6 +371,9 @@ export class PtyOrchestrator implements SessionOrchestrator {
             durationMs,
             timestamp: now,
           });
+          // Intentionally NOT transitioning to 'idle' here — the follow-up
+          // A marker (precmd's A after D) is the authoritative "back at
+          // prompt" signal. Same-stream A will arrive within microseconds.
         }
       },
       onExit: (exitCode) => void this.onPtyExit(sessionId, exitCode),
@@ -351,6 +388,10 @@ export class PtyOrchestrator implements SessionOrchestrator {
       launcher.cancel();
       this.launchers.delete(sessionId);
     }
+    // Always transition to 'stopped' so subscribers see the terminal state
+    // even during sidecar shutdown (the session:stopped event may not reach
+    // a live consumer but the state snapshot is accurate in cache).
+    this.transitionTo(sessionId, { kind: 'stopped', exitCode, at: Date.now() });
     if (this.shuttingDown) return;
     const now = new Date();
     try {

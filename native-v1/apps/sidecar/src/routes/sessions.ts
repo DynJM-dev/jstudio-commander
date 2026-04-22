@@ -43,19 +43,24 @@ export interface SessionOrchestrator {
   spawnSession(input: SpawnSessionInput): Promise<SpawnedSession>;
   stopSession(sessionId: string): Promise<void>;
   writeInput(sessionId: string, data: string): void;
+  /** Optional — Task 6+ PtyOrchestrator implements; stub throws. */
+  interruptSession?(sessionId: string): void;
 }
 
 export class UnimplementedOrchestrator implements SessionOrchestrator {
   async spawnSession(): Promise<SpawnedSession> {
     throw new Error(
-      'SessionOrchestrator not wired — Task 6 lands PtyManager implementation',
+      'SessionOrchestrator not wired — PtyOrchestrator implementation replaces this',
     );
   }
   async stopSession(): Promise<void> {
     throw new Error('SessionOrchestrator not wired');
   }
   writeInput(): void {
-    // no-op until Task 6 wires PtyManager.write()
+    /* no-op */
+  }
+  interruptSession(): void {
+    /* no-op */
   }
 }
 
@@ -117,6 +122,48 @@ export const sessionRoutes = (
       return { error: 'stop_failed', message: (err as Error).message };
     }
   });
+
+  // Ctrl+C into the active pty without killing the shell. ContextBar Stop
+  // button posts here when session.state.kind === 'working'.
+  app.post<{ Params: { id: string } }>(
+    '/api/sessions/:id/interrupt',
+    async (req, reply) => {
+      if (!orchestrator.interruptSession) {
+        reply.code(501);
+        return { error: 'not_implemented' };
+      }
+      orchestrator.interruptSession(req.params.id);
+      return { ok: true };
+    },
+  );
+
+  // PATCH session — N2 scope: effort changes only. Display-name + other
+  // updates land in later phases.
+  app.patch<{ Params: { id: string }; Body: { effort?: SessionEffort; displayName?: string } }>(
+    '/api/sessions/:id',
+    async (req, reply) => {
+      const patch: Partial<{ effort: SessionEffort; displayName: string | null; updatedAt: Date }> = {
+        updatedAt: new Date(),
+      };
+      if (req.body.effort) patch.effort = req.body.effort;
+      if (typeof req.body.displayName === 'string') patch.displayName = req.body.displayName;
+      const result = await db.drizzle
+        .update(sessions)
+        .set(patch)
+        .where(eq(sessions.id, req.params.id))
+        .run();
+      if (result.changes === 0) {
+        reply.code(404);
+        return { error: 'not_found' };
+      }
+      const row = await db.drizzle
+        .select()
+        .from(sessions)
+        .where(eq(sessions.id, req.params.id))
+        .get();
+      return { session: row };
+    },
+  );
 };
 
 // Helpers shared with Task 6's PtyManager orchestrator.

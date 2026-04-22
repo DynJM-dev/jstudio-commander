@@ -5,6 +5,7 @@ import { TerminalPane } from './components/TerminalPane.js';
 import { NewSessionModal } from './components/NewSessionModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ConnectionBanner } from './components/ConnectionBanner.js';
+import { ContextBar } from './components/ContextBar.js';
 import { useSessionStore } from './stores/sessionStore.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
@@ -26,7 +27,10 @@ function Shell() {
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <ConnectionBanner />
         {activeSessionId ? (
-          <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
+          <>
+            <ContextBar sessionId={activeSessionId} />
+            <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
+          </>
         ) : (
           <EmptyPane />
         )}

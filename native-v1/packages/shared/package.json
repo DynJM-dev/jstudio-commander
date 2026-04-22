@@ -17,6 +17,10 @@
     "./session-types": {
       "types": "./dist/session-types.d.ts",
       "default": "./dist/session-types.js"
+    },
+    "./session-state": {
+      "types": "./dist/session-state.d.ts",
+      "default": "./dist/session-state.js"
     }
   },
   "scripts": {

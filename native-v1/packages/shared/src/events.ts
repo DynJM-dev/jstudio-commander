@@ -7,6 +7,7 @@
 // at dispatch sites catches additions at compile time.
 
 import type { SessionStatus } from './session-types.js';
+import type { SessionState } from './session-state.js';
 
 // ============================================================
 // pty / OSC 133
@@ -104,6 +105,13 @@ export interface PongEvent {
   timestamp: number;
 }
 
+export interface SessionStateEvent {
+  type: 'session:state';
+  sessionId: string;
+  state: SessionState;
+  timestamp: number;
+}
+
 // ============================================================
 // union + discriminator helpers
 // ============================================================
@@ -120,7 +128,8 @@ export type WsEvent =
   | SystemErrorEvent
   | SystemWarningEvent
   | SystemInfoEvent
-  | PongEvent;
+  | PongEvent
+  | SessionStateEvent;
 
 export type WsEventType = WsEvent['type'];
 
