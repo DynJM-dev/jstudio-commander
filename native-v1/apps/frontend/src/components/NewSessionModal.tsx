@@ -33,14 +33,22 @@ export function NewSessionModal() {
   const [sessionTypeId, setSessionTypeId] = useState<SessionTypeId>('pm');
   const [effort, setEffort] = useState<SessionEffort>('high');
 
-  // Reset on open.
+  // Reset on open. N2.1.2 fix: `createMutation` is intentionally absent
+  // from the dep array. TanStack Query v5's useMutation returns a fresh
+  // wrapper object on every render (see diagnostics/N2.1.2-modal-
+  // selection-evidence.md §3), so including it here fired this effect on
+  // EVERY render, re-wiping projectPath + sessionTypeId immediately after
+  // the user picked them (Jose N2.1.1 smoke steps 8 + 9). We read
+  // `createMutation.reset()` inside the body — the callback itself IS
+  // stable — but must not depend on the outer wrapper's reference.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (open) {
       createMutation.reset();
       setProjectPath('');
       setSessionTypeId('pm');
     }
-  }, [open, createMutation]);
+  }, [open]);
 
   // Snap effort to the selected session type's default.
   useEffect(() => {
