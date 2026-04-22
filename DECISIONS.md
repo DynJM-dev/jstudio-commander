@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-04-22 — N2.1 hotfix dispatched (post-N2 dogfood findings)
+
+**Context:** Jose ran `pnpm build:app` + Finder-launched `Commander.app` post-N2 acceptance. Two findings surfaced blocking N3: production sidecar spawn fails (Preferences modal shows "Sidecar unreachable — tried 127.0.0.1:11002..11011"); session spawn modal only shows effort selector (missing path input, type dropdown, submit button — likely cascade from sidecar-unreachable via `useSessionTypes()` failure). CTO filed narrow N2.1 hotfix dispatch.
+
+### D15 — N2.1 hotfix scope accepted
+
+Five-task hotfix before N3 fires: Task 1 diagnose (HIGH effort, root-cause-first discipline explicit); Task 2 fix per Task 1 findings; Task 3 ProjectPathPicker (promoted from deferred to N2.1 scope per Jose ratification); Task 4 modal form defensive wiring (loading/error/success states regardless of sidecar state); Task 5 end-to-end 10-step smoke + PHASE_N2.1_REPORT. Duration 0.5-1 day continuing xhigh, budget $300-600.
+
+### D16 — ProjectPathPicker promoted from deferred to N2.1 scope
+
+Per Jose's dogfood ask — typing absolute paths for every session is friction he's experiencing daily. Scope: Recent section (top 10 paths from `preferences.recentProjectPaths`, JSON array of `{path, lastUsedAt}` stored under scope `global`); Projects section (filesystem scan of `~/Desktop/Projects/` one level deep, 60s TanStack Query staleTime, optional project-type heuristic badges); Browse section (native macOS directory picker via `tauri-plugin-dialog`). Keyboard nav (↑↓ Enter Esc), substring filter, default cwd `~` for Raw sessions, spawn updates Recent (append + move-to-front + 10-entry cap).
+
+### D17 — Root-cause-first discipline explicit in N2.1 §5
+
+"Task 1 must be completed before Task 2. Do NOT start implementing fixes before root cause is identified. If diagnosis takes >0.5 day without clear cause, escalate to PHASE_N2.1_REPORT §8 (Questions for PM) with observed evidence." Matches OS §20.LL-L11 instrumentation-before-fix discipline + `standards/INVESTIGATION_DISCIPLINE.md`.
+
+### D18 — N3 deferred pending N2.1 close
+
+N3 dispatch remains valid and parked (JSONL parser + ContextBar live data + renderer registry + approval modal + ChatThread + frontend tests). May get minor §9 smoke-scenario addendum: "exercise via UI only, not direct API calls" — belt-and-suspenders against the "CODER tested HTTP path but not UI flow" pattern N2 exposed. No rewrite needed.
+
+### D19 — Dogfood-before-next-phase pattern earned
+
+N2's 42/42 sidecar tests passing + PHASE_REPORT acceptance checks did NOT surface the production Finder-launch failure because CODER tested via `pnpm tauri:dev` + direct HTTP + sidecar tests, not via `pnpm build:app` + Finder-launch + UI click-through. Jose's dogfood was the load-bearing verification layer that unit-green missed. **Going forward**: dispatch §2 acceptance criteria must include "exercise via Finder-launched `.app` via UI only" explicit smoke — not HTTP or dev-mode. Banked as dispatch-writing discipline for all future native-v1 phases.
+
+---
+
 ## 2026-04-22 — N2 CLOSED + CTO §8 ratifications + v1.4 spec fold queue
 
 **Context:** CTO ratified PHASE_N2_REPORT 2026-04-22. All 6 §4 deviations ACCEPTED as §5-authorized. All 3 §8 PM recommendations ratified verbatim. v1.4 spec fold queue staged (3 minor corrections, batch-fold at PM convenience, NOT blocking N3). Jose answering one sequencing question on CTO side.
