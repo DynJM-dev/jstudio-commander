@@ -28,6 +28,16 @@ export async function discoverSidecarUrl(): Promise<string> {
   }
 }
 
+/**
+ * Clears the memoized URL so the next discoverSidecarUrl() call re-probes the
+ * port range. Called by wsClient before reconnect attempts to handle the case
+ * where the sidecar respawned on a different port (11002 was taken briefly
+ * during restart and sidecar bound to 11003).
+ */
+export function resetSidecarUrlCache(): void {
+  cached = null;
+}
+
 async function runDiscovery(): Promise<string> {
   for (let port = PORT_START; port <= PORT_END; port++) {
     const base = `http://127.0.0.1:${port}`;

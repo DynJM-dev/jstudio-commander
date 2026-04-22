@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { Sidebar } from './components/Sidebar.js';
 import { TerminalPane } from './components/TerminalPane.js';
 import { NewSessionModal } from './components/NewSessionModal.js';
+import { ConnectionBanner } from './components/ConnectionBanner.js';
 import { useSessionStore } from './stores/sessionStore.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
@@ -22,6 +23,7 @@ function Shell() {
     >
       <Sidebar />
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <ConnectionBanner />
         {activeSessionId ? (
           <TerminalPane key={activeSessionId} sessionId={activeSessionId} />
         ) : (

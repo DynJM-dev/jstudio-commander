@@ -12,7 +12,8 @@ import { EventBus, type ChannelName } from './event-bus.js';
 export type ClientFrame =
   | { type: 'subscribe'; channel: ChannelName }
   | { type: 'unsubscribe'; channel: ChannelName }
-  | { type: 'pty:input'; sessionId: string; data: string };
+  | { type: 'pty:input'; sessionId: string; data: string }
+  | { type: 'ping'; timestamp?: number };
 
 export interface WsHandlerDeps {
   bus: EventBus;
@@ -58,6 +59,12 @@ export function attachWsConnection(socket: WebSocket, deps: WsHandlerDeps): void
         break;
       case 'pty:input':
         deps.onPtyInput(frame.sessionId, frame.data);
+        break;
+      case 'ping':
+        // Heartbeat response — sent outside the event bus so it bypasses the
+        // channel dispatcher entirely. Client-initiated; no server-initiated
+        // heartbeat.
+        send({ type: 'pong', timestamp: Date.now() });
         break;
     }
   });
