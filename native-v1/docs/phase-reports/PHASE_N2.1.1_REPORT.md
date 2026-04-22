@@ -94,6 +94,43 @@ Per SMOKE_DISCIPLINE.md §5 item 3: blank at PHASE_REPORT filing time. PM append
 
 *(PM appends Jose's step-by-step pass/fail here after dogfood.)*
 
+### User-facing smoke outcome (Jose, 2026-04-22, `pnpm build:app` — release build, no DevTools)
+
+PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
+
+| Step | Result | Notes |
+|---|---|---|
+| 1. `pnpm build:app` succeeds | PASS | Build completed |
+| 2. `.app` at expected path | PASS | In bundle/macos/ |
+| 3. Double-click launches Commander | PASS | Clicks open the app |
+| 4. Window within 2s | PASS | |
+| 5. Cmd+, → no "Sidecar unreachable" | **PASS** | Release build (not `build:app:debug`), so no DevTools Network/Console observation — but Preferences modal showed NO error banner, implicit pass on webview-fetch-layer fix. Task 2 CORS/CSP fix HELD. |
+| 6. "+ New session" opens modal | PASS (with macOS TCC prompt first) | macOS requested folder-access permission for `~/Desktop/Projects/` on first attempt (standard macOS TCC prompt for unsigned app hitting scanned directory). Jose granted. Modal opened after. Not a bug; one-time macOS system prompt. |
+| 7. Path picker opens + stays open + 3 sections visible | PASS | Dropdown opens, stays open (Task 3 monotonic setOpen fix HELD), Recent + Projects + Browse all rendered, search/filter input works. |
+| 8. Picking a project populates path, closes dropdown | **FAIL** | "picked a route, but it's not being added to the field. Doesn't stay there selected." Clicking a Projects entry does NOT populate the input field with the chosen path. Task 3's monotonic `setOpen(true)` likely overshot — selection click is absorbed without firing the onSelect→setValue→setOpen(false) chain. Selection handler regression. |
+| 9. Session Type dropdown selection | **FAIL** | "I see the Session Type but it's not letting me select one from the list, it stays as PM." Dropdown renders (proves useSessionTypes() query succeeds — CORS fix working) but clicking options doesn't update the selected value. **This is the FIRST time session type selection has been exercised in a production build** — N2's modal was incomplete, N2.1's modal was sidecar-unreachable, N2.1.1 is the first to fully render + expose the dropdown. Latent bug only surfacing now that upstream layers work. |
+| 10. Submit spawns session | BLOCKED by 8+9 | Cannot submit without path + type set. |
+| 11. OSC 133 marker fires | BLOCKED | |
+| 12. Session in sidebar with live status | BLOCKED | |
+| 13. + Pane → 2nd session | BLOCKED | |
+| 14. Split view + Cmd+Opt+←/→ focus cycle | BLOCKED | |
+| 15. Cmd+Q clean shutdown | BLOCKED | |
+| 16. Re-launch restores sessions + scrollback + Recent | BLOCKED | |
+
+**Tally: 5 PASS, 2 FAIL (8, 9), 8 BLOCKED by 8+9. 16/16 NOT achieved.**
+
+**N2.1.1 does NOT close** per SMOKE_DISCIPLINE.md §5 (user-facing smoke is phase-close gate; partial pass is not close).
+
+**Failure analysis for next rotation (N2.1.2 or CODER fix-in-place per CTO scope call):**
+
+- **Step 8 regression:** Task 3's monotonic `setOpen(true)` onClick likely needs to be scoped to the TRIGGER input only, not the DROPDOWN ITEM rows. Selection click on a project row should fire: onSelect(path) → setValue(path) → setOpen(false). Monotonic setOpen(true) on every click absorbs the close-on-select behavior.
+
+- **Step 9 latent bug:** session type dropdown selection not committing. Probably separate from Task 3 (different component, likely Radix Select or similar). First time exercised in production build — validates SMOKE_DISCIPLINE.md §4.1 pattern (layers below this were broken in N2 + N2.1, masking this bug until now). Diagnosis needed via webview DevTools on `build:app:debug`.
+
+- **Good news:** Task 2 CORS/CSP fix HELD. Webview fetch layer works (Preferences banner absent, dropdowns populate from API). This was the load-bearing fix; modal interaction bugs are above that layer.
+
+- **TCC folder-permission prompt in Step 6** is standard macOS behavior, not a Commander bug. Note for future releases: tauri.conf.json can pre-declare filesystem scope to reduce prompt frequency; parked for signing/distribution phase (post-D5 un-defer).
+
 ## 4. Deviations from dispatch
 
 1. **Task 2 fix landed both CORS and explicit CSP in the same commit rather than sequential commits.** Dispatch §4 Task 2 preference-ordered CSP (lowest-scope) before considering other options. My evidence (§3.2 of the diagnostic file) identified missing CORS headers as the necessary cause — the webview receives the HTTP response but WKWebView's JS layer blocks the body because `Access-Control-Allow-Origin` is absent. CSP alone would have left that block intact. I applied both: CORS as the necessary cause + CSP as defense-in-depth covering the Tauri-v2-production-default case. Bundle size unchanged, test count +4, no functional overlap with Task 3/4 commits — one commit per task respected in spirit (both fixes live in the Task 2 slot). Flagged here for transparency.
