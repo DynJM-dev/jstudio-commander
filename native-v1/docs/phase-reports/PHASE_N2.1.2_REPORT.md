@@ -65,13 +65,58 @@ Per SMOKE_DISCIPLINE.md §5 item 2 + dispatch §4 Task 3. CODER verifies the bui
 | Steps 10-16 infrastructure-readiness audit (dispatch §4 Task 3 explicit ask) | GREEN | Every backing layer (POST /api/sessions → PtyOrchestrator, OSC 133 parser → session:state events, workspaceSync hydrate, TerminalPane scrollback blob restore, appendRecentPath) is covered by the internal test suite. No new failures surfaced during CODER's pass; any that surface during Jose's dogfood land in §5/§8 without being fixed in this dispatch per dispatch §4 Task 3. |
 | Bundle size ≤ 36 MB per §1.4 regression guard | PASS | 35 MB |
 
-### User-facing smoke (Jose)
+### User-facing smoke (Jose, 2026-04-22, `pnpm build:app:debug`)
 
-Per SMOKE_DISCIPLINE.md §5 item 3: blank at PHASE_REPORT filing time. PM appends Jose's step-by-step outcome after dogfood.
+PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
 
-| Step (per N2.1.1 dispatch §3.3 scenario) | Result | Notes |
+**Tally: 10 PASS, 1 FAIL (step 11), 1 PARTIAL-with-critical-gap (step 10), 1 PARTIAL (12), 1 PARTIAL-with-UI-gaps (step 14). N2.1.2 does NOT close — Commander's CORE function (Claude Code spawn) is broken in production. N2.1.3 required.**
+
+**N2.1.2 Task 2 fix HELD** (steps 8 + 9 PASS). Path picker selection commits. Session Type dropdown commits + auto-updates effort level per SESSION_TYPE_EFFORT_DEFAULTS (bonus behavior not explicitly in dispatch). N2.1.1 fixes HELD (Task 2 CORS/CSP: step 5 clean; Task 3 picker monotonic setOpen: step 7 stays open). N2 workspace persistence HELD (step 16 session restored on reopen).
+
+**NEW critical bug surfaced (expected per dispatch §4 Task 3 — "steps 10-16 may surface latent bugs, surface for potential N2.1.3"):** OSC 133 hook path resolution wrong in production bundle. Breaks bootstrap injection AND Claude Code spawn for all three session types (PM / Coder / Raw tested; all show plain zsh without claude running).
+
+**Evidence (PM-verified via direct inspection of .app bundle):**
+- Actual bundle location: `Commander.app/Contents/Resources/resources/osc133-hook.sh` (confirmed via `ls`).
+- Path sidecar sources: `Commander.app/Contents/Resources/sidecar/resources/osc133-hook.sh` (one level too deep — extra `sidecar/` segment).
+- Error visible in PM session terminal at spawn time: `/Users/josemiguelbonilla/.jstudio-commander-v1/zdotdir/.zshrc:source:5: no such file or directory: [wrong path]`.
+- Likely cause: sidecar uses `path.join(__dirname, '../resources/osc133-hook.sh')` which resolves to `Contents/Resources/sidecar/dist/../resources/` = `Contents/Resources/sidecar/resources/` in production bundle. Tauri's `bundle.resources` config places the hook at `Contents/Resources/resources/` (top-level), not under sidecar/. Sidecar needs Tauri-aware resource-path resolution or adjusted relative path.
+
+Jose tested all three session types (PM / Coder / Raw) — all three open a terminal but Claude Code never executes. `Hi` returns `zsh: command not found: Hi`. Commander is running as a session spawner but not actually spawning Claude Code.
+
+| Step | Result | Notes |
 |---|---|---|
-| 1. `pnpm build:app` succeeds | *[PENDING — Jose runs]* | |
+| 1. `pnpm build:app:debug` succeeds | PASS | |
+| 2. `.app` at expected path | PASS | |
+| 3. Double-click launches | PASS | macOS TCC folder-access prompt on first launch — Jose granted (standard unsigned-app behavior) |
+| 4. Window appears within 2s | PASS | |
+| 5. Cmd+, → no "Sidecar unreachable" | PASS | Task 2 N2.1.1 CORS/CSP fix HELD |
+| 6. "+ New session" opens modal | PASS | Second TCC prompt when clicking + New session (macOS re-prompts on accessing new directory scope; Jose granted) |
+| 7. Path picker opens + stays open + 3 sections | PASS | N2.1.1 Task 3 monotonic setOpen HELD |
+| 8. **Picking a project populates input + closes dropdown** | **PASS** | N2.1.2 Task 2 fix HELD |
+| 9. **Session Type dropdown commits** | **PASS** | N2.1.2 Task 2 fix HELD — bonus: effort auto-updates per session type |
+| 10. Submit spawns session; Pane 1 terminal renders | **PARTIAL** | Pane renders, ContextBar visible (status/effort/stop/tok/cost/ctx/refresh/+Pane), STATE.md drawer on right. BUT: Claude Code never started — terminal shows plain zsh; `Hi` returns `zsh: command not found: Hi`. |
+| 11. OSC 133 marker fires | **FAIL** | Hook sourced at wrong path (see evidence above) |
+| 12. Session in sidebar with live status | PARTIAL | Session appears; status potentially misleading since Claude never ran |
+| 13. + Pane adds second pane; modal with new-session OR attach-existing | PASS | Both options offered |
+| 14. Split view + Cmd+Opt+←/→ focus cycle | PARTIAL | Mechanics work for 2 panes; 3+ panes layout breaks with overlapping components. "Not pretty or organized even with 2 panes" per Jose. UI polish gaps: drawers + extras should be togglable/hidden by default, ugly scrolls + buttons, not responsive. No visible "kill session" option. Non-bug: attach-active-session correctly mirrors pty across panes; independent sessions stay independent. |
+| 15. Cmd+Q closes | PASS | |
+| 16. Re-launch restores sessions | PASS | Workspace persistence held |
+
+**UI polish bugs deferred to N3 or dedicated UI phase per CTO framing:**
+- Multi-pane layout overlaps with 3+ panes.
+- Drawers/scrolls/buttons not pretty, not responsive.
+- No kill-session option visible.
+- Overall layout needs pass for responsive + organized presentation.
+
+**Non-bug observations (Jose learning features, not failures):**
+- macOS TCC prompts on launch + first folder access — standard macOS behavior for unsigned apps, parked until signing un-defers per D5.
+- Attach-active-session mirrors pty across panes — correct behavior for "same session in two panes."
+- Independent sessions are independent — correct.
+
+**Unused PENDING row list follows for record:**
+| Step (original dispatch §3.3 scenario) | Result | Notes |
+|---|---|---|
+| 1. `pnpm build:app` succeeds | OVERRIDDEN by above results table | Jose used build:app:debug variant |
 | 2. `.app` at expected path | *[PENDING]* | |
 | 3. Double-click launches Commander | *[PENDING]* | |
 | 4. Window within 2 s | *[PENDING]* | |
