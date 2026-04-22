@@ -11,6 +11,7 @@ import { initDatabase } from '@jstudio-commander/db';
 import { EventBus } from './ws/event-bus.js';
 import { createServer, bindWithPortDiscovery } from './server.js';
 import { UnimplementedOrchestrator, type SessionOrchestrator } from './routes/sessions.js';
+import { PtyOrchestrator } from './pty/orchestrator.js';
 import {
   writeRuntimeJson,
   writeLockFile,
@@ -39,9 +40,13 @@ async function main() {
   );
 
   const bus = new EventBus();
-  // Task 5 ships the server skeleton + an UnimplementedOrchestrator stub.
-  // Task 6 swaps this construction to a PtyOrchestrator instance.
-  const orchestrator: SessionOrchestrator = new UnimplementedOrchestrator();
+  let orchestrator: SessionOrchestrator;
+  try {
+    orchestrator = new PtyOrchestrator({ db, bus });
+  } catch (err) {
+    console.error('[sidecar] PtyOrchestrator init failed, falling back to stub', err);
+    orchestrator = new UnimplementedOrchestrator();
+  }
 
   const app = createServer({ db, bus, orchestrator });
   const port = await bindWithPortDiscovery(app);
@@ -57,8 +62,9 @@ async function main() {
     console.error(`[sidecar] ${signal} received — shutting down`);
     const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
     try {
-      if ('shutdown' in orchestrator && typeof (orchestrator as { shutdown?: () => Promise<void> }).shutdown === 'function') {
-        await (orchestrator as { shutdown: () => Promise<void> }).shutdown();
+      const maybeShutdown = (orchestrator as unknown as { shutdown?: () => Promise<void> }).shutdown;
+      if (typeof maybeShutdown === 'function') {
+        await maybeShutdown.call(orchestrator);
       }
       await app.close();
       bus.clear();

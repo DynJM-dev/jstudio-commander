@@ -10,7 +10,8 @@
     "build": "tsc && cp -r src/db/migrations dist/db/ 2>/dev/null || true",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "postinstall": "node -e \"try{require('node:fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds','darwin-arm64','spawn-helper'),0o755);}catch(e){}\""
   },
   "dependencies": {
     "@fastify/websocket": "^11.0.1",
