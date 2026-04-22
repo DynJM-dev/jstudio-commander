@@ -14,6 +14,7 @@
     "postinstall": "node -e \"try{require('node:fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds','darwin-arm64','spawn-helper'),0o755);}catch(e){}\""
   },
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
     "@fastify/websocket": "^11.0.1",
     "@jstudio-commander/db": "workspace:*",
     "@jstudio-commander/shared": "workspace:*",
