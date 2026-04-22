@@ -58,14 +58,20 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
   async function waitFor<T extends WsEvent['type']>(
     type: T,
     timeoutMs = 5000,
+    fromIndex = 0,
   ): Promise<Extract<WsEvent, { type: T }>> {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
-      const found = events.find((e) => e.type === type);
-      if (found) return found as Extract<WsEvent, { type: T }>;
+      for (let i = fromIndex; i < events.length; i++) {
+        if (events[i]!.type === type) return events[i] as Extract<WsEvent, { type: T }>;
+      }
       await new Promise((r) => setTimeout(r, 30));
     }
     throw new Error(`timed out waiting for ${type}; got: ${events.map((e) => e.type).join(',')}`);
+  }
+
+  function cursor(): number {
+    return events.length;
   }
 
   it('spawns a session, emits created+status active, records DB row', async () => {
@@ -107,15 +113,46 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
     subscribeToSession(spawned.id);
     await waitFor('prompt:started', 6000);
 
-    // Type a command — `true` exits 0, `false` exits 1.
-    orch.writeInput(spawned.id, 'true\n');
-    const started = await waitFor('command:started', 6000);
+    // Cursor past startup events — the first precmd emits a D marker (for
+    // the shell's implicit $? = 0 at boot) before any user command runs. That
+    // D emits a system:warning + command:ended with durationMs=0, which is
+    // correct-by-dispatch but not what this assertion targets.
+    const afterStartup = cursor();
+
+    // `sleep 0.15` guarantees ~150ms elapsed so we can observe real duration.
+    // A faster command like `true` can complete in sub-millisecond time and
+    // reduce to a same-millisecond B+D pair with Date.now() rounding — that
+    // would be a valid outcome (duration=0) but doesn't test durationMs
+    // tracking meaningfully.
+    orch.writeInput(spawned.id, 'sleep 0.15\n');
+    const started = await waitFor('command:started', 6000, afterStartup);
     expect(started.sessionId).toBe(spawned.id);
 
-    const ended = await waitFor('command:ended', 6000);
+    const ended = await waitFor('command:ended', 6000, afterStartup);
     expect(ended.sessionId).toBe(spawned.id);
     expect(ended.exitCode).toBe(0);
+    // N2 Task 8: durationMs must reflect real elapsed time, not hardcoded 0.
+    expect(ended.durationMs).toBeGreaterThanOrEqual(100);
+    expect(ended.durationMs).toBeLessThan(2000);
   }, 15000);
+
+  it('emits system:warning + durationMs=0 for the startup D-without-B edge', async () => {
+    const spawned = await orch.spawnSession({
+      projectPath: tmpDir,
+      sessionTypeId: 'raw',
+      skipClientLaunch: true,
+      effort: 'medium',
+    });
+    subscribeToSession(spawned.id);
+
+    // First precmd fires BEFORE any user command — emits D with $?=0 + A.
+    // That D has no preceding B, so we expect durationMs=0 + a
+    // system:warning matching the osc133_d_without_start code.
+    const firstEnd = await waitFor('command:ended', 6000);
+    expect(firstEnd.durationMs).toBe(0);
+    const warn = await waitFor('system:warning', 500);
+    expect(warn.code).toBe('osc133_d_without_start');
+  }, 10000);
 
   it('updates DB to stopped + emits session:stopped on `exit`', async () => {
     const spawned = await orch.spawnSession({

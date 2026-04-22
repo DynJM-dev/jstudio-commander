@@ -83,6 +83,27 @@ export interface SystemErrorEvent {
   timestamp: number;
 }
 
+export interface SystemWarningEvent {
+  type: 'system:warning';
+  sessionId?: string;
+  code: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface SystemInfoEvent {
+  type: 'system:info';
+  sessionId?: string;
+  code: string;
+  message: string;
+  timestamp: number;
+}
+
+export interface PongEvent {
+  type: 'pong';
+  timestamp: number;
+}
+
 // ============================================================
 // union + discriminator helpers
 // ============================================================
@@ -96,7 +117,10 @@ export type WsEvent =
   | SessionCreatedEvent
   | SessionStatusEvent
   | SessionStoppedEvent
-  | SystemErrorEvent;
+  | SystemErrorEvent
+  | SystemWarningEvent
+  | SystemInfoEvent
+  | PongEvent;
 
 export type WsEventType = WsEvent['type'];
 

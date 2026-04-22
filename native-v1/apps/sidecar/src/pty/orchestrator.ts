@@ -43,6 +43,11 @@ export class PtyOrchestrator implements SessionOrchestrator {
   private readonly handles = new Map<string, PtyHandle>();
   private readonly launchers = new Map<string, BootstrapLauncher>();
   private readonly pool: PtyPool;
+  // Per-session timestamp of the most recent A or B OSC 133 marker. Used to
+  // compute durationMs on the following D marker. `undefined` means "no
+  // prior command observed"; D arriving in that state emits durationMs=0 +
+  // a system:warning (dispatch §1.8 + §3 Task 8 edge case).
+  private readonly lastCommandStartedAt = new Map<string, number>();
   private shuttingDown = false;
   private warmupPromise: Promise<void> | null = null;
 
@@ -262,25 +267,52 @@ export class PtyOrchestrator implements SessionOrchestrator {
           timestamp: Date.now(),
         }),
       onOsc133: (event: Osc133Event) => {
+        const now = Date.now();
         if (event.marker === 'A') {
+          // Prompt-start: record as tentative command start — if B follows
+          // quickly it'll overwrite; if D follows directly (edge: command
+          // executed silently between A and D without a B), duration still
+          // captures it. B is the authoritative "user hit Enter" marker.
+          this.lastCommandStartedAt.set(sessionId, now);
           this.emit(sessionId, {
             type: 'prompt:started',
             sessionId,
-            timestamp: Date.now(),
+            timestamp: now,
           });
         } else if (event.marker === 'B') {
+          // Command-start: authoritative "user pressed Enter, command is
+          // about to run". Overwrite any A-recorded timestamp with this
+          // more-accurate one.
+          this.lastCommandStartedAt.set(sessionId, now);
           this.emit(sessionId, {
             type: 'command:started',
             sessionId,
-            timestamp: Date.now(),
+            timestamp: now,
           });
         } else if (event.marker === 'D') {
+          const startedAt = this.lastCommandStartedAt.get(sessionId);
+          let durationMs: number;
+          if (startedAt === undefined) {
+            durationMs = 0;
+            this.emit(sessionId, {
+              type: 'system:warning',
+              sessionId,
+              code: 'osc133_d_without_start',
+              message:
+                'OSC 133 D marker observed without a preceding A/B marker; duration reported as 0.',
+              timestamp: now,
+            });
+          } else {
+            durationMs = now - startedAt;
+            // Clear the tracker so the next D without an A/B is flagged.
+            this.lastCommandStartedAt.delete(sessionId);
+          }
           this.emit(sessionId, {
             type: 'command:ended',
             sessionId,
             exitCode: event.exitCode,
-            durationMs: 0,
-            timestamp: Date.now(),
+            durationMs,
+            timestamp: now,
           });
         }
       },
@@ -290,6 +322,7 @@ export class PtyOrchestrator implements SessionOrchestrator {
 
   private async onPtyExit(sessionId: string, exitCode: number | null): Promise<void> {
     this.handles.delete(sessionId);
+    this.lastCommandStartedAt.delete(sessionId);
     const launcher = this.launchers.get(sessionId);
     if (launcher) {
       launcher.cancel();
