@@ -2,10 +2,10 @@
 
 **Phase:** N2.1.3 — Pre-N3 hotfix: OSC 133 hook path resolution + accumulated-debt exhaustive production smoke
 **Started:** 2026-04-22 (continuing CODER spawn, no reset)
-**Completed:** 2026-04-22 (same rotation; PENDING Jose's user-facing smoke per §3)
+**Completed:** 2026-04-22 (same rotation; Jose's user-facing smoke PARTIAL — see §3)
 **Coder session:** Claude Code coder session at `~/Desktop/Projects/jstudio-commander/`
 **Model / effort used:** Opus 4.7 (1M context) / effort=xhigh continuing
-**Status:** CODER-COMPLETE; awaiting Jose's user-facing smoke per SMOKE_DISCIPLINE.md §5
+**Status:** NOT CLOSED — Jose's user-facing smoke returned 11 PASS + 1 PASS-with-BUG + 1 PARTIAL + 2 UNVERIFIED (see §3). Primary N2.1.3 fixes (OSC path + claude PATH) HELD; new bugs above that layer (bootstrap autosend + 2nd-pane input routing) require N2.1.4 scope decision. Routed to PM/CTO.
 
 ---
 
@@ -104,24 +104,45 @@ PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
 
 | Step (N2.1.1 §3.3 scenario) | Result | Notes |
 |---|---|---|
-| 1. `pnpm build:app:debug` succeeds | *[PENDING]* | |
-| 2. `.app` at expected path | *[PENDING]* | |
-| 3. Double-click launches Commander | *[PENDING]* | |
-| 4. Window within 2 s | *[PENDING]* | |
-| 5. Cmd+, → no "Sidecar unreachable" | *[PENDING]* | N2.1.1 regression guard |
-| 6. "+ New session" opens modal | *[PENDING]* | |
-| 7. Path picker opens + stays open + 3 sections visible | *[PENDING]* | N2.1.1 regression guard |
-| 8. Picking a project populates path, closes dropdown | *[PENDING]* | N2.1.2 regression guard |
-| 9. Session type dropdown selection commits | *[PENDING]* | N2.1.2 regression guard |
-| 10. Submit spawns session, Claude boots + renders | *[PENDING — PRIMARY N2.1.3 TARGET]* | |
-| 11. OSC 133 marker on first prompt | *[PENDING — PRIMARY N2.1.3 TARGET]* | |
-| 12. Session in sidebar with live status | *[PENDING]* | |
-| 13. + Pane → 2nd session | *[PENDING]* | |
-| 14. Split view + Cmd+Opt+←/→ focus cycle | *[PENDING]* | UI polish gaps already scoped deferred per dispatch §2 |
-| 15. Cmd+Q closes | *[PENDING]* | |
-| 16. Re-launch restores sessions + scrollback + Recent | *[PENDING]* | |
+| 1. `pnpm build:app:debug` succeeds | PASS | "Lauch steps, all pass all good" |
+| 2. `.app` at expected path | PASS | |
+| 3. Double-click launches Commander | PASS | |
+| 4. Window within 2 s | PASS | |
+| 5. Cmd+, → no "Sidecar unreachable" | PASS (implicit) | Covered by Jose's "pick everything correctly" — no banner reported; webview-fetch layer holds. N2.1.1 regression guard CLEAN. |
+| 6. "+ New session" opens modal | PASS | |
+| 7. Path picker opens + stays open + 3 sections visible | PASS | N2.1.1 monotonic setOpen fix HELD. |
+| 8. Picking a project populates path, closes dropdown | PASS | N2.1.2 useEffect dep fix HELD. |
+| 9. Session type dropdown selection commits | PASS | N2.1.2 modal-selection-commit fix HELD. |
+| 10. Submit spawns session, Claude boots + renders | **PARTIAL — NEW BUG: bootstrap does not auto-send** | Session spawns; Pane 1 terminal renders; bootstrap content appears in the terminal input line. BUT the first prompt is NOT auto-submitted. Jose had to press Enter manually, and the bootstrap content was bundled WITH his own first-typed input ("hello"). So Claude received `<bootstrap text>hello` as one composite prompt rather than `<bootstrap text>` auto-sent first and `hello` following as a user turn. OSC 133 hook-path fix + claude-PATH fix both HELD (Claude did reach stdin), but the auto-submit mechanism regressed / never landed. See Issue D. |
+| 11. OSC 133 marker on first prompt | UNVERIFIED | Not directly observable due to the step 10 bootstrap-autosend confound. CODER smoke-readiness probe saw OSC sequences on the probe harness's own zsh; under user-facing smoke the first prompt was mis-composited. Re-verify after N2.1.4 autosend fix. |
+| 12. Session in sidebar with live status | UNVERIFIED | Not explicitly reported in Jose's smoke relay. Neither flagged as broken nor flagged as working; treat as unverified pending next smoke. |
+| 13. + Pane → 2nd session | **PASS-with-BUG** | Second pane opens successfully. BUG E: in the second pane, the typed prompt appears in the on-window chat textbox (awaiting manual Enter) instead of routing to the terminal. Same class of bug as step 10's autosend regression — bootstrap / first-prompt routing inconsistent. |
+| 14. Split view + Cmd+Opt+←/→ focus cycle | PASS | "Cmd option arrwos works" |
+| 15. Cmd+Q closes | PASS | "Quit and relaunch work" |
+| 16. Re-launch restores sessions + scrollback + Recent | PASS | "Quit and relaunch work" |
 
-*(PM appends Jose's step-by-step pass/fail here after dogfood.)*
+**Additional smoke-time observations (not in 16-step ledger):**
+
+- **Observation F — `unmapped system subtype: away_summary` warning.** Surfaced during the smoke in the devtools console (or terminal/chat stream — Jose's report does not specify surface). `away_summary` is not in the current `SYSTEM_EVENT_REGISTRY` keys. Likely an upstream Claude Code transcript event type that the renderer doesn't yet recognize. HARMLESS for this phase (warning, not a crash), but surfaces a gap in N3's renderer-registry coverage. Route to N3 scope as a known-unmapped-event item.
+
+- **Observation G — Terminal UX is plain zsh, not the rich chat UI.** Jose: "I just see the terminal as normal terminal, not the UI interface that we are managing in our current Command Center via browser". **EXPECTED — N3 SCOPE.** The JSONL-parsed renderer registry (ChatThread, approval modal, tool-call cards) is N3's primary deliverable. Native v1 by design up through N2.1.x ships xterm.js direct-attach only; the rich UI layer arrives in N3 per ARCHITECTURE_SPEC.md §11. Not a bug. Jose's note captured here for CTO's context as a reminder of what N3 ships.
+
+**Tally: 11 PASS (1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16) + 1 PASS-with-BUG (13) + 1 PARTIAL (10) + 2 UNVERIFIED (11, 12). 16/16 NOT achieved.**
+
+**N2.1.3 does NOT close** per SMOKE_DISCIPLINE.md §5 (user-facing smoke is phase-close gate; PARTIAL + BUG + UNVERIFIED is not close).
+
+**Primary load-bearing fixes (N2.1.3 scope) HELD:**
+
+- OSC 133 hook path resolution — FIXED. Hook file now resolves at the correct `Contents/Resources/resources/osc133-hook.sh` location; no more `no such file or directory` in the sidecar log.
+- `claude` binary on Finder-inherited PATH — FIXED. Wrapper prepare-sidecar.sh augments PATH with common Node-manager bin dirs; `command not found: claude` class eliminated.
+
+The surviving gap is **above** those two fixes, at the bootstrap-autosubmit / first-prompt-routing layer. Pattern-identical to SMOKE_DISCIPLINE.md §4.1: each upstream load-bearing fix surfaces the next latent layer.
+
+**New findings requiring N2.1.4 (or PM/CTO scope call):**
+
+- **Bug D (PRIMARY):** Bootstrap content is injected into the terminal input line but not auto-submitted. User's first typed input concatenates with the pending bootstrap text under a single Enter keystroke. Expected behavior: bootstrap sends on OSC 133 A (first-prompt ready) WITHOUT user interaction; user's subsequent input is a separate turn.
+- **Bug E:** Second-pane input routes to the on-window chat textbox instead of terminal. Same class as D (input-routing regression).
+- **Bug F:** `away_summary` system event unmapped — ROUTE TO N3 registry coverage, not N2.1.4.
 
 ## 4. Deviations from dispatch
 
