@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-04-22 — SMOKE_DISCIPLINE.md v1.0 landed + N2.1.1 hotfix dispatched
+
+**Context:** Jose re-dogfood on N2.1 SURFACED two failures Jose's live smoke caught but CODER's automated smoke missed. Same pattern as N2's post-ship modal gap. Two hits in two rotations confirms architectural discipline gap, not one-off. CTO authored SMOKE_DISCIPLINE.md v1.0 as structural fix + N2.1.1 hotfix dispatch.
+
+### D25 — SMOKE_DISCIPLINE.md v1.0 landed as core operating-model standard
+
+Location: `~/Desktop/Projects/jstudio-meta/standards/SMOKE_DISCIPLINE.md`. Committed + pushed in jstudio-meta at `70c7310` (2026-04-22). OS §23.7 v6 changelog entry documents motivation + principle + §20.LL-L15 fold queued for next retrospective.
+
+**Core principle:** every phase dispatch's §1 acceptance criteria and §9 smoke scenario MUST be specified at the outermost user-facing layer — Finder-launched `.app` + UI interactions + pixel observations — NOT intermediate layers (curl / ps aux / API endpoints / scripted headless smoke / dev-mode). All intermediate layers are valid for CODER's diagnostic work; none substitute for outermost smoke.
+
+**Load-bearing clauses:**
+- §3.1: acceptance criteria worded in terms of what Jose observes on screen, not what a component returns internally.
+- §3.2: §9 smoke scenario structure — start from zero, proceed via UI only, observe via pixels, terminate with clean shutdown + re-launch.
+- §3.4: **CODER CANNOT self-certify user-facing smoke.** CODER's smoke-readiness check (build succeeds + Finder-launch produces window) is prerequisite, not substitute. Jose-run user-facing smoke is the phase-close gate from N2.1.1 forward.
+- §5: PHASE_REPORT §3 format updated — CODER reports automated suite + smoke-readiness; Jose's user-facing smoke outcome appended by PM after dogfood.
+
+**Applies to:** all phase dispatches N2.1.1 forward. Retroactive application to N1 / N2 / N2.1 not required.
+
+Sits alongside `INVESTIGATION_DISCIPLINE.md` as core operating-model standard. Both apply OS §20.LL-L14 (ground-truth over derivation) to different operational concerns: investigation (bug diagnosis) + smoke (acceptance verification).
+
+### D26 — N2.1.1 hotfix dispatch ready to fire with SMOKE_DISCIPLINE compliance
+
+Dispatch at `docs/dispatches/N2_1_1_DISPATCH_WEBVIEW_FETCH_AND_SMOKE_DISCIPLINE.md` (378 lines, 12 sections, 5 tasks, 0.5 day xhigh continuing, $200-400 budget). First dispatch authored under SMOKE_DISCIPLINE.md v1.0 — its §7 smoke section is the reference template for all future dispatch smoke sections.
+
+**Tasks:**
+- T1 re-diagnose via webview DevTools (NOT curl) + empty evidence commit per G10 + evidence filed at diagnostic artifact path.
+- T2 fix webview fetch per T1 evidence — preference-ordered CSP first as lowest-scope.
+- T3 picker auto-close fix.
+- T4 persistent DevTools toggle (Option A env var / Option B preference / Option C separate debug build — CODER judgment).
+- T5 PHASE_N2.1.1_REPORT with new §3 format + CODER smoke-readiness only + Jose 16-step UI smoke + PM appends result.
+
+**New guardrails codified:** G9 SMOKE_DISCIPLINE compliance mandatory + G10 root-cause before fix (N2.1 G3 reiterated) + G11 smoke layer identification in diagnostic commits ("diagnostic: webview Network tab shows /api/health blocked by CSP (WKWebView layer)" NOT "diagnostic: fetch fails").
+
+PM review verdict: 100% SMOKE_DISCIPLINE compliant, zero gaps requiring CTO ratification. Ready to fire with continuing CODER spawn.
+
+### D27 — N2.1 "SHIP-GREEN" claim reversed
+
+N2.1 PM review verdict "SHIP-GREEN pending Jose UI smoke" was premature — the Jose UI smoke was the actual gate and it failed. Future dispatches must NOT use "SHIP-GREEN conditional on Jose smoke" framing; use "automated acceptance PASS, awaiting Jose user-facing smoke for CLOSED status" per SMOKE_DISCIPLINE.md §5 PHASE_REPORT format. Language discipline change documented for future PM reviews.
+
+### D28 — N3 re-parked pending N2.1.1 close
+
+N3 dispatch remains drafted + parked. When N2.1.1 closes + Jose's 16-step smoke passes: CTO revisits N3 dispatch, validates §9 smoke section against SMOKE_DISCIPLINE.md compliance (may fold amendments), N3 fires on SMOKE_DISCIPLINE-compliant foundation. N3's larger surface area (renderer registry + ChatThread + approval modal + frontend tests) has more layers and more surface for the same class of gap — structural discipline now in place prevents recurrence.
+
+---
+
 ## 2026-04-22 — N2.1 SHIPPED (automated acceptance PASS, pending Jose UI smoke)
 
 **Context:** CODER M2.2 continuing spawn shipped N2.1 in ~1.5h wall-clock. 4 task commits + 1 report = 5 commits. Tests 58 → 71 (+13). Bundle 35 MB held. Rust 138/150. Zero N1/N2 regression. PHASE_N2.1_REPORT at `native-v1/docs/phase-reports/PHASE_N2.1_REPORT.md`.
