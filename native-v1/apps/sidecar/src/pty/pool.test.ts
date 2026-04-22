@@ -60,6 +60,7 @@ maybe('PtyPool via PtyOrchestrator — end-to-end', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     bus.subscribe(channelForSession(spawned.id), (_ch, ev) => events.push(ev));
@@ -83,6 +84,7 @@ maybe('PtyPool via PtyOrchestrator — end-to-end', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     expect(spawned.ptyPid).toBeGreaterThan(0);

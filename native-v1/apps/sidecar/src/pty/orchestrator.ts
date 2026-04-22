@@ -26,6 +26,8 @@ import { spawnPty, type PtyHandle, type MutableCallbacks } from './manager.js';
 import { ensureZdotdir } from './hook-path.js';
 import { PtyPool, clampPoolSize, POOL_SIZE_DEFAULT } from './pool.js';
 import type { Osc133Event } from '../osc133/parser.js';
+import { BootstrapLauncher, planBootstrap } from './bootstrap.js';
+import { sessionTypes as sessionTypesTable } from '@jstudio-commander/db';
 
 export interface PtyOrchestratorDeps {
   db: InitializedDb;
@@ -39,6 +41,7 @@ export interface PtyOrchestratorDeps {
 export class PtyOrchestrator implements SessionOrchestrator {
   private readonly zdotdir: string;
   private readonly handles = new Map<string, PtyHandle>();
+  private readonly launchers = new Map<string, BootstrapLauncher>();
   private readonly pool: PtyPool;
   private shuttingDown = false;
   private warmupPromise: Promise<void> | null = null;
@@ -95,6 +98,24 @@ export class PtyOrchestrator implements SessionOrchestrator {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
 
+    // Look up session type BEFORE spawning so a missing bootstrap file fails
+    // fast and cleanly — no orphan pty.
+    const typeRow = this.deps.db.drizzle
+      .select()
+      .from(sessionTypesTable)
+      .where(eq(sessionTypesTable.id, input.sessionTypeId))
+      .get();
+    if (!typeRow) {
+      throw new Error(`unknown session type "${input.sessionTypeId}"`);
+    }
+    const plan = planBootstrap({
+      sessionTypeId: typeRow.id,
+      bootstrapPath: typeRow.bootstrapPath,
+    });
+    if (plan.kind === 'error') {
+      throw new Error(plan.message);
+    }
+
     const projectName = input.projectName ?? (basename(input.projectPath) || 'project');
     const projectId = await upsertProject(this.deps.db, input.projectPath, projectName);
 
@@ -122,6 +143,18 @@ export class PtyOrchestrator implements SessionOrchestrator {
     }
 
     this.handles.set(sessionId, handle);
+
+    // Attach the bootstrap launcher for PM/Coder/Raw unless a test opted out.
+    if (!input.skipClientLaunch) {
+      const launcher = new BootstrapLauncher({
+        clientBinary: typeRow.clientBinary,
+        plan,
+        handle,
+        onError: (err) => this.emitSystemError(sessionId, 'bootstrap_error', err.message),
+      });
+      this.launchers.set(sessionId, launcher);
+      this.rebindWithLauncher(handle, sessionId, callbacks, launcher);
+    }
 
     const row: NewSession = {
       id: sessionId,
@@ -181,10 +214,42 @@ export class PtyOrchestrator implements SessionOrchestrator {
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
     await this.pool.shutdown();
+    for (const launcher of this.launchers.values()) launcher.cancel();
+    this.launchers.clear();
     for (const handle of this.handles.values()) {
       handle.kill('SIGTERM');
     }
     this.handles.clear();
+  }
+
+  private rebindWithLauncher(
+    handle: PtyHandle,
+    sessionId: string,
+    base: MutableCallbacks,
+    launcher: BootstrapLauncher,
+  ): void {
+    handle.rebind({
+      onData: (chunk: string) => {
+        base.onData(chunk);
+        launcher.onData(chunk);
+      },
+      onOsc133: (event: Osc133Event) => {
+        base.onOsc133(event);
+        launcher.onOsc133(event);
+      },
+      onExit: base.onExit,
+    });
+    void sessionId; // referenced via closure in base callbacks
+  }
+
+  private emitSystemError(sessionId: string, code: string, message: string): void {
+    this.emit(sessionId, {
+      type: 'system:error',
+      sessionId,
+      code,
+      message,
+      timestamp: Date.now(),
+    });
   }
 
   private buildCallbacks(sessionId: string): MutableCallbacks {
@@ -225,6 +290,11 @@ export class PtyOrchestrator implements SessionOrchestrator {
 
   private async onPtyExit(sessionId: string, exitCode: number | null): Promise<void> {
     this.handles.delete(sessionId);
+    const launcher = this.launchers.get(sessionId);
+    if (launcher) {
+      launcher.cancel();
+      this.launchers.delete(sessionId);
+    }
     if (this.shuttingDown) return;
     const now = new Date();
     try {

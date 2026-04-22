@@ -20,6 +20,8 @@ export interface SpawnSessionInput {
   sessionTypeId: SessionTypeId;
   effort: SessionEffort;
   displayName?: string;
+  /** Skip launching the client binary + bootstrap injection (tests). */
+  skipClientLaunch?: boolean;
 }
 
 export interface SpawnedSession {

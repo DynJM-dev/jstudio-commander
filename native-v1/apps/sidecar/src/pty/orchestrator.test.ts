@@ -72,6 +72,7 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     subscribeToSession(spawned.id);
@@ -89,6 +90,7 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     subscribeToSession(spawned.id);
@@ -99,6 +101,7 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     subscribeToSession(spawned.id);
@@ -118,6 +121,7 @@ maybe('PtyOrchestrator — end-to-end pty + OSC 133', () => {
     const spawned = await orch.spawnSession({
       projectPath: tmpDir,
       sessionTypeId: 'raw',
+      skipClientLaunch: true,
       effort: 'medium',
     });
     subscribeToSession(spawned.id);
