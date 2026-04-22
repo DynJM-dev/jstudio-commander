@@ -148,6 +148,18 @@ export function ProjectPathPicker({ value, onChange, placeholder, autoFocus }: P
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
+      {/*
+        N2.1.1 Task 3 auto-close fix: previous code had both
+        onFocus={setOpen(true)} AND onClick={setOpen(o => !o)} on this
+        readOnly input. Clicking the input fired focus first (opened the
+        dropdown) then click (toggled the open state back to false),
+        producing the "dropdown briefly appears then closes on first click"
+        symptom Jose observed. Fix: onClick is now monotonic setOpen(true);
+        closing is handled exclusively by outside-mousedown, Esc, or an
+        explicit item commit. Clicking the input a second time is a no-op.
+        A user can still close the dropdown via Esc, Browse…, or any
+        click outside the picker container.
+      */}
       <input
         ref={inputRef}
         type="text"
@@ -156,7 +168,7 @@ export function ProjectPathPicker({ value, onChange, placeholder, autoFocus }: P
         placeholder={placeholder ?? 'Pick a project path…'}
         title={value || 'No path selected'}
         autoFocus={autoFocus}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen(true)}
         onKeyDown={onKeyDown}
         onFocus={() => setOpen(true)}
         style={{
