@@ -13,6 +13,7 @@
     "build": "turbo run build",
     "build:prep": "pnpm --filter @jstudio-commander/shared build && pnpm --filter @jstudio-commander/db build && pnpm --filter @jstudio-commander/frontend build && ./scripts/prepare-sidecar.sh",
     "build:app": "pnpm build:prep && pnpm --filter @jstudio-commander/shell tauri build",
+    "build:app:debug": "pnpm build:prep && pnpm --filter @jstudio-commander/shell tauri build --features devtools",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "turbo run lint",

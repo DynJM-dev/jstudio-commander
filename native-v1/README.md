@@ -47,7 +47,33 @@ pnpm install        # install workspace deps
 pnpm tauri:dev      # launch Tauri shell + sidecar + frontend in dev mode
 ```
 
-Production bundling (Task 10) — sidecar packaging strategy resolves in that task.
+## Production builds
+
+```bash
+pnpm build:app          # release build; Commander.app without DevTools
+pnpm build:app:debug    # release build with WKWebView Inspector enabled
+```
+
+`build:app:debug` compiles the Rust shell with the `devtools` Cargo feature
+(declared in `apps/shell/src-tauri/Cargo.toml` as an opt-in `features`
+entry). The resulting `Commander.app` behaves identically to the release
+build except right-click → Inspect Element opens Safari Web Inspector on
+the webview. Use this variant for SMOKE_DISCIPLINE-compliant diagnostic
+smoke — inspecting Network / Console tabs is how webview-fetch issues
+(per N2.1.1) are diagnosed at the correct layer.
+
+The plain `build:app` release does NOT ship DevTools; the feature is only
+compiled in when `--features devtools` is passed. `pnpm build:app:debug`
+passes the flag through Tauri CLI into cargo.
+
+## SMOKE_DISCIPLINE.md compliance
+
+Phase dispatches from N2.1.1 forward specify user-facing smoke scenarios at
+the outermost layer (Finder-launched `.app`, UI interactions, pixel
+observations) per `~/Desktop/Projects/jstudio-meta/standards/SMOKE_DISCIPLINE.md`.
+CODER's automated smoke is diagnostic; Jose-run user-facing smoke is the
+phase-close gate. The `build:app:debug` script exists to support that
+observational path without shipping DevTools on in release builds.
 
 ## Per-spec invariants
 
