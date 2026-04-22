@@ -231,6 +231,48 @@ ERR
   exit 127
 fi
 
+# N2.1.3 Task 2 (second root cause): Finder-launched .app inherits
+# PATH=/usr/bin:/bin:/usr/sbin:/sbin. node-pty-spawned zsh inherits that
+# minimal PATH and cannot resolve user-installed tools (claude + brew-
+# installed git + NVM-installed npm globals). Extend PATH with the full
+# set of plausible install locations. Default zdotdir (sourceUserRc=false)
+# does NOT source ~/.zshrc by design — the wrapper is the right layer to
+# fix this. See docs/diagnostics/N2.1.3-claude-path-evidence.md.
+#
+# Walk independent of NODE_BIN discovery: claude might live under a
+# different Node manager than the one that won NODE_BIN (e.g. NODE_BIN=
+# /usr/local/bin/node but claude installed via `npm install -g` under
+# NVM's ~/.nvm/versions/node/<ver>/bin).
+EXTRA_PATHS=""
+[ -d "$HOME/.claude/local" ] && EXTRA_PATHS="$HOME/.claude/local:$EXTRA_PATHS"
+for dir in /opt/homebrew/bin /usr/local/bin /opt/local/bin; do
+  [ -d "$dir" ] && EXTRA_PATHS="$dir:$EXTRA_PATHS"
+done
+for dir in \
+  "$HOME/.volta/bin" \
+  "$HOME/.fnm/current/bin" \
+  "$HOME/n/bin" \
+  "/usr/local/opt/node/bin"; do
+  [ -x "$dir/node" ] && EXTRA_PATHS="$dir:$EXTRA_PATHS"
+done
+nvm_root="${NVM_DIR:-$HOME/.nvm}"
+if [ -d "$nvm_root/versions/node" ]; then
+  for v in $(ls -1 "$nvm_root/versions/node" 2>/dev/null | sort -Vr); do
+    bin="$nvm_root/versions/node/$v/bin"
+    if [ -x "$bin/node" ]; then
+      EXTRA_PATHS="$bin:$EXTRA_PATHS"
+      break
+    fi
+  done
+fi
+if [ -n "$NODE_BIN" ]; then
+  EXTRA_PATHS="$(dirname "$NODE_BIN"):$EXTRA_PATHS"
+fi
+EXTRA_PATHS="${EXTRA_PATHS%:}"
+if [ -n "$EXTRA_PATHS" ]; then
+  export PATH="$EXTRA_PATHS:$PATH"
+fi
+
 export NODE_PATH="$SIDECAR_DIR/node_modules"
 exec "$NODE_BIN" "$SIDECAR_DIR/dist/index.js" "$@"
 WRAPPER_EOF
