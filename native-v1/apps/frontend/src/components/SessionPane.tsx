@@ -72,7 +72,7 @@ export function SessionPane({ index, sessionId, focused }: Props) {
         <>
           <ContextBar sessionId={sessionId} />
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-            <TerminalPane key={sessionId} sessionId={sessionId} />
+            <TerminalPane key={sessionId} sessionId={sessionId} focused={focused} />
             <StateMdDrawer key={`drawer-${sessionId}`} sessionId={sessionId} />
           </div>
         </>

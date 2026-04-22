@@ -24,9 +24,15 @@ import { httpJson } from '../lib/http.js';
 
 interface Props {
   sessionId: string;
+  /** N2.1.4 Bug E fix: when true, imperatively focus xterm's textarea so
+   *  typed keystrokes route to this pane's pty. Zustand focusedPaneIndex
+   *  state alone doesn't move DOM focus — clicking on pane chrome updates
+   *  Zustand but DOM focus stays on the last-focused xterm textarea. See
+   *  docs/diagnostics/N2.1.4-pane-input-routing-evidence.md. */
+  focused?: boolean;
 }
 
-export function TerminalPane({ sessionId }: Props) {
+export function TerminalPane({ sessionId, focused }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
@@ -125,6 +131,20 @@ export function TerminalPane({ sessionId }: Props) {
       serializeRef.current = null;
     };
   }, [sessionId]);
+
+  // N2.1.4 Bug E fix: bridge Zustand `focusedPaneIndex` state into xterm.js
+  // DOM focus. Clicking pane chrome (header, gutter, ContextBar, drawer)
+  // updates Zustand but doesn't move DOM focus, so keystrokes stayed on the
+  // previously-focused xterm textarea (typically pane 1's). Now whenever
+  // `focused` flips to true — via pane-click OR Cmd+Opt+←/→ focus cycle —
+  // we imperatively focus this pane's terminal. Idempotent: calling focus()
+  // on an already-focused xterm is a no-op. See
+  // docs/diagnostics/N2.1.4-pane-input-routing-evidence.md.
+  useEffect(() => {
+    if (focused && termRef.current) {
+      termRef.current.focus();
+    }
+  }, [focused]);
 
   return (
     <div
