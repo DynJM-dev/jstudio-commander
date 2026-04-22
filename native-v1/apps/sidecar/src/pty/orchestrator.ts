@@ -52,7 +52,10 @@ export class PtyOrchestrator implements SessionOrchestrator {
   private warmupPromise: Promise<void> | null = null;
 
   constructor(private readonly deps: PtyOrchestratorDeps) {
-    const { zdotdir } = ensureZdotdir();
+    // Initial zdotdir uses the current preference value. spawnSession
+    // refreshes before each new-session spawn so a preference toggle takes
+    // effect on the next session without restarting the sidecar.
+    const { zdotdir } = ensureZdotdir({ sourceUserRc: this.readSourceUserRc() });
     this.zdotdir = zdotdir;
 
     const size = deps.disablePool ? 0 : this.resolvePoolSize();
@@ -66,6 +69,21 @@ export class PtyOrchestrator implements SessionOrchestrator {
     );
     if (size > 0) {
       this.warmupPromise = this.pool.warmup();
+    }
+  }
+
+  /** Read preferences.zsh.source_user_rc (default false). */
+  private readSourceUserRc(): boolean {
+    try {
+      const row = this.deps.db.drizzle
+        .select()
+        .from(preferences)
+        .where(eq(preferences.key, 'zsh.source_user_rc'))
+        .get();
+      if (!row) return false;
+      return row.value === 'true' || row.value === '1';
+    } catch {
+      return false;
     }
   }
 
@@ -102,6 +120,11 @@ export class PtyOrchestrator implements SessionOrchestrator {
   async spawnSession(input: SpawnSessionInput): Promise<SpawnedSession> {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
+
+    // Refresh zdotdir so a preference toggle takes effect on next session.
+    // ensureZdotdir is cheap (2 readFileSync + possibly 1 writeFileSync);
+    // idempotent when the generated content hasn't changed.
+    ensureZdotdir({ sourceUserRc: this.readSourceUserRc() });
 
     // Look up session type BEFORE spawning so a missing bootstrap file fails
     // fast and cleanly — no orphan pty.

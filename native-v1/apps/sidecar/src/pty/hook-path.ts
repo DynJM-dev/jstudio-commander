@@ -34,13 +34,19 @@ export function resolveZdotdir(): string {
   return join(RUNTIME_DIR, 'zdotdir');
 }
 
+export interface EnsureZdotdirOptions {
+  /** When true, generated .zshrc sources user's ~/.zshrc after installing the
+   *  OSC 133 hook. Default false — see PHASE_N1_REPORT §4 deviation for
+   *  rationale. N2 exposes this via preferences.zsh.source_user_rc. */
+  sourceUserRc?: boolean;
+}
+
 /**
- * Ensures ~/.jstudio-commander-v1/zdotdir/.zshrc exists and sources:
- *   1. User's real ~/.zshrc (if present)
- *   2. The bundled OSC 133 hook
- * Idempotent — rewrites only if the hook path changed since last write.
+ * Ensures ~/.jstudio-commander-v1/zdotdir/.zshrc exists and sources the OSC
+ * 133 hook. When `sourceUserRc=true`, the hook-sourced .zshrc also sources
+ * the user's ~/.zshrc inline. Idempotent — rewrites only if content changed.
  */
-export function ensureZdotdir(): { zdotdir: string; hookPath: string } {
+export function ensureZdotdir(opts: EnsureZdotdirOptions = {}): { zdotdir: string; hookPath: string } {
   ensureRuntimeDir();
   const zdotdir = resolveZdotdir();
   const hookPath = resolveHookPath();
@@ -48,7 +54,7 @@ export function ensureZdotdir(): { zdotdir: string; hookPath: string } {
     mkdirSync(zdotdir, { recursive: true, mode: 0o755 });
   }
   const zshrcPath = join(zdotdir, '.zshrc');
-  const contents = buildZshrc(hookPath);
+  const contents = buildZshrc(hookPath, opts.sourceUserRc ?? false);
   let needsWrite = true;
   if (existsSync(zshrcPath)) {
     try {
@@ -61,27 +67,40 @@ export function ensureZdotdir(): { zdotdir: string; hookPath: string } {
   return { zdotdir, hookPath };
 }
 
-function buildZshrc(hookPath: string): string {
-  // N1 deviation from dispatch §6.6: this generated .zshrc does NOT source
-  // user's ~/.zshrc. Reason observed during Task 6 bringup: a typical
-  // oh-my-zsh / P10K user rc adds 4-5s init latency before the first prompt
-  // is painted, and any fatal error in user rc can kill the session before
-  // OSC 133 hooks install. For N1 we want deterministic OSC 133 emission on
-  // every spawn; user shell compat (aliases, PATH, prompt) is tracked as tech
-  // debt for N2 where we can add an opt-in `preferences.zsh.source_user_rc`
-  // flag with a timeout guard. Full rationale in PHASE_N1_REPORT §4 + §7.
+function buildZshrc(hookPath: string, sourceUserRc: boolean): string {
+  // Default (sourceUserRc=false): N1's minimal, deterministic .zshrc. Hook
+  // only. User aliases / prompt / PATH from ~/.zshrc NOT loaded — this trades
+  // shell-customization continuity for guaranteed OSC 133 emission with zero
+  // latency / zero risk of fatal errors in user rc killing the session before
+  // hooks install.
   //
-  // PATH carried into the pty still reflects the sidecar's inherited env
-  // (LoginWindow launchd defaults + Node 22's /usr/local/bin PATH), so most
-  // CLIs remain available — Claude, git, node, pnpm, etc.
-  return [
+  // Opt-in (sourceUserRc=true): after hook install, inline-source user's
+  // ~/.zshrc. Aliases / prompt / PATH apply in the session. Cost: if user rc
+  // is slow (oh-my-zsh, P10K) the first OSC 133 A marker is delayed; if it's
+  // fatally broken, the shell dies mid-init. Sidecar's bootstrap launcher
+  // holds a 15s ready-timeout that surfaces this via system:error. Per
+  // N1_ACCEPTANCE_MEMO §5 Q2 ratification: acceptable for opt-in behavior.
+  const lines = [
     '# JStudio Commander v1 — generated per-runtime .zshrc',
-    '# N1 scope: minimal zsh init + OSC 133 hook only. See hook-path.ts.',
-    '# Regenerated at sidecar startup; do not edit by hand.',
+    '# Regenerated at sidecar startup based on preferences.zsh.source_user_rc.',
+    '# Do not edit by hand — changes overwritten on next sidecar start.',
     '',
     `source ${shellQuote(hookPath)}`,
-    '',
-  ].join('\n');
+  ];
+  if (sourceUserRc) {
+    lines.push(
+      '',
+      '# preferences.zsh.source_user_rc=true — inline-source user rc.',
+      '# Fatal errors in ~/.zshrc will leave the session in an inconsistent',
+      '# state; this is the inherent cost of loading arbitrary user code.',
+      '# Set the preference back to false if sessions misbehave.',
+      'if [ -f "$HOME/.zshrc" ]; then',
+      '  source "$HOME/.zshrc" 2>/dev/null || true',
+      'fi',
+    );
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 function shellQuote(s: string): string {

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { Sidebar } from './components/Sidebar.js';
 import { TerminalPane } from './components/TerminalPane.js';
 import { NewSessionModal } from './components/NewSessionModal.js';
+import { PreferencesModal } from './components/PreferencesModal.js';
 import { ConnectionBanner } from './components/ConnectionBanner.js';
 import { useSessionStore } from './stores/sessionStore.js';
 
@@ -31,6 +32,7 @@ function Shell() {
         )}
       </main>
       <NewSessionModal />
+      <PreferencesModal />
     </div>
   );
 }

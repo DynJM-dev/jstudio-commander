@@ -7,18 +7,24 @@ interface SessionStoreState {
   activeSessionId: string | null;
   sidebarCollapsed: boolean;
   newSessionModalOpen: boolean;
+  preferencesOpen: boolean;
   setActiveSessionId: (id: string | null) => void;
   toggleSidebar: () => void;
   openNewSessionModal: () => void;
   closeNewSessionModal: () => void;
+  openPreferences: () => void;
+  closePreferences: () => void;
 }
 
 export const useSessionStore = create<SessionStoreState>((set) => ({
   activeSessionId: null,
   sidebarCollapsed: false,
   newSessionModalOpen: false,
+  preferencesOpen: false,
   setActiveSessionId: (id) => set({ activeSessionId: id }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   openNewSessionModal: () => set({ newSessionModalOpen: true }),
   closeNewSessionModal: () => set({ newSessionModalOpen: false }),
+  openPreferences: () => set({ preferencesOpen: true }),
+  closePreferences: () => set({ preferencesOpen: false }),
 }));
