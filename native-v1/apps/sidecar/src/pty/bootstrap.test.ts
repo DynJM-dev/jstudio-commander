@@ -97,7 +97,7 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('injects bootstrap after quiet period (>= quietMs)', async () => {
+  it('injects bootstrap after quiet period then commits with \\r after submitDelayMs', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
@@ -105,6 +105,7 @@ describe('BootstrapLauncher', () => {
       handle,
       quietMs: 80,
       readyTimeoutMs: 5_000,
+      submitDelayMs: 30,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     expect(writes).toEqual(['claude\n']);
@@ -116,24 +117,66 @@ describe('BootstrapLauncher', () => {
     // Still within quiet window — should not have injected yet.
     expect(writes).toEqual(['claude\n']);
     await new Promise((r) => setTimeout(r, 120));
-    // After 80ms quiet, bootstrap should be written.
-    expect(writes).toEqual(['claude\n', 'BOOT\n']);
+    // After 80ms quiet the content is written, but \r is still pending behind
+    // submitDelayMs=30 — the content write happens before the submit byte.
+    expect(writes).toEqual(['claude\n', 'BOOT\n', '\r']);
     launcher.cancel();
   });
 
-  it('appends newline when bootstrap content lacks trailing newline', async () => {
+  it('N2.1.4 Bug D fix — writes content BEFORE \\r and waits submitDelayMs between them', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
+      handle,
+      quietMs: 40,
+      submitDelayMs: 120,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    launcher.onData('banner');
+    await new Promise((r) => setTimeout(r, 80));
+    // Content flushed at quiet-period end; \r still pending.
+    expect(writes).toEqual(['claude\n', 'BOOT\n']);
+    await new Promise((r) => setTimeout(r, 180));
+    // After submitDelayMs, the commit byte lands.
+    expect(writes).toEqual(['claude\n', 'BOOT\n', '\r']);
+    launcher.cancel();
+  });
+
+  it('appends newline when bootstrap content lacks trailing newline, then \\r to submit', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'HELLO' },
       handle,
       quietMs: 40,
+      submitDelayMs: 20,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     launcher.onData('banner');
     await new Promise((r) => setTimeout(r, 100));
-    expect(writes).toEqual(['claude\n', 'HELLO', '\n']);
+    expect(writes).toEqual(['claude\n', 'HELLO', '\n', '\r']);
     launcher.cancel();
+  });
+
+  it('cancel() before submit delay fires aborts the \\r write', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'HI\n' },
+      handle,
+      quietMs: 20,
+      submitDelayMs: 200,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    launcher.onData('banner');
+    await new Promise((r) => setTimeout(r, 50));
+    // Content written but \r timer still pending.
+    expect(writes).toEqual(['claude\n', 'HI\n']);
+    launcher.cancel();
+    await new Promise((r) => setTimeout(r, 250));
+    // No \r should have fired after cancel.
+    expect(writes).toEqual(['claude\n', 'HI\n']);
   });
 
   it('skip plan launches client but writes no bootstrap content', async () => {

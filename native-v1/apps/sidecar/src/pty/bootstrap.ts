@@ -29,6 +29,13 @@ import type { Osc133Event } from '../osc133/parser.js';
 
 export const DEFAULT_QUIET_MS = 800;
 export const DEFAULT_READY_TIMEOUT_MS = 15_000;
+// N2.1.4 Bug D fix: delay between writing bootstrap content and the submit
+// byte (\r) so Claude Code's TUI fully registers the content as a paste
+// buffer before we commit it. 200ms is ample; probe at
+// docs/diagnostics/N2.1.4-bootstrap-autosend-evidence.md verified that a
+// single \r with any gap after the content write (observed with 10s gap)
+// cleanly commits the paste.
+export const DEFAULT_SUBMIT_DELAY_MS = 200;
 
 export interface BootstrapInject {
   kind: 'inject';
@@ -89,6 +96,9 @@ export interface LaunchOptions {
   handle: PtyHandle;
   quietMs?: number;
   readyTimeoutMs?: number;
+  /** Milliseconds to wait between the content write and the submit `\r` byte.
+   *  See DEFAULT_SUBMIT_DELAY_MS for rationale. Tests override to small values. */
+  submitDelayMs?: number;
   onError?: (err: Error) => void;
   onInjected?: () => void;
 }
@@ -106,13 +116,16 @@ export class BootstrapLauncher {
     'wait-for-zsh-prompt';
   private quietTimer: NodeJS.Timeout | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
+  private submitTimer: NodeJS.Timeout | null = null;
   private sawClaudeOutput = false;
   private readonly quietMs: number;
   private readonly readyTimeoutMs: number;
+  private readonly submitDelayMs: number;
 
   constructor(private readonly opts: LaunchOptions) {
     this.quietMs = opts.quietMs ?? DEFAULT_QUIET_MS;
     this.readyTimeoutMs = opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.submitDelayMs = opts.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;
   }
 
   /** Invoked by orchestrator on every OSC 133 event observed on this pty. */
@@ -140,6 +153,7 @@ export class BootstrapLauncher {
   cancel(): void {
     if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
+    if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'done';
   }
 
@@ -157,10 +171,24 @@ export class BootstrapLauncher {
   private onQuiet(): void {
     if (this.state !== 'wait-for-claude-ready') return;
     if (this.opts.plan.kind === 'inject') {
-      // Write content + newline. Claude Code treats this as first user input.
+      // Write content + trailing newline (hygiene — some bootstrap files
+      // omit a final \n). Claude Code's Ink-based TUI treats this
+      // multi-line blob as a paste buffer, NOT as a typed message: the
+      // content renders as `[Pasted text #N +M lines]` placeholders but
+      // stays in Claude's input line until the user presses Enter. See
+      // docs/diagnostics/N2.1.4-bootstrap-autosend-evidence.md.
+      //
+      // Schedule a \r (Enter-key) after submitDelayMs to COMMIT the paste
+      // as a fresh user message. The short delay lets Claude's TUI fully
+      // register the paste before we submit; skipping the delay works in
+      // probes but races in slower environments.
       this.opts.handle.write(this.opts.plan.content);
       if (!this.opts.plan.content.endsWith('\n')) this.opts.handle.write('\n');
-      this.opts.onInjected?.();
+      this.submitTimer = setTimeout(() => {
+        this.submitTimer = null;
+        this.opts.handle.write('\r');
+        this.opts.onInjected?.();
+      }, this.submitDelayMs);
     }
     if (this.readyTimer) clearTimeout(this.readyTimer);
     this.state = 'done';
