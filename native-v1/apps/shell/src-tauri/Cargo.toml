@@ -24,8 +24,13 @@ serde_json = "1"
 tauri-plugin-dialog = "2"
 
 [features]
-# Default features; no platform-specific gating yet.
 custom-protocol = ["tauri/custom-protocol"]
+# N2.1.1 Task 4: `devtools` enables right-click → Inspect Element in release
+# builds for smoke/diagnostic use. OFF by default — `pnpm build:app` produces
+# a no-inspector release. `pnpm build:app:debug` passes --features devtools
+# to tauri CLI so Jose (or CODER for smoke-readiness) can inspect without
+# switching to dev mode.
+devtools = ["tauri/devtools"]
 
 [profile.release]
 panic = "abort"
