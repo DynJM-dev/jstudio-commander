@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-04-22 — N2.1 SHIPPED (automated acceptance PASS, pending Jose UI smoke)
+
+**Context:** CODER M2.2 continuing spawn shipped N2.1 in ~1.5h wall-clock. 4 task commits + 1 report = 5 commits. Tests 58 → 71 (+13). Bundle 35 MB held. Rust 138/150. Zero N1/N2 regression. PHASE_N2.1_REPORT at `native-v1/docs/phase-reports/PHASE_N2.1_REPORT.md`.
+
+### D20 — Task 1 root-cause-first discipline pattern canonicalized
+
+CODER followed §5 + OS §20.LL-L11 literally: empty evidence commit `252cf04` BEFORE any fix. This is the canonical pattern for hotfix rotations requiring diagnosis-first. Future diagnostic-rotation dispatches should explicitly cite D20 as the pattern to follow — "file evidence commit before fix commit." Earned-lesson banked.
+
+### D21 — Root cause A (`SIDECAR_BIN` mismatch) was a latent N1 defect
+
+The Rust constant `SIDECAR_BIN = "jstudio-commander-sidecar"` didn't match `tauri.conf.json` externalBin basename `"sidecar-bin"`. `app.shell().sidecar()` returned ENOENT from Tauri's lookup table — the wrapper script was never invoked in production builds. **Defect sat latent through N1 + N2 because neither phase's smoke actually exercised the Rust spawn path** — both validated the wrapper standalone via direct invocation. Jose's dogfood was the load-bearing verification layer.
+
+**Reinforces D19** — dogfood-before-next-phase pattern. Confirms the lesson is architectural discipline, not one-off observation. All future native-v1 dispatch §2 acceptance criteria must include explicit "exercise via Finder-launched `.app` with `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin` OR `open -a Commander.app` via UI only" smoke. Non-negotiable going forward.
+
+### D22 — Wrapper Node-discovery strategy shipped
+
+Finder-launched apps inherit `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. Wrapper now walks:
+1. `JSTUDIO_NODE_BIN` env var (user-overridable)
+2. `$PATH` search
+3. 7 standard install paths (`/usr/local/bin/node`, `/opt/homebrew/bin/node`, etc.)
+4. NVM autodetect (`$HOME/.nvm/versions/node/*/bin/node`)
+5. User-facing error message if all miss
+
+Tech debt filed: discovery covers ~8 known install paths; unknown layouts (corporate installs, Apple Developer Tools node with different majors) could slip through. Expand as user reports land or ship `JSTUDIO_NODE_BIN` Preferences UI knob (LOW priority).
+
+### D23 — §8 PM verdicts for CTO relay (pending Jose smoke + relay together)
+
+- Q1 partial automated smoke: ACCEPTABLE for N2.1 close. Webdriver harness scoped in parallel with N3, not blocking. PM recommendation for CTO ratification.
+- Q2 bundle target: Already resolved per D11 (wrapper+dist indefinitely). No change needed for N3 firing. PM reiterates prior ratification.
+
+### D24 — PM recommendation for CTO N3 dispatch addendum
+
+Per CODER §9 recommendation #1 + D19 reinforced by D21: CTO must include explicit Finder-launched smoke in N3 dispatch. Specifically codify one of: `env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin <binary-path>` OR `open -a Commander.app` as required smoke step. Catches the latent-defect class N2.1 exposed. PM relays with smoke-verdict to CTO.
+
+---
+
 ## 2026-04-22 — N2.1 hotfix dispatched (post-N2 dogfood findings)
 
 **Context:** Jose ran `pnpm build:app` + Finder-launched `Commander.app` post-N2 acceptance. Two findings surfaced blocking N3: production sidecar spawn fails (Preferences modal shows "Sidecar unreachable — tried 127.0.0.1:11002..11011"); session spawn modal only shows effort selector (missing path input, type dropdown, submit button — likely cascade from sidecar-unreachable via `useSessionTypes()` failure). CTO filed narrow N2.1 hotfix dispatch.
