@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-04-22 — N2.1.2 dispatched + G12 dependency hygiene codified
+
+**Context:** CTO response to N2.1.1 PARTIAL SHIP (5/16 smoke, 2 fail steps 8+9, 8 blocked). Narrow hotfix dispatch + G12 guardrail codified in response to PM's commit-hygiene finding on N2.1.1.
+
+### D29 — N2.1.2 hotfix scope accepted
+
+Four-task hotfix at `docs/dispatches/N2_1_2_DISPATCH_MODAL_SELECTION_COMMITS.md` (110 lines): T1 diagnose selection commits via webview DevTools (empty evidence commit per G10, layer-named per G11); T2 fix both selection-commit bugs in `NewSessionModal.tsx`; T3 CODER smoke-readiness exercise of N2.1.1 steps 10-16 never-run-in-prod (report new latent bugs, do NOT fix — potential N2.1.3); T4 PHASE_REPORT + Jose user-facing smoke. Duration 0.25-0.5 day continuing CODER, budget $150-300. Scope stays narrow: if Task 3 surfaces bugs in spawn chain, they surface for potential N2.1.3, not absorbed.
+
+### D30 — G12 codified: Dependency declaration hygiene
+
+Guardrail G12 formally added to all future phase dispatches: any commit that adds `import` statements for a new package MUST also include the matching additions to `package.json` + lockfile in the same commit. Fresh-clone-and-install from any commit in the repo must produce a buildable state.
+
+**Precedent cited in dispatch §3:** N2.1.1 Task 2 commit `d376d50` imported `@fastify/cors` without dep declarations. PM cleaned up at `61669f0`. Silent fresh-clone breakage would not surface in CODER's existing-workspace testing.
+
+**Verification method:** CODER runs `pnpm install --frozen-lockfile` after each dep-touching commit.
+
+**Applies:** N2.1.2 forward. Standing reminder auto-included in every paste-to-CODER prompt per `feedback_coder_commit_hygiene_dep_additions` memory.
+
+### D31 — Post-N2.1.2 framing: dogfood window before N3
+
+If Jose 16/16 passes N2.1.2 user-facing smoke: **3-5 day dogfood window begins for real-use observation** before CTO drafts N3 scope review. N3 fire is NOT immediate. CTO's N3 scope gets informed by Jose's dogfood observations (ContextBar UX feel, split view ergonomics, STATE.md drawer utility under real work, scrollback restore fidelity, pre-warm pool responsiveness, workspace persistence across real sessions, any latent issues surfacing under real-work pressure).
+
+Framing benefit: N3 is the largest upcoming phase (renderer registry + JSONL parser + ContextBar live data + ChatThread + approval modal + frontend test suite). Dogfood-informed scope prevents building on unvalidated foundation.
+
+---
+
 ## 2026-04-22 — SMOKE_DISCIPLINE.md v1.0 landed + N2.1.1 hotfix dispatched
 
 **Context:** Jose re-dogfood on N2.1 SURFACED two failures Jose's live smoke caught but CODER's automated smoke missed. Same pattern as N2's post-ship modal gap. Two hits in two rotations confirms architectural discipline gap, not one-off. CTO authored SMOKE_DISCIPLINE.md v1.0 as structural fix + N2.1.1 hotfix dispatch.
