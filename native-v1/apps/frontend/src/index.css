@@ -3,6 +3,13 @@
 @theme {
   --color-background: #0b0d10;
   --color-foreground: #e7e9ee;
+  --color-surface: #161a20;
+  --color-border: rgba(255, 255, 255, 0.12);
+  --color-border-strong: rgba(255, 255, 255, 0.22);
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #ffffff;
+  --color-danger: #ff7b7b;
+  --color-muted: rgba(255, 255, 255, 0.04);
 }
 
 html, body, #root {
@@ -11,4 +18,10 @@ html, body, #root {
   font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
   background: var(--color-background);
   color: var(--color-foreground);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
