@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-04-22 — Native v1 N2 SHIPPED + §8 PM recommendations ready for CTO relay
+
+**Context:** CODER M2.2 (continuing spawn) shipped N2 in ~2.5h wall-clock, 9 commits, 58/58 sidecar + 10/10 shared + 10/10 db tests passing, bundle 35 MB (+1 MB for all N2 features). 8 of 10 §1 criteria fully demonstrable; §1.1 SEA ESCALATED per dispatch §3 Task 1 explicit fallback; §1.2 ContextBar PARTIAL (shape final, live metrics pending N3). §1.10 N1 regression guard HELD.
+
+### D8 — N2 acceptance posture pre-CTO-ratification
+
+PM review of PHASE_N2_REPORT complete. All 6 §4 deviations §5-authorized (dispatch §5 "surface better approaches" clause applied cleanly — D3 lesson codified in CODER behavior). No silent scope expansion. Report ready for CTO ratification.
+
+### D9 — SEA escalation outcome posture (pending CTO ratification)
+
+Task 1 SEA bundling is **mathematically incompatible with §16.5 target** (Node 22 stripped binary = 65 MB alone; ≤55 MB bundle impossible). Three options surfaced by CODER + PM recommendation:
+- (a) Revise §16.5 target to ≤80 MB so SEA becomes achievable.
+- **(b) Accept wrapper+dist indefinitely for personal-use v1.0** (PM recommendation).
+- (c) Commit to Rust-sidecar rewrite in dedicated migration phase (N6+).
+
+**PM recommendation (b):** Node 22 is already on every dev machine (zero real user friction); revising target forces SEA work for marginal UX improvement; (c) is a full re-architecture not justified for personal app. Revisit when D5 un-defer triggers fire (external distribution). CTO ratification pending.
+
+### D10 — N3 dispatch scoping pre-draft (PM recommendations for CTO)
+
+Three items for CTO to bake into N3 dispatch:
+- **ContextBar data hydration** (Q2): specify event-shape → cost_entries mapping up front in N3 §2 architectural contract. Prevents mid-flight reframes. Low-cost addition.
+- **Frontend test coverage** (Q3): fold RTL suite into N3 scope (NOT dedicated N2.5 phase). N3 already adds renderer registry + ChatThread + approval modal UI surface requiring tests. N3 likely 7-10 days vs N2's 2.5h.
+- **N3 JSONL parser placement** (CODER §9 recommendation): emit events onto existing WS bus, not separate pipeline. Existing `session:state` + `tool:use` / `tool:result` / `approval:prompt` event shapes in packages/shared/src/events.ts already anticipate this. Land parser as new module alongside orchestrator, not rewrite.
+
+### Tech debt trail from N2 (7 items filed, severity calibrated)
+
+All documented in PHASE_N2_REPORT §7 at OS §24.3 match-site level:
+- SEA/single-binary sidecar (MEDIUM → externalized per D9)
+- ContextBar placeholders (LOW — selector-swap when N3 data lands)
+- fs.watch ENOENT re-arm edge (LOW ~2hr)
+- Frontend test coverage = 0 (MEDIUM — ~1 day RTL suite, folds into N3 per D10)
+- Frontend bundle 848 KB / 235 KB gzip (LOW — dynamic imports ~4hr)
+- `.zshrc` timeout-guard simplified (LOW — re-evaluate if user reports land)
+- No beforeunload-serialize on Tauri Cmd+Q (LOW ~2hr Tauri IPC flush)
+
+No HIGH-severity debt introduced. Nothing load-bearing for v1.0.0 that isn't N3-scoped or explicitly externalized.
+
+---
+
 ## 2026-04-22 — N1 ACCEPTANCE MEMO + ARCHITECTURE_SPEC v1.3 + N2 DISPATCH READY
 
 **Context:** CTO filed `N1_ACCEPTANCE_MEMO.md` + `N2_DISPATCH_UI_SURFACES.md`. Signing decision crystallized (deferred indefinitely, not N1.1). v1.3 spec corrections folded by PM. N2 ready to fire.
