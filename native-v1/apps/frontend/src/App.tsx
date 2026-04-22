@@ -6,10 +6,12 @@ import { PreferencesModal } from './components/PreferencesModal.js';
 import { ConnectionBanner } from './components/ConnectionBanner.js';
 import { WorkspaceLayout } from './components/WorkspaceLayout.js';
 import { useSessionStore } from './stores/sessionStore.js';
+import { useWorkspaceSync } from './lib/workspaceSync.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
 
 function Shell() {
+  useWorkspaceSync();
   return (
     <div
       style={{
