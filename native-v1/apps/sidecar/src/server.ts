@@ -14,6 +14,7 @@
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
+import fastifyCors from '@fastify/cors';
 import type { InitializedDb } from '@jstudio-commander/db';
 
 import { EventBus } from './ws/event-bus.js';
@@ -45,6 +46,26 @@ export function createServer(deps: ServerDeps): FastifyInstance {
     // Raised from Fastify's 1 MB default to accommodate scrollback payloads
     // (≤5 MB decoded per MAX_SCROLLBACK_BYTES + ~33% base64 overhead).
     bodyLimit: MAX_JSON_BODY_BYTES,
+  });
+
+  // CORS (N2.1.1 Task 2 — webview-fetch-layer fix). The Tauri v2 webview
+  // serves the frontend from a `tauri://localhost` (or platform-equivalent)
+  // origin; fetches to `http://127.0.0.1:<port>` are cross-origin and
+  // without these headers WKWebView blocks the JS layer from reading the
+  // response body (observable as "fetch TypeError" / "Sidecar unreachable"
+  // in the frontend even though `curl` round-trips correctly).
+  //
+  // Scope is deliberately tight: the sidecar is always bound to 127.0.0.1
+  // only (see bindWithPortDiscovery host binding), so the only plausible
+  // webview origins are tauri://, tauri.localhost, and Tauri's localhost
+  // dev-server family. `origin: true` reflects the requesting Origin back
+  // — safe here because nothing external can reach the loopback interface.
+  // Credentials are disabled; we don't send cookies.
+  app.register(fastifyCors, {
+    origin: true,
+    credentials: false,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    maxAge: 3600,
   });
 
   app.register(fastifyWebsocket);

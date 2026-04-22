@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:11002 http://127.0.0.1:11003 http://127.0.0.1:11004 http://127.0.0.1:11005 http://127.0.0.1:11006 http://127.0.0.1:11007 http://127.0.0.1:11008 http://127.0.0.1:11009 http://127.0.0.1:11010 http://127.0.0.1:11011 ws://127.0.0.1:11002 ws://127.0.0.1:11003 ws://127.0.0.1:11004 ws://127.0.0.1:11005 ws://127.0.0.1:11006 ws://127.0.0.1:11007 ws://127.0.0.1:11008 ws://127.0.0.1:11009 ws://127.0.0.1:11010 ws://127.0.0.1:11011; img-src 'self' data: blob: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:"
     }
   },
   "bundle": {
