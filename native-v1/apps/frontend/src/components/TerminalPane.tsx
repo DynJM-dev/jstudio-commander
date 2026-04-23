@@ -65,7 +65,22 @@ export function TerminalPane({ sessionId, focused }: Props) {
     } catch (err) {
       console.warn('[terminal] WebGL init failed, falling back to canvas:', err);
     }
-    fit.fit();
+    // N2.1.5 Bug H fix: defer fit.fit() to the next animation frame so the
+    // browser's layout pass completes before we measure container
+    // dimensions. Synchronous fit.fit() on the same tick as term.open()
+    // inside a flex-1-in-flex-1 container frequently reads pre-layout
+    // getBoundingClientRect values → WebGL renderer caches cell atlas
+    // against miscomputed metrics → scrollback writes render with
+    // overlapping/garbled content (Jose's Step 11 observation). See
+    // docs/diagnostics/N2.1.5-bug-h-evidence.md.
+    // Upstream references: xtermjs/xterm.js#5320, #4841, #3584, #2394.
+    requestAnimationFrame(() => {
+      try {
+        fit.fit();
+      } catch {
+        /* container still sizing */
+      }
+    });
 
     const onResize = () => {
       try {
