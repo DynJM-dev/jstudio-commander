@@ -2,10 +2,10 @@
 
 **Phase:** N2.1.4 — Hotfix: Bug D (bootstrap autosend) + Bug E (pane input routing)
 **Started:** 2026-04-22 (continuing CODER spawn, no reset)
-**Completed:** 2026-04-22 (same rotation; PENDING Jose's user-facing smoke per §3)
+**Completed:** 2026-04-22 (same rotation; Jose's user-facing smoke PARTIAL — see §3)
 **Coder session:** Claude Code coder session at `~/Desktop/Projects/jstudio-commander/`
 **Model / effort used:** Opus 4.7 (1M context) / effort=xhigh continuing
-**Status:** CODER-COMPLETE; awaiting Jose's user-facing smoke per SMOKE_DISCIPLINE.md §5
+**Status:** NOT CLOSED — Bug E fix HELD (confirmed pane isolation); Bug D fix PARTIALLY HELD (reliable on 2nd+ launch, intermittent fail on first cold-launch); NEW Bug H (xterm.js visual rendering artifacts) surfaced as primary blocker for clean step 11 verification. Routed to PM/CTO for N2.1.5 scope. ESC interruption regression-guard CLEAN per Jose.
 
 ---
 
@@ -92,24 +92,38 @@ PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
 
 | Step (N2.1.1 §3.3 scenario) | Result | Notes |
 |---|---|---|
-| 1. `pnpm build:app:debug` succeeds | *[PENDING]* | |
-| 2. `.app` at expected path | *[PENDING]* | |
-| 3. Double-click launches Commander | *[PENDING]* | |
-| 4. Window within 2 s | *[PENDING]* | |
-| 5. Cmd+, → no "Sidecar unreachable" | *[PENDING]* | N2.1.1 regression guard |
-| 6. "+ New session" opens modal | *[PENDING]* | |
-| 7. Path picker opens + stays open + 3 sections visible | *[PENDING]* | N2.1.1 regression guard |
-| 8. Picking a project populates path, closes dropdown | *[PENDING]* | N2.1.2 regression guard |
-| 9. Session type dropdown selection commits | *[PENDING]* | N2.1.2 regression guard |
-| 10. **Submit spawns session + Claude boots + bootstrap AUTOSENDS** | *[PENDING — PRIMARY N2.1.4 TARGET (Bug D)]* | First typed keystroke must be a fresh message |
-| 11. OSC 133 marker on first prompt | *[PENDING]* | Unblocked once Step 10 autosubmits |
-| 12. Session in sidebar with live status | *[PENDING]* | |
-| 13. **+ Pane → 2nd session + input routes correctly** | *[PENDING — PRIMARY N2.1.4 TARGET (Bug E)]* | Click pane 2, type, verify only pane 2 receives |
-| 14. **Split view + Cmd+Opt+←/→ routes keystrokes** | *[PENDING — Bug E extension]* | Keyboard shortcut must move input routing, not just border |
-| 15. Cmd+Q closes | *[PENDING]* | |
-| 16. Re-launch restores sessions + scrollback + Recent | *[PENDING]* | |
+| 1. `pnpm build:app:debug` succeeds | PASS | |
+| 2. `.app` at expected path | PASS | |
+| 3. Double-click launches Commander | PASS | |
+| 4. Window within 2 s | PASS | |
+| 5. Cmd+, → no "Sidecar unreachable" | PASS | Preferences modal opens cleanly. N2.1.1 regression guard CLEAN. |
+| 6. "+ New session" opens modal | PASS | macOS TCC folder-permission prompt appeared (expected, standard macOS unsigned-app behavior for `~/Desktop/Projects/`). |
+| 7. Path picker opens + stays open + 3 sections | PASS | All 3 fields functional. **Side note (N3 or UI polish):** add "Max" effort option to the effort selector dropdown — currently only Low/Medium/High/xhigh surface. |
+| 8. Picking a project populates path, closes dropdown | PASS | N2.1.2 modal-selection-commit fix HELD. |
+| 9. Session type dropdown selection commits | PASS | N2.1.2 regression guard CLEAN. |
+| 10. Submit spawns session + bootstrap AUTOSENDS | **PARTIAL — INTERMITTENT** | First attempt: Submit spawned the session but bootstrap did NOT auto-send. Jose typed "HI" and Claude received `<bootstrap text>HI` concatenated — same symptom class as N2.1.3 Bug D. Jose restarted Commander.app; on subsequent cold launches bootstrap DOES auto-send correctly ("bootstrap is actually working for now"). **Diagnosis hypothesis:** timing race on first OSC 133 A detection after cold boot OR state carry-over from pre-restart runtime. Bug D fix (\r commit write) is mechanically in place (6 CODER commits verify), but the ~200ms `onQuiet` scheduling may be racing with first-ever Claude-TUI paste-buffer-ready signal. Reproduction is intermittent: second launch onward is clean. |
+| 11. OSC 133 marker on first prompt | **PARTIAL — NEW BUG H (terminal visual rendering artifacts)** | Terminal renders with visual glitches: text overlaps, line breaks in wrong positions, garbled content. "The entire terminal looks bugged, I know it's a text content thing, it kinda gets fixed when I write on it." Jose attached screenshots showing clear xterm.js rendering artifacts. OSC 133 marker fire status CANNOT be cleanly observed under these rendering conditions — the visual layer is confounded. Typical root causes: xterm.js WebGL addon Retina/DPR mismatch, initial-mount dimensions race, fit-addon resize-observer timing, CSS `line-height` vs WebGL cell metric mismatch. Bug H is the blocker for step 11's clean verification. |
+| 12. Session in sidebar with live status | PASS | Sidebar shows "active" state correctly. **Side note (defer):** no UI affordance to kill / delete sessions from the sidebar. Needs "X" / "kill" / "delete" button per session row. Route to N3 or UI polish. |
+| 13. + Pane → 2nd session + input routes correctly | PASS — **BUG E FIX HELD** | Jose opened PM session in Pane 2: bootstrap auto-sent (better than Pane 1's cold-launch behavior — supports timing-race hypothesis for Bug D). Opened 3rd pane with Coder: bootstrap also auto-sent. Cross-pane input isolation CONFIRMED: "What I write in one pane is not leaking outside the program or other panes." N2.1.4 Task 4 focus-bridge fix (new `useEffect` calling `term.focus()` on `focused` prop change) HELD. N2 §1.4 per-pane isolation acceptance restored. Terminals remain visually bugged per Bug H. |
+| 14. Split view + Cmd+Opt+←/→ focus cycle | PASS | "CMD Option lets me cycle between panes." Keystrokes route to newly-focused pane per Bug E fix. |
+| 15. Cmd+Q closes | PASS (implicit — "Everything else is fine") | |
+| 16. Re-launch restores sessions | PASS (implicit — Jose restarted Commander during smoke, sessions restored correctly) | |
 
-*(PM appends Jose's step-by-step pass/fail here after dogfood.)*
+**Jose also explicitly verified (off-script but valuable):**
+- **ESC interruption works.** Regression guard CLEAN for interrupt semantics — this was a web-Commander bug class historically.
+
+**Additional smoke-time observations:**
+
+- **Bug H (NEW — primary blocker):** xterm.js visual rendering artifacts on initial terminal mount. Self-repairs on user input (buffer redraw triggered by keystroke). Likely xterm.js WebGL-addon + fit-addon initialization race in the WKWebView. See §6 routing.
+- **Bug D (STILL PARTIAL):** bootstrap autosend fix LANDED (mechanical verification: 6 commits, `\r` write scheduled at `onQuiet`, 97/97 tests green), but reproducible INTERMITTENT failure on first post-cold-launch spawn. Subsequent launches clean. Fix is ~90% there; first-launch race needs a second look.
+- **UI polish gaps (Jose-noted, not blockers):** add Max effort option (step 7), add kill/delete session affordance (step 12), overall UI layout "looks awful visually" — EXPECTED N3 / dedicated UI polish phase; Jose explicitly acknowledged "I know we'll work on it but we need to keep moving."
+- **N2.1.3 FINDINGS status (from Task 4 exhaustive sweep):** none surfaced as blockers during this smoke. PUT /api/preferences type coercion bug, Raw-session auto-launches-claude design Q, persona-ack visibility TBD — all remain parked per prior routing.
+
+**Tally: 11 PASS (1-9, 14-15, 16) + 1 PASS-with-sidenote (12) + 1 PASS (13 = Bug E fix HELD) + 1 PARTIAL-intermittent (10 = Bug D partially held) + 1 PARTIAL-blocked-by-H (11). 16/16 NOT achieved.**
+
+**N2.1.4 does NOT close cleanly** per SMOKE_DISCIPLINE.md §5 — but this is much closer than N2.1.3. Bug E confirmed fixed. Bug D partially fixed (reliably works on 2nd+ launch, fails first). New Bug H (xterm.js rendering) is the primary blocker.
+
+**Jose's escalation input (important):** explicitly authorized broader tooling use going forward — "If we need to spawn more agents to debug, try things out or do anything else we can do it. As well as external tools if needed." Standing-authorization expansion. Should inform N2.1.5 scope + CODER authorization.
 
 ## 4. Deviations from dispatch
 
