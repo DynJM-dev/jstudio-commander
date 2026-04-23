@@ -27,20 +27,27 @@ import { homedir } from 'node:os';
 import type { PtyHandle } from './manager.js';
 import type { Osc133Event } from '../osc133/parser.js';
 
-// N2.1.6 Bug D: replaced the N2.1.4 / N2.1.5 quiet-period heuristic for
-// "Claude ready to accept paste" with a deterministic signal — counting
-// OSC title emissions. See diagnostics/N2.1.6-bug-d-deterministic-signal-
-// evidence.md. quietMs retained in LaunchOptions for backward compat but
-// unused in the new path.
-export const DEFAULT_QUIET_MS = 800;
-// N2.1.6: the readyTimeoutMs is no longer a "fail if no output" guard —
-// it's a "signal not observed, attempt anyway with warning" fallback.
-// Bumped from 15s to 30s per dispatch §2 Task 1 fix section.
+// N2.1.6 Bug D: HYBRID signal replacing the N2.1.4 / N2.1.5 quiet-period
+// heuristic. We require BOTH (a) at least 1 OSC title emission from the
+// client binary (structural gate — Claude has definitely launched past
+// the pre-banner silence) AND (b) a post-banner chunk-gap quiet period
+// (timing signal — Claude has finished rendering its boot chrome and is
+// idle at its input line). See diagnostics/N2.1.6-bug-d-deterministic-
+// signal-evidence.md §2.3 + smoke-readiness §2 corrective finding.
+//
+// Earlier N2.1.6 attempt required readyOscCount=2 but Claude at idle only
+// emits 1 title (launch banner); a second only fires if the Spinner
+// animates during processing. Idle-ready Claude never hit 2, so bootstrap
+// never injected. Hybrid fix anchors the quiet-period to post-banner.
+export const DEFAULT_QUIET_MS = 500;
+// The readyTimeoutMs is a "signal not observed, attempt anyway with
+// warning" fallback. 30 s per dispatch §2 Task 1 fix section.
 export const DEFAULT_READY_TIMEOUT_MS = 30_000;
-// N2.1.6 Bug D signal: wait until at least this many OSC title emissions
-// are observed from the client binary. First emission = TUI launched
-// (banner title); 2nd emission = spinner animating = ready for paste.
-export const DEFAULT_READY_OSC_COUNT = 2;
+// Minimum OSC title emissions required as the structural gate. 1 is
+// sufficient — the banner title emission is the "Claude launched past
+// pre-exec silence" signal. Setting >1 would be wrong for idle-ready
+// Claude (see §2.3 of evidence + smoke-readiness corrective).
+export const DEFAULT_READY_OSC_COUNT = 1;
 // Post-write paste-quiesce window. N2.1.5 discovery: after writing the
 // bracketed-paste content, wait for Claude's TUI to stop rendering before
 // committing with \r.
@@ -151,18 +158,19 @@ export class BootstrapLauncher {
     | 'wait-for-paste-quiet'
     | 'done'
     | 'errored' = 'wait-for-zsh-prompt';
+  private quietTimer: NodeJS.Timeout | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
   private submitTimer: NodeJS.Timeout | null = null;
   private submitDeadline = 0;
   private oscTitleCount = 0;
+  private readonly quietMs: number;
   private readonly readyTimeoutMs: number;
   private readonly readyOscCount: number;
   private readonly submitDelayMs: number;
   private readonly submitMaxWaitMs: number;
 
   constructor(private readonly opts: LaunchOptions) {
-    // `quietMs` accepted for back-compat but unused in the N2.1.6 path.
-    void opts.quietMs;
+    this.quietMs = opts.quietMs ?? DEFAULT_QUIET_MS;
     this.readyTimeoutMs = opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.readyOscCount = opts.readyOscCount ?? DEFAULT_READY_OSC_COUNT;
     this.submitDelayMs = opts.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;
@@ -189,20 +197,29 @@ export class BootstrapLauncher {
   /** Invoked on every pty output chunk while the launcher is active. */
   onData(chunk: string): void {
     if (this.state === 'wait-for-claude-ready') {
-      // N2.1.6 Bug D: count OSC title emissions from the client binary as
-      // the deterministic "TUI ready for paste" signal. Ink-based TUIs
-      // (Claude Code, Gemini CLI, others) update terminal title
-      // repeatedly during boot + via Spinner animation frames. First
-      // emission = launch banner title; readyOscCount-th emission = TUI
-      // render loop active = paste handler installed.
+      // N2.1.6 Bug D — HYBRID signal: structural gate (OSC title seen)
+      // AND timing signal (post-gate quiet period).
       //
-      // Structural signal — counts title-setting escape frames, not text
-      // content. Immune to upstream banner/spinner string renames per OS
-      // §24.1 pattern-matching discipline.
+      // Until readyOscCount OSC title emissions have been seen, Claude
+      // hasn't demonstrably booted past its pre-banner phase — we don't
+      // start the quiet-period timer. This protects against pre-boot
+      // silence gaps triggering false-positive ready.
+      //
+      // Once the gate has passed, any subsequent chunk resets the quiet
+      // timer. When `quietMs` of silence passes AFTER the gate opened,
+      // Claude is idle at its input line → paste-ready.
+      //
+      // This hybrid replaces an earlier N2.1.6 attempt that used only
+      // OSC count >= 2 — but Claude at idle only emits 1 title (launch
+      // banner); a second only fires during Spinner animation. See
+      // docs/diagnostics/N2.1.6-bug-d-deterministic-signal-evidence.md
+      // §2.3 + smoke-readiness corrective.
       const matches = chunk.match(OSC_TITLE_RE);
       if (matches) this.oscTitleCount += matches.length;
       if (this.oscTitleCount >= this.readyOscCount) {
-        this.proceedToInject();
+        // Gate open — reset quiet timer on this chunk.
+        if (this.quietTimer) clearTimeout(this.quietTimer);
+        this.quietTimer = setTimeout(() => this.proceedToInject(), this.quietMs);
       }
       return;
     }
@@ -224,6 +241,7 @@ export class BootstrapLauncher {
   }
 
   cancel(): void {
+    if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
     if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'done';
@@ -247,6 +265,10 @@ export class BootstrapLauncher {
 
   private proceedToInject(): void {
     if (this.state !== 'wait-for-claude-ready') return;
+    if (this.quietTimer) {
+      clearTimeout(this.quietTimer);
+      this.quietTimer = null;
+    }
     if (this.readyTimer) {
       clearTimeout(this.readyTimer);
       this.readyTimer = null;
@@ -288,6 +310,7 @@ export class BootstrapLauncher {
   }
 
   private fail(err: Error): void {
+    if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
     if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'errored';

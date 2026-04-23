@@ -104,47 +104,51 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('N2.1.6: OSC title count < readyOscCount does NOT trigger inject', async () => {
+  it('N2.1.6: without OSC title gate, quiet period alone does NOT trigger inject', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
+      quietMs: 30,
       readyTimeoutMs: 5_000,
-      readyOscCount: 2,
       submitDelayMs: 30,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    // Claude output arrives but no title escapes — should NOT trigger inject.
+    // Claude output arrives but no title escapes — gate never opens.
+    // Even after `quietMs` passes in silence, we do NOT inject.
     launcher.onData('Welcome to Claude.');
-    launcher.onData('Loading tools...');
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 80));
     expect(writes).toEqual(['claude\n']);
     launcher.cancel();
   });
 
-  it('N2.1.6: first OSC title fires but below readyOscCount — waits for second', async () => {
+  it('N2.1.6: OSC title opens gate; inject fires after post-gate quietMs', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
+      quietMs: 60,
       readyTimeoutMs: 5_000,
-      readyOscCount: 2,
-      submitDelayMs: 30,
+      submitDelayMs: 150, // long enough that the \r doesn't land during the inject assertion
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    // Gate opens on first chunk with OSC title.
     launcher.onData(`boot chrome${OSC_TITLE_1}more chrome`);
     await new Promise((r) => setTimeout(r, 30));
-    // Only 1 OSC title → still waiting. No paste yet.
     expect(writes).toEqual(['claude\n']);
-    // 2nd OSC title fires → ready → paste injected.
-    launcher.onData(OSC_TITLE_2);
+    // Chunk resets quiet timer; inject still not fired.
+    launcher.onData('more boot chrome');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(writes).toEqual(['claude\n']);
+    // Now wait out the quiet window (60ms since last chunk).
+    await new Promise((r) => setTimeout(r, 70));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
-    await new Promise((r) => setTimeout(r, 60));
-    // After submitDelayMs post-write quiesce, commit byte lands.
+    // After submitDelayMs (150ms) of post-write silence, \r commits.
+    await new Promise((r) => setTimeout(r, 200));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
@@ -155,22 +159,21 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
-      readyOscCount: 2,
+      quietMs: 30,
       submitDelayMs: 80,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);  // Two titles in one chunk → ready.
-    // Content was flushed immediately on 2nd title.
+    launcher.onData(OSC_TITLE_1);
+    await new Promise((r) => setTimeout(r, 60));
+    // After quietMs post-gate, content is injected.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
     // Claude continues to render the paste — each chunk pushes submit out.
     launcher.onData('rendering paste line 1');
     await new Promise((r) => setTimeout(r, 40));
     launcher.onData('rendering paste line 2');
     await new Promise((r) => setTimeout(r, 40));
-    // Still no \r — we kept pushing it.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
-    // Now let silence pass.
     await new Promise((r) => setTimeout(r, 120));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
     launcher.cancel();
@@ -182,12 +185,13 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
-      readyOscCount: 2,
+      quietMs: 30,
       submitDelayMs: 500,
       submitMaxWaitMs: 120,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
+    launcher.onData(OSC_TITLE_1);
+    await new Promise((r) => setTimeout(r, 60));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
     // Feed chunks at intervals shorter than submitDelayMs=500 so chunk-gap
     // quiesce never triggers — hard deadline 120ms will.
@@ -210,8 +214,8 @@ describe('BootstrapLauncher', () => {
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
       readyTimeoutMs: 60,
-      readyOscCount: 2,
-      submitDelayMs: 200, // long enough that commit doesn't fire before assertion below
+      quietMs: 100,  // not relevant when OSC never seen
+      submitDelayMs: 200,
       submitMaxWaitMs: 2_000,
       onWarning: warnSpy,
       onError: errSpy,
@@ -220,12 +224,10 @@ describe('BootstrapLauncher', () => {
     // No OSC titles ever arrive. Wait past readyTimeoutMs (60ms) but before
     // the submitDelayMs (200ms)-gated commit would fire.
     await new Promise((r) => setTimeout(r, 120));
-    // Warning fired; error did NOT.
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringMatching(/Claude TUI ready signal .+ not observed/),
     );
     expect(errSpy).not.toHaveBeenCalled();
-    // Bootstrap was attempted despite the missing signal; \r still pending.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
     await new Promise((r) => setTimeout(r, 200));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
@@ -238,13 +240,13 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'HELLO' },
       handle,
-      readyOscCount: 2,
+      quietMs: 30,
       submitDelayMs: 20,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
-    await new Promise((r) => setTimeout(r, 50));
+    launcher.onData(OSC_TITLE_1);
+    await new Promise((r) => setTimeout(r, 80));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'HELLO', '\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
@@ -255,13 +257,13 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'HI\n' },
       handle,
-      readyOscCount: 2,
+      quietMs: 30,
       submitDelayMs: 200,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
-    // Content + bracketed-paste wrappers written; \r timer still pending.
+    launcher.onData(OSC_TITLE_1);
+    await new Promise((r) => setTimeout(r, 60));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'HI\n', '\x1b[201~']);
     launcher.cancel();
     await new Promise((r) => setTimeout(r, 250));
@@ -274,11 +276,11 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'skip' },
       handle,
-      readyOscCount: 2,
+      quietMs: 30,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
-    await new Promise((r) => setTimeout(r, 50));
+    launcher.onData(OSC_TITLE_1);
+    await new Promise((r) => setTimeout(r, 80));
     expect(writes).toEqual(['claude\n']);
     launcher.cancel();
   });
@@ -307,7 +309,7 @@ describe('BootstrapLauncher', () => {
       plan: { kind: 'skip' },
       handle,
       readyTimeoutMs: 60,
-      readyOscCount: 2,
+      quietMs: 1_000,
       onWarning: warnSpy,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
@@ -321,5 +323,6 @@ describe('BootstrapLauncher', () => {
 // Sanity on the default constant — if someone bumps it accidentally the tests
 // above would get noisy; tie the intent in.
 describe('constants', () => {
-  it('DEFAULT_QUIET_MS is 800', () => expect(DEFAULT_QUIET_MS).toBe(800));
+  it('DEFAULT_QUIET_MS is 500 (N2.1.6 post-gate quiet window)', () =>
+    expect(DEFAULT_QUIET_MS).toBe(500));
 });
