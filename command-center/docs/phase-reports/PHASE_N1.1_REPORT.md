@@ -71,7 +71,24 @@ The "+0 → +3" flip is the load-bearing signal. `+N>0` means the bundle's resou
 
 ### 3.3 User-facing smoke outcome
 
-**BLANK at filing.** PM appends after Jose re-runs N1 §9's 8 steps against `Command Center.app`. N1 closes on 8/8 PASS.
+**PASSED 8/8 by Jose on 2026-04-23 (second attempt).** First attempt blocked by a latent zombie-window bug — window created with `visible: false` per KB-P1.14 plus the frontend's `invoke('show_window')` IPC call failing silently (`.catch(() => {})` in `main.tsx` swallowed whatever went wrong). Process registered in Launch Services as visible + non-background (Dock icon showed), but zero windows existed in the AX window list. Critically, CODER's §3.2 smoke-readiness only checked process-level `visible: true, background only: false` via System Events — that's app-process visibility, NOT window presence. The zombie state was present during CODER's smoke-readiness too; it just wasn't detected because the check was derivative, not observational (SMOKE_DISCIPLINE §3.4 + OS §20.LL-L14 ground-truth-over-derivation pattern).
+
+**PM-shipped fix in-rotation (per Jose authorization 2026-04-23 "if the fix is small don't waste time routing to CTO"):**
+- `tauri.conf.json` window config: `"visible": false` → `"visible": true` + added `"center": true`. Pre-React HTML skeleton in `index.html` (the "Command Center / Booting…" placeholder) still satisfies KB-P1.14 rule 4 (skeleton visible ≤200ms) — the webview paints the HTML skeleton before React mounts. Eliminates the IPC handshake dependency entirely. Window is owned by Rust at creation-time, not by frontend at post-paint-time. `"center": true` addresses a secondary finding: on Jose's multi-monitor setup (2560×1440 primary + 3440×1440 UWQHD secondary), Tauri's default positioning spawned the window at x=3379 — on the secondary, not primary. `"center": true` centers on the active display regardless of monitor layout.
+- This is a 2-line config change in `tauri.conf.json`; no Rust changes (G5 still 149/150); no dep changes (G12 still clean); no test-surface changes.
+
+**Step-by-step smoke outcomes (per dispatch §9, target `Command Center.app`):**
+
+1. **Build** — PASS (CODER-built bundle; Jose did not rebuild; `open` launched directly).
+2. **First launch → skeleton visible ≤200ms** — PASS. Dark "Command Center / ready. / ⌘+, opens Preferences" skeleton visible immediately. Debug tab later reported `first-paint 8.0 ms` — 25× under the 200ms dispatch §1.1 target.
+3. **Preferences health (⌘,)** — PASS. General tab shows Sidecar `Healthy` indicator, `port 11003`, `uptime 138s`, bearer token `5f77f209-7d38-47a2-be5d-d986bfb759ca` with Copy button, version `0.1.0-n1`. Screenshot evidence captured by Jose.
+4. **Debug tab** — PASS. `9 tables loaded (click to expand)`, GPU `Hardware accelerated` with Renderer `Apple GPU`, Vendor `Apple Inc.`, WebGL `webgl2`. `first-paint 8.0 ms` timestamp displayed. Screenshot evidence captured.
+5. **Close Preferences (Escape)** — PASS. Modal dismisses, skeleton remains.
+6. **xterm scrollbar-gutter probe** — PASS. "Show probe" button toggles an inline xterm pane; "Hide probe" collapses it; no 14px right-side dead strip visible. Screenshot evidence captured.
+7. **Single-instance lock** — PASS. Second `open` on the bundle focuses the existing window rather than spawning a second process.
+8. **Clean shutdown + restart** — PASS. ⌘Q quits cleanly; relaunch via `open` restores bearer + sidecar port from `~/.commander/config.json` + skeleton re-appears promptly.
+
+**All 8 criteria observable in pixels, not derived properties.** N1.1 close gate met. N1 close gate met (was blocked on N1.1 passing).
 
 ## 4. Deviations from dispatch
 
@@ -80,6 +97,8 @@ The "+0 → +3" flip is the load-bearing signal. `+N>0` means the bundle's resou
 **D2 — User-facing string audit beyond tauri.conf.json.** Dispatch §2 T2 reads "Only the user-facing `productName` + bundle `identifier` flip." Three adjacent user-facing strings surfaced during the audit — HTML document title, pre-React skeleton label (visible during the ~40ms before React mounts), and the React welcome heading (the main skeleton text Jose will see on every launch). Flipped all three from "Commander"/"Command-Center" to "Command Center" for consistency. Internal strings (Rust `.expect("failed to build Commander")` panic message, `capabilities/default.json` description, `CommanderDb` TypeScript type name) remain unchanged — those are developer-facing.
 
 **D3 — `spctl` post-sign gate is a grep-for-absence, not a clean-exit assertion.** Ad-hoc-signed (non-Developer-ID) bundles cannot exit clean on `spctl --assess`; D5 indefinite defer of Developer-ID signing stands. The gate that matters is the absence of the specific malformed-bundle error string (`"code has no resources but signature indicates they must be present"`). Script's `grep -q` captures that exactly. When Developer-ID signing un-defers, `spctl -a -vvv` will return clean and the gate can tighten.
+
+**D4 (post-filing, PM-shipped 2026-04-23) — `"visible": true` + `"center": true` in window config.** Surfaced during Jose's first N1.1 smoke attempt: Dock icon appeared but no window. PM diagnosis (§3.3) isolated a zombie-window state — window created hidden, frontend IPC to `show_window` failed silently, window stayed hidden indefinitely. Fix is 2 lines in `tauri.conf.json`. Per Jose's standing authorization "if the fix is small don't waste time routing to CTO," PM shipped this directly rather than opening an N1.2 rotation. Code fix committed alongside the §3.3 PASSED append. No Rust changes (G5 still 149/150); no dep changes (G12 still clean). KB-P1.14 rule 4 (skeleton ≤200ms) satisfied via the pre-React HTML skeleton already in `index.html` — the webview paints that before React mounts, so no blank-flash regression from flipping `visible: false` → `visible: true`.
 
 ## 5. Issues encountered and resolution
 

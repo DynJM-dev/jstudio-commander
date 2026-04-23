@@ -94,6 +94,14 @@ Scaffold Command-Center from an empty monorepo target: Bun-workspaces layout (sh
 
 **Routing:** N1.1 hotfix dispatch required per dispatch §9 closing + §10. Scope proposed by PM: (T1) post-build codesign pass in `build:app` pipeline, (T2) rename `Commander` → `Command Center` with bundle ID update (eliminates v1 collision), (T3) stale-bundle cleanup instructions for Jose, (T4) CODER smoke-readiness + Jose re-runs 8-step §9 smoke. Estimated ~3 LOC in build scripts + `tauri.conf.json` edits. N1 close blocks on N1.1 passing.
 
+**RESOLVED 2026-04-23 — N1.1 shipped + PM-shipped zombie-window follow-on + Jose 8/8 PASSED.** Full timeline:
+1. N1.1 T1+T2 (codesign pass + `Commander` → `Command Center` rename) shipped at commit `a1cce71`.
+2. Jose's first N1.1 smoke uncovered a second latent bug not in N1.1's scope: zombie-window state — process registered with Launch Services (Dock icon) but zero windows in AX list. Root cause: window spawned with `visible: false` per KB-P1.14 + frontend's `invoke('show_window')` IPC call failing silently (swallowed by `.catch(() => {})` in `main.tsx`). CODER's §3.2 smoke-readiness check (`process whose background only is false`) measured app-process visibility, not pixel-window presence — missed the zombie state on the original N1 rotation too.
+3. PM-shipped fix in-rotation per Jose's small-scope authorization: `"visible": true` + `"center": true` in `tauri.conf.json`. Pre-React HTML skeleton in `index.html` preserves KB-P1.14 rule 4 (skeleton ≤200ms). See PHASE_N1.1_REPORT §3.3 + §4 D4 for the full diagnosis + fix detail.
+4. Jose 8/8 smoke PASSED 2026-04-23 with screenshot evidence (first-paint 8.0ms, 9 tables, GPU hardware-accelerated, single-instance lock, config persistence across ⌘Q + relaunch).
+
+N1 CLOSED. CTO to ratify + draft N2 (plugin + MCP dual-protocol) with D-KB-07 narrow-primitive tool surface + D-KB-08 Tauri perf framing + §8 Q1/Q2 ratifications (`~/.commander/` state dir + `bun:test` at sidecar) baked in per 2026-04-23 DECISIONS.md.
+
 ## 4. Deviations from dispatch
 
 **D1 — `bun:test` substituted for Vitest in the sidecar workspace.** Dispatch §5 specifies Vitest at sidecar from N1. Vitest runs on Node and can't resolve `bun:sqlite`, so the first test run errored at import. `bun:test` has API parity (describe/it/expect/beforeAll/afterAll) and runs in Bun's native runtime where `bun:sqlite` is a first-class module. Frontend + `packages/shared` + `packages/ui` stay on Vitest (jsdom + React testing). **Impact:** none functional. Forward compat note — when we add cross-runtime test utilities they live in `packages/shared` on Vitest.

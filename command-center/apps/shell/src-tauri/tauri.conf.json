@@ -21,7 +21,8 @@
         "fullscreen": false,
         "decorations": true,
         "titleBarStyle": "Visible",
-        "visible": false
+        "visible": true,
+        "center": true
       }
     ],
     "security": {
