@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
-    "build:binary": "bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile bin/commander-sidecar",
+    "build:binary": "bash scripts/build-binary.sh",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "bun test tests/"
   },
   "dependencies": {
     "@commander/shared": "workspace:*",
@@ -19,7 +19,6 @@
   "devDependencies": {
     "@types/bun": "1.1.14",
     "drizzle-kit": "0.30.1",
-    "typescript": "5.7.2",
-    "vitest": "2.1.8"
+    "typescript": "5.7.2"
   }
 }

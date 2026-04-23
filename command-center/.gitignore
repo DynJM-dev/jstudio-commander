@@ -5,6 +5,10 @@ target/
 .turbo/
 .vite/
 
+# Parent repo .gitignore has *.icns rule for an abandoned attempt; command-center
+# needs the Tauri icon tracked. Negation scoped to our bundle's icons dir only.
+!apps/shell/src-tauri/icons/*.icns
+
 # Bun
 .bun/
 

@@ -1,0 +1,41 @@
+[package]
+name = "commander-shell"
+version = "0.1.0-n1"
+description = "JStudio Command-Center — Tauri v2 Rust shell (≤150 LOC per ARCHITECTURE_SPEC §2.2)."
+authors = ["Jose Miguel Bonilla"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "commander_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.1", features = [] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-single-instance = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# KB-P4.15 — every platform-specific dep is cfg-gated from day one, even though
+# v1 is macOS-only. When Windows/Linux targets land, cross-compile still works.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }
+
+[features]
+# `devtools` enables right-click → Inspect Element in release builds for
+# smoke + diagnostic use. OFF by default. `bun run build:app:debug` passes
+# --features devtools so Jose (or CODER for smoke-readiness) can inspect
+# without switching to dev mode.
+custom-protocol = ["tauri/custom-protocol"]
+devtools = ["tauri/devtools"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
