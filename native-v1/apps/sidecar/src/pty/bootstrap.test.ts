@@ -77,13 +77,20 @@ describe('BootstrapLauncher', () => {
     return { handle, writes, writeSpy: handle.write as unknown as ReturnType<typeof vi.fn> };
   }
 
+  // N2.1.6 test helpers — produce synthetic OSC title emissions
+  // (\x1b]0;<text>\x07) that mimic Claude Code's Ink spinner updates.
+  // Each call returns ONE emission; tests compose sequences.
+  const OSC_TITLE_1 = '\x1b]0;✳ Claude Code\x07'; // banner
+  const OSC_TITLE_2 = '\x1b]0;⠂ Claude Code\x07'; // spinner frame 1
+  const OSC_TITLE_3 = '\x1b]0;⠄ Claude Code\x07'; // spinner frame 2
+
   it('writes clientBinary + newline only after A marker', async () => {
     const { handle, writes, writeSpy } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'skip' },
       handle,
-      quietMs: 50,
+      readyTimeoutMs: 5_000,
     });
 
     // Pre-A markers: no write
@@ -97,49 +104,64 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('N2.1.5: wraps content in bracketed-paste markers + commits after quiesce', async () => {
-    const { handle, writes } = makeFakeHandle();
-    const launcher = new BootstrapLauncher({
-      clientBinary: 'claude',
-      plan: { kind: 'inject', path: '/ignored', content: 'BOOT\n' },
-      handle,
-      quietMs: 80,
-      readyTimeoutMs: 5_000,
-      submitDelayMs: 30,
-      submitMaxWaitMs: 2_000,
-    });
-    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    expect(writes).toEqual(['claude\n']);
-
-    launcher.onData('Welcome to Claude.');
-    launcher.onData('Loaded tools.');
-    await new Promise((r) => setTimeout(r, 30));
-    // Still within Claude-ready quiet window — no paste yet.
-    expect(writes).toEqual(['claude\n']);
-    await new Promise((r) => setTimeout(r, 70));
-    // After 80ms quiet the bracketed-paste-wrapped content is flushed.
-    // \r is still pending in the post-write quiesce window.
-    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
-    await new Promise((r) => setTimeout(r, 60));
-    // After submitDelayMs of post-write quiesce, commit byte lands.
-    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
-    launcher.cancel();
-  });
-
-  it('N2.1.5: post-write pty chunks extend the quiesce; commit waits for gap', async () => {
+  it('N2.1.6: OSC title count < readyOscCount does NOT trigger inject', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
-      quietMs: 40,
+      readyTimeoutMs: 5_000,
+      readyOscCount: 2,
+      submitDelayMs: 30,
+      submitMaxWaitMs: 2_000,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    // Claude output arrives but no title escapes — should NOT trigger inject.
+    launcher.onData('Welcome to Claude.');
+    launcher.onData('Loading tools...');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(writes).toEqual(['claude\n']);
+    launcher.cancel();
+  });
+
+  it('N2.1.6: first OSC title fires but below readyOscCount — waits for second', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
+      handle,
+      readyTimeoutMs: 5_000,
+      readyOscCount: 2,
+      submitDelayMs: 30,
+      submitMaxWaitMs: 2_000,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    launcher.onData(`boot chrome${OSC_TITLE_1}more chrome`);
+    await new Promise((r) => setTimeout(r, 30));
+    // Only 1 OSC title → still waiting. No paste yet.
+    expect(writes).toEqual(['claude\n']);
+    // 2nd OSC title fires → ready → paste injected.
+    launcher.onData(OSC_TITLE_2);
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    await new Promise((r) => setTimeout(r, 60));
+    // After submitDelayMs post-write quiesce, commit byte lands.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
+    launcher.cancel();
+  });
+
+  it('N2.1.6: post-write pty chunks extend the quiesce; commit waits for gap', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
+      handle,
+      readyOscCount: 2,
       submitDelayMs: 80,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 60));
-    // Content has been flushed; submitTimer is counting toward commit.
+    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);  // Two titles in one chunk → ready.
+    // Content was flushed immediately on 2nd title.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
     // Claude continues to render the paste — each chunk pushes submit out.
     launcher.onData('rendering paste line 1');
@@ -154,47 +176,75 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('N2.1.5: hard deadline commits even if pty never quiesces', async () => {
+  it('N2.1.6: hard deadline commits even if post-paste pty never quiesces', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
-      quietMs: 20,
+      readyOscCount: 2,
       submitDelayMs: 500,
       submitMaxWaitMs: 120,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 40));
-    // Content flushed.
+    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
-    // Keep feeding chunks at intervals shorter than submitDelayMs=500 so
-    // chunk-gap-based quiesce never triggers — but hard deadline 120ms will.
+    // Feed chunks at intervals shorter than submitDelayMs=500 so chunk-gap
+    // quiesce never triggers — hard deadline 120ms will.
     launcher.onData('chunk');
     await new Promise((r) => setTimeout(r, 50));
     launcher.onData('chunk');
     await new Promise((r) => setTimeout(r, 50));
     launcher.onData('chunk');
     await new Promise((r) => setTimeout(r, 60));
-    // By now past hard-deadline from paste flush — commit has fired.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
 
-  it('appends newline when bootstrap content lacks trailing newline, then \\r to submit', async () => {
+  it('N2.1.6: readyTimeout fallback — warns and proceeds with bootstrap (no error)', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const warnSpy = vi.fn();
+    const errSpy = vi.fn();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
+      handle,
+      readyTimeoutMs: 60,
+      readyOscCount: 2,
+      submitDelayMs: 200, // long enough that commit doesn't fire before assertion below
+      submitMaxWaitMs: 2_000,
+      onWarning: warnSpy,
+      onError: errSpy,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    // No OSC titles ever arrive. Wait past readyTimeoutMs (60ms) but before
+    // the submitDelayMs (200ms)-gated commit would fire.
+    await new Promise((r) => setTimeout(r, 120));
+    // Warning fired; error did NOT.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/Claude TUI ready signal .+ not observed/),
+    );
+    expect(errSpy).not.toHaveBeenCalled();
+    // Bootstrap was attempted despite the missing signal; \r still pending.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
+    launcher.cancel();
+  });
+
+  it('appends newline when bootstrap content lacks trailing newline, then \\r', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'HELLO' },
       handle,
-      quietMs: 40,
+      readyOscCount: 2,
       submitDelayMs: 20,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 100));
+    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
+    await new Promise((r) => setTimeout(r, 50));
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'HELLO', '\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
@@ -205,18 +255,16 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'HI\n' },
       handle,
-      quietMs: 20,
+      readyOscCount: 2,
       submitDelayMs: 200,
       submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 50));
+    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
     // Content + bracketed-paste wrappers written; \r timer still pending.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'HI\n', '\x1b[201~']);
     launcher.cancel();
     await new Promise((r) => setTimeout(r, 250));
-    // No \r should have fired after cancel.
     expect(writes).toEqual(['claude\n', '\x1b[200~', 'HI\n', '\x1b[201~']);
   });
 
@@ -226,11 +274,11 @@ describe('BootstrapLauncher', () => {
       clientBinary: 'claude',
       plan: { kind: 'skip' },
       handle,
-      quietMs: 40,
+      readyOscCount: 2,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 100));
+    launcher.onData(OSC_TITLE_1 + OSC_TITLE_2);
+    await new Promise((r) => setTimeout(r, 50));
     expect(writes).toEqual(['claude\n']);
     launcher.cancel();
   });
@@ -251,21 +299,21 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('readyTimeout fires when client binary produces no output', async () => {
-    const { handle } = makeFakeHandle();
-    const errSpy = vi.fn();
+  it('skip plan — readyTimeout fallback proceeds cleanly with no writes beyond claude\\n', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const warnSpy = vi.fn();
     const launcher = new BootstrapLauncher({
-      clientBinary: 'doesnotexist',
+      clientBinary: 'claude',
       plan: { kind: 'skip' },
       handle,
-      quietMs: 40,
-      readyTimeoutMs: 80,
-      onError: errSpy,
+      readyTimeoutMs: 60,
+      readyOscCount: 2,
+      onWarning: warnSpy,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
-    await new Promise((r) => setTimeout(r, 150));
-    expect(errSpy).toHaveBeenCalled();
-    expect((errSpy.mock.calls[0]![0] as Error).message).toMatch(/produced no output/);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(warnSpy).toHaveBeenCalled();
+    expect(writes).toEqual(['claude\n']);
     launcher.cancel();
   });
 });

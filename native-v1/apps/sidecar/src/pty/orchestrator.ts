@@ -197,6 +197,17 @@ export class PtyOrchestrator implements SessionOrchestrator {
         plan,
         handle,
         onError: (err) => this.emitSystemError(sessionId, 'bootstrap_error', err.message),
+        // N2.1.6: Claude-ready signal (OSC title count) didn't fire in
+        // readyTimeoutMs. Launcher attempts bootstrap anyway; surface the
+        // warning to Jose in the session so he can report if bootstrap fails.
+        onWarning: (msg) =>
+          this.emit(sessionId, {
+            type: 'system:warning',
+            sessionId,
+            code: 'bootstrap_ready_signal_timeout',
+            message: msg,
+            timestamp: Date.now(),
+          }),
       });
       this.launchers.set(sessionId, launcher);
       this.rebindWithLauncher(handle, sessionId, callbacks, launcher);
@@ -251,6 +262,35 @@ export class PtyOrchestrator implements SessionOrchestrator {
   async stopSession(sessionId: string): Promise<void> {
     const handle = this.handles.get(sessionId);
     if (handle) handle.kill('SIGTERM');
+  }
+
+  /** N2.1.6 Task 3: full kill-and-remove lifecycle.
+   *  SIGTERM the pty → await onPtyExit (5s cap) → SIGKILL fallback →
+   *  delete the sessions row. ON DELETE CASCADE on session_events /
+   *  tool_events / approval_prompts / cost_entries cleans those up.
+   *  onPtyExit already emits session:status('stopped') + session:stopped
+   *  on the channel; no extra event emission needed here. */
+  async deleteSession(sessionId: string): Promise<void> {
+    const handle = this.handles.get(sessionId);
+    if (handle) {
+      handle.kill('SIGTERM');
+      const deadline = Date.now() + 5_000;
+      while (this.handles.has(sessionId) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // SIGTERM ignored? Escalate to SIGKILL and brief wait.
+      const still = this.handles.get(sessionId);
+      if (still) {
+        still.kill('SIGKILL');
+        const hardDeadline = Date.now() + 1_000;
+        while (this.handles.has(sessionId) && Date.now() < hardDeadline) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+    }
+    // Remove DB row regardless of whether pty was live. ON DELETE CASCADE
+    // handles related tables.
+    await this.deps.db.drizzle.delete(sessions).where(eq(sessions.id, sessionId));
   }
 
   /**

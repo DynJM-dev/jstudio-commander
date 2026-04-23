@@ -27,15 +27,30 @@ import { homedir } from 'node:os';
 import type { PtyHandle } from './manager.js';
 import type { Osc133Event } from '../osc133/parser.js';
 
+// N2.1.6 Bug D: replaced the N2.1.4 / N2.1.5 quiet-period heuristic for
+// "Claude ready to accept paste" with a deterministic signal — counting
+// OSC title emissions. See diagnostics/N2.1.6-bug-d-deterministic-signal-
+// evidence.md. quietMs retained in LaunchOptions for backward compat but
+// unused in the new path.
 export const DEFAULT_QUIET_MS = 800;
-export const DEFAULT_READY_TIMEOUT_MS = 15_000;
-// N2.1.4 introduced this as a fixed post-content delay. N2.1.5 evolves it
-// into a chunk-gap-based wait: after writing bootstrap content, any pty
-// output received resets the submit timer. Commit fires when
-// `submitDelayMs` of silence passes OR when `submitMaxWaitMs` hard
-// deadline expires. Docs: diagnostics/N2.1.5-bug-d-evidence.md.
+// N2.1.6: the readyTimeoutMs is no longer a "fail if no output" guard —
+// it's a "signal not observed, attempt anyway with warning" fallback.
+// Bumped from 15s to 30s per dispatch §2 Task 1 fix section.
+export const DEFAULT_READY_TIMEOUT_MS = 30_000;
+// N2.1.6 Bug D signal: wait until at least this many OSC title emissions
+// are observed from the client binary. First emission = TUI launched
+// (banner title); 2nd emission = spinner animating = ready for paste.
+export const DEFAULT_READY_OSC_COUNT = 2;
+// Post-write paste-quiesce window. N2.1.5 discovery: after writing the
+// bracketed-paste content, wait for Claude's TUI to stop rendering before
+// committing with \r.
 export const DEFAULT_SUBMIT_DELAY_MS = 300;
 export const DEFAULT_SUBMIT_MAX_WAIT_MS = 3_000;
+// Match any OSC title update: ESC ] {0,1,2} ; ... terminator (BEL or ST).
+// Used to count emissions as the Claude-ready signal. Content-agnostic:
+// any title-setting escape sequence counts, regardless of the text
+// payload (OS §24.1 — structural signal, not content pattern-match).
+const OSC_TITLE_RE = /\x1b\][012];[^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
 export interface BootstrapInject {
   kind: 'inject';
@@ -94,17 +109,30 @@ export interface LaunchOptions {
   clientBinary: string; // 'claude' or future multi-AI equivalents
   plan: BootstrapPlan;
   handle: PtyHandle;
+  /** Legacy N2.1.5 quiet-period field — retained for API compat; unused by
+   *  the N2.1.6 OSC-title-count ready detection. Tests may pass it as noop. */
   quietMs?: number;
+  /** Hard timeout (ms) for the Claude-ready signal. If OSC title count
+   *  doesn't reach `readyOscCount` before this window, emit a warning and
+   *  attempt the bootstrap write anyway (prefer attempt-and-fail over
+   *  blocking). Default 30 000 ms. */
   readyTimeoutMs?: number;
+  /** Number of OSC title emissions required to consider Claude's TUI
+   *  ready for paste. Default 2 — first is the launch banner, second is
+   *  the Ink Spinner's first animated frame. */
+  readyOscCount?: number;
   /** Chunk-gap (ms) after the paste write: if no new pty output arrives
    *  within this window, commit via `\r`. Reset on every new chunk. Tests
    *  override to small values. Default 300 ms. */
   submitDelayMs?: number;
   /** Hard deadline (ms) after the paste write. Even if pty output keeps
-   *  streaming, we commit once this deadline passes. Guards against Claude
-   *  Code TUIs that never go quiet. Default 3000 ms. */
+   *  streaming, we commit once this deadline passes. Default 3000 ms. */
   submitMaxWaitMs?: number;
   onError?: (err: Error) => void;
+  /** Non-fatal signal: Claude-ready wasn't observed in time; attempted
+   *  bootstrap write anyway. Orchestrator routes this to a
+   *  `system:warning` WS event for Jose to see in the session. */
+  onWarning?: (message: string) => void;
   onInjected?: () => void;
 }
 
@@ -117,32 +145,34 @@ export interface LaunchOptions {
  *   - bailing out if Claude never produces output within readyTimeoutMs
  */
 export class BootstrapLauncher {
-  // N2.1.5 added 'wait-for-paste-quiet' — the post-content-write window
-  // during which we watch for pty quiescence before committing with \r.
   private state:
     | 'wait-for-zsh-prompt'
     | 'wait-for-claude-ready'
     | 'wait-for-paste-quiet'
     | 'done'
     | 'errored' = 'wait-for-zsh-prompt';
-  private quietTimer: NodeJS.Timeout | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
   private submitTimer: NodeJS.Timeout | null = null;
   private submitDeadline = 0;
-  private sawClaudeOutput = false;
-  private readonly quietMs: number;
+  private oscTitleCount = 0;
   private readonly readyTimeoutMs: number;
+  private readonly readyOscCount: number;
   private readonly submitDelayMs: number;
   private readonly submitMaxWaitMs: number;
 
   constructor(private readonly opts: LaunchOptions) {
-    this.quietMs = opts.quietMs ?? DEFAULT_QUIET_MS;
+    // `quietMs` accepted for back-compat but unused in the N2.1.6 path.
+    void opts.quietMs;
     this.readyTimeoutMs = opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    this.readyOscCount = opts.readyOscCount ?? DEFAULT_READY_OSC_COUNT;
     this.submitDelayMs = opts.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;
     this.submitMaxWaitMs = opts.submitMaxWaitMs ?? DEFAULT_SUBMIT_MAX_WAIT_MS;
   }
 
-  /** Invoked by orchestrator on every OSC 133 event observed on this pty. */
+  /** Invoked by orchestrator on every OSC 133 event observed on this pty.
+   *  Only the outer-zsh A marker (fires BEFORE claude execs) is relevant —
+   *  Claude's inner TUI does not source the OSC 133 hook, so no markers
+   *  fire during its lifetime (PM verified in N2.1.6 dispatch §0.1). */
   onOsc133(event: Osc133Event): void {
     if (this.state !== 'wait-for-zsh-prompt') return;
     if (event.marker !== 'A') return;
@@ -157,11 +187,23 @@ export class BootstrapLauncher {
   }
 
   /** Invoked on every pty output chunk while the launcher is active. */
-  onData(_chunk: string): void {
+  onData(chunk: string): void {
     if (this.state === 'wait-for-claude-ready') {
-      this.sawClaudeOutput = true;
-      if (this.quietTimer) clearTimeout(this.quietTimer);
-      this.quietTimer = setTimeout(() => this.onQuiet(), this.quietMs);
+      // N2.1.6 Bug D: count OSC title emissions from the client binary as
+      // the deterministic "TUI ready for paste" signal. Ink-based TUIs
+      // (Claude Code, Gemini CLI, others) update terminal title
+      // repeatedly during boot + via Spinner animation frames. First
+      // emission = launch banner title; readyOscCount-th emission = TUI
+      // render loop active = paste handler installed.
+      //
+      // Structural signal — counts title-setting escape frames, not text
+      // content. Immune to upstream banner/spinner string renames per OS
+      // §24.1 pattern-matching discipline.
+      const matches = chunk.match(OSC_TITLE_RE);
+      if (matches) this.oscTitleCount += matches.length;
+      if (this.oscTitleCount >= this.readyOscCount) {
+        this.proceedToInject();
+      }
       return;
     }
     if (this.state === 'wait-for-paste-quiet') {
@@ -182,7 +224,6 @@ export class BootstrapLauncher {
   }
 
   cancel(): void {
-    if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
     if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'done';
@@ -190,46 +231,48 @@ export class BootstrapLauncher {
 
   private armReadyTimeout(): void {
     this.readyTimer = setTimeout(() => {
-      if (this.state !== 'wait-for-claude-ready' || this.sawClaudeOutput) return;
-      this.fail(
-        new Error(
-          `Client binary "${this.opts.clientBinary}" produced no output within ${this.readyTimeoutMs}ms`,
-        ),
+      if (this.state !== 'wait-for-claude-ready') return;
+      // N2.1.6: didn't observe readyOscCount title updates in time.
+      // Previous semantics (fail-if-no-output) replaced with warn-and-
+      // proceed: prefer attempting the bootstrap write over blocking.
+      // If Claude is slow but responsive, bootstrap still commits when
+      // Claude processes it.
+      this.opts.onWarning?.(
+        `Claude TUI ready signal (${this.readyOscCount} OSC title updates) not observed ` +
+          `in ${this.readyTimeoutMs}ms (saw ${this.oscTitleCount}); attempting bootstrap write anyway.`,
       );
+      this.proceedToInject();
     }, this.readyTimeoutMs);
   }
 
-  private onQuiet(): void {
+  private proceedToInject(): void {
     if (this.state !== 'wait-for-claude-ready') return;
+    if (this.readyTimer) {
+      clearTimeout(this.readyTimer);
+      this.readyTimer = null;
+    }
     if (this.opts.plan.kind === 'inject') {
       // N2.1.4 Bug D: Claude Code's Ink TUI treats multi-line pty input as
-      // a paste buffer (see `[Pasted text #N]` placeholders), so a trailing
-      // \n lands inside the paste. A separate \r (Enter-key) is the submit.
-      //
-      // N2.1.5 Bug D residual: wrap content in bracketed-paste markers
-      // (\x1b[200~…\x1b[201~) so Claude's TUI recognizes the paste
-      // explicitly — independent of chunk-size heuristics that can fail on
-      // a cold-launched TUI. Terminator \x1b[201~ tells Claude "paste ends",
-      // so the subsequent \r is unambiguously a submit.
-      //
-      // Also replace N2.1.4's fixed 200ms submit delay with a post-write
-      // chunk-gap-based quiesce + hard deadline. Cold launches can have
-      // 2-9s silent windows during Claude boot; fixed-timer racing those
-      // caused the N2.1.4 Step 10 intermittent failure.
-      // See docs/diagnostics/N2.1.5-bug-d-evidence.md.
+      // a paste buffer — \n lands inside, only \r commits.
+      // N2.1.5 Bug D: bracketed-paste markers (\x1b[200~…\x1b[201~) tell
+      //   Claude explicitly "this is a paste" regardless of chunk-size
+      //   heuristics. The terminator unambiguously marks paste end so the
+      //   following \r is a submit.
+      // N2.1.6 Bug D: no more time-based "Claude ready" detection — this
+      //   function runs only after readyOscCount title updates (or
+      //   readyTimeoutMs fallback). See diagnostics/N2.1.6-bug-d-
+      //   deterministic-signal-evidence.md.
       this.opts.handle.write('\x1b[200~');
       this.opts.handle.write(this.opts.plan.content);
       if (!this.opts.plan.content.endsWith('\n')) this.opts.handle.write('\n');
       this.opts.handle.write('\x1b[201~');
       this.state = 'wait-for-paste-quiet';
       this.submitDeadline = Date.now() + this.submitMaxWaitMs;
-      // Prime the submit timer; onData will reset it on every new chunk.
       if (this.submitTimer) clearTimeout(this.submitTimer);
       this.submitTimer = setTimeout(() => this.commit(), this.submitDelayMs);
-      if (this.readyTimer) clearTimeout(this.readyTimer);
       return;
     }
-    if (this.readyTimer) clearTimeout(this.readyTimer);
+    // `skip` plan: launch-only, no bootstrap write needed.
     this.state = 'done';
   }
 
@@ -245,7 +288,6 @@ export class BootstrapLauncher {
   }
 
   private fail(err: Error): void {
-    if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
     if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'errored';
