@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@commander/shared": "workspace:*",
+    "@fastify/websocket": "^11.2.0",
     "drizzle-orm": "0.38.2",
     "fastify": "5.2.0",
     "pino": "9.6.0"

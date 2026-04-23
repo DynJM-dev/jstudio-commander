@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 
+export type PreferencesTab = 'general' | 'plugin' | 'debug';
+
 interface PreferencesStore {
   open: boolean;
   setOpen: (open: boolean) => void;
-  activeTab: 'general' | 'debug';
-  setActiveTab: (tab: 'general' | 'debug') => void;
+  activeTab: PreferencesTab;
+  setActiveTab: (tab: PreferencesTab) => void;
 }
 
 // Zustand for pure UI state per ARCHITECTURE_SPEC §4. No server state here —
@@ -12,6 +14,6 @@ interface PreferencesStore {
 export const usePreferencesStore = create<PreferencesStore>((set) => ({
   open: false,
   setOpen: (open) => set({ open }),
-  activeTab: 'general',
+  activeTab: 'general' as PreferencesTab,
   setActiveTab: (activeTab) => set({ activeTab }),
 }));

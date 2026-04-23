@@ -1,0 +1,8 @@
+{
+  "name": "commander",
+  "version": "0.1.0-n2",
+  "description": "Command-Center multi-session orchestrator. Streams Claude Code hook events to the local Command-Center sidecar over HTTP for task/run/knowledge coordination. Requires Command-Center running locally with COMMANDER_PORT + COMMANDER_TOKEN env vars set.",
+  "author": { "name": "JStudio" },
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json"
+}

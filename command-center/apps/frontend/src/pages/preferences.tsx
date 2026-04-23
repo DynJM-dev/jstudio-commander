@@ -1,13 +1,22 @@
-import { useQuery } from '@tanstack/react-query';
-import { Check, Copy } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Check, Copy, RefreshCw } from 'lucide-react';
 import { Suspense, lazy, useCallback, useMemo, useState } from 'react';
 import { Button } from '../components/ui/button';
 import { DialogShell } from '../components/ui/dialog';
 import { TabsShell } from '../components/ui/tabs';
 import { getFirstPaintMs } from '../lib/first-paint';
 import { probeGpu } from '../lib/gpu-probe';
-import { type HealthResponse, fetchHealth, readSidecarConfig } from '../lib/sidecar-client';
-import { usePreferencesStore } from '../state/preferences-store';
+import {
+  type HealthResponse,
+  type HookEventSummary,
+  type RecentEventsResponse,
+  fetchHealth,
+  fetchRecentEvents,
+  readSidecarConfig,
+  replayLastEvent,
+} from '../lib/sidecar-client';
+import { type PreferencesTab, usePreferencesStore } from '../state/preferences-store';
+import { PluginTab } from './preferences-plugin-tab';
 
 const XtermProbe = lazy(() =>
   import('../components/xterm-probe').then((m) => ({ default: m.XtermProbe })),
@@ -27,13 +36,14 @@ export function PreferencesModal({ open, onOpenChange }: PreferencesModalProps) 
       open={open}
       onOpenChange={onOpenChange}
       title="Preferences"
-      description="Configure Command-Center and inspect sidecar state."
+      description="Configure Command Center and inspect sidecar state."
     >
       <TabsShell
         value={activeTab}
-        onValueChange={(v) => setActiveTab(v as 'general' | 'debug')}
+        onValueChange={(v) => setActiveTab(v as PreferencesTab)}
         tabs={[
           { value: 'general', label: 'General', content: <GeneralTab /> },
+          { value: 'plugin', label: 'Plugin', content: <PluginTab /> },
           { value: 'debug', label: 'Debug', content: <DebugTab /> },
         ]}
       />
@@ -45,6 +55,7 @@ export function PreferencesModal({ open, onOpenChange }: PreferencesModalProps) 
 
 const HEALTH_QUERY_KEY = ['sidecar', 'health'] as const;
 const CONFIG_QUERY_KEY = ['sidecar', 'config'] as const;
+const RECENT_EVENTS_QUERY_KEY = ['sidecar', 'recent-events'] as const;
 
 // ----- General tab -----
 
@@ -183,6 +194,8 @@ function DebugTab() {
 
   return (
     <div className="space-y-6">
+      <RecentEventsPanel port={configQuery.data?.port} />
+
       <section>
         <SectionLabel>Schema</SectionLabel>
         <button
@@ -259,6 +272,110 @@ function DebugTab() {
         ) : null}
       </section>
     </div>
+  );
+}
+
+// ----- Recent hook events panel (acceptance 2.2 + 2.3) -----
+
+function RecentEventsPanel({ port }: { port: number | undefined }) {
+  const queryClient = useQueryClient();
+  const eventsQuery = useQuery<RecentEventsResponse>({
+    queryKey: RECENT_EVENTS_QUERY_KEY,
+    queryFn: async () => {
+      if (!port) throw new Error('no port');
+      return fetchRecentEvents(port, { limit: 20 });
+    },
+    enabled: Boolean(port),
+    refetchInterval: 3_000,
+  });
+
+  const replay = useMutation({
+    mutationFn: async () => {
+      if (!port) throw new Error('no port');
+      return replayLastEvent(port);
+    },
+    onSettled: () => {
+      // Force a refresh of the events list AFTER the replay so the user can
+      // see the count stayed the same (acceptance 2.3 de-dupe verification).
+      void queryClient.invalidateQueries({ queryKey: RECENT_EVENTS_QUERY_KEY });
+    },
+  });
+
+  const count = eventsQuery.data?.count ?? 0;
+  const events = eventsQuery.data?.events ?? [];
+
+  return (
+    <section>
+      <div className="flex items-center justify-between">
+        <SectionLabel>Recent hook events</SectionLabel>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-neutral-500 font-mono">
+            {count} event{count === 1 ? '' : 's'}
+          </span>
+          <Button
+            variant="outline"
+            onClick={() => eventsQuery.refetch()}
+            aria-label="Refresh recent events"
+          >
+            <RefreshCw size={13} />
+            Refresh
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => replay.mutate()}
+            disabled={replay.isPending || events.length === 0}
+            aria-label="Replay last event"
+          >
+            {replay.isPending ? 'Replaying…' : 'Replay last event'}
+          </Button>
+        </div>
+      </div>
+
+      {replay.isError ? (
+        <div className="mt-2 text-xs text-red-400">
+          {replay.error instanceof Error ? replay.error.message : 'replay failed'}
+        </div>
+      ) : null}
+      {replay.isSuccess && replay.data ? (
+        <div className="mt-2 text-xs text-emerald-400">
+          Replayed {replay.data.replayedEventName} — de-dupe should leave count unchanged.
+        </div>
+      ) : null}
+
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 max-h-64 overflow-y-auto">
+        {eventsQuery.isLoading ? (
+          <div className="p-3 text-xs text-neutral-500">Loading…</div>
+        ) : eventsQuery.error ? (
+          <div className="p-3 text-xs text-red-400">
+            {eventsQuery.error instanceof Error ? eventsQuery.error.message : 'fetch failed'}
+          </div>
+        ) : events.length === 0 ? (
+          <div className="p-3 text-xs text-neutral-500">
+            No events yet. Install the plugin (Plugin tab) and start a Claude Code session.
+          </div>
+        ) : (
+          <ul className="divide-y divide-neutral-800">
+            {events.map((e) => (
+              <HookEventRow key={e.id} event={e} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HookEventRow({ event }: { event: HookEventSummary }) {
+  const hhmmss = event.timestamp.slice(11, 19);
+  const sid = event.sessionId.slice(0, 8);
+  return (
+    <li className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="text-neutral-500 font-mono">{hhmmss}</span>
+        <span className="font-mono text-neutral-100">{event.eventName}</span>
+      </div>
+      <span className="text-[10px] font-mono text-neutral-500 truncate">sid:{sid}…</span>
+    </li>
   );
 }
 

@@ -34,6 +34,7 @@ async function main() {
   const server = createServer({
     config,
     raw: dbHandles.raw,
+    db: dbHandles.db,
     logLevel: process.env.COMMANDER_LOG_LEVEL ?? 'info',
   });
 

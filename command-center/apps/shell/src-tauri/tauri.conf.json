@@ -40,6 +40,11 @@
       "icons/icon.icns"
     ],
     "externalBin": ["../../sidecar/bin/commander-sidecar"],
+    "resources": {
+      "../../plugin/.claude-plugin": "plugin/.claude-plugin",
+      "../../plugin/hooks": "plugin/hooks",
+      "../../plugin/README.md": "plugin/README.md"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0",
       "signingIdentity": null,

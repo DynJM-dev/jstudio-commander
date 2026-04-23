@@ -1,0 +1,12 @@
+{
+  "name": "jstudio",
+  "owner": { "name": "JStudio" },
+  "description": "JStudio local plugin marketplace. v1 hosts the Command-Center plugin. Published GitHub marketplace deferred to N7 hardening.",
+  "plugins": [
+    {
+      "name": "commander",
+      "source": "./",
+      "description": "Command-Center multi-session orchestrator — streams Claude Code hook events to the local Command-Center sidecar."
+    }
+  ]
+}
