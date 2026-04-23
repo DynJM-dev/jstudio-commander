@@ -132,3 +132,76 @@ export async function replayLastEvent(port: number): Promise<ReplayResponse> {
 export async function getPluginPath(): Promise<string> {
   return invoke<string>('get_resource_path', { name: 'plugin' });
 }
+
+// ---- Agent runs API (N3) ----
+
+export interface AgentRunSummary {
+  id: string;
+  taskId: string;
+  agentId: string | null;
+  sessionId: string | null;
+  status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'timed-out';
+  startedAt: string | null;
+  endedAt: string | null;
+  exitReason: string | null;
+  worktreePath: string | null;
+  tokensUsed: number;
+  wallClockSeconds: number;
+}
+
+export interface AgentRunWithScrollback extends AgentRunSummary {
+  scrollbackBlob: string | null;
+}
+
+export interface RecentRunsResponse {
+  count: number;
+  runs: AgentRunSummary[];
+}
+
+export async function fetchRecentRuns(
+  port: number,
+  opts: { limit?: number } = {},
+): Promise<RecentRunsResponse> {
+  const qs = new URLSearchParams();
+  if (opts.limit !== undefined) qs.set('limit', String(opts.limit));
+  const url = `http://127.0.0.1:${port}/api/recent-runs${qs.toString() ? `?${qs}` : ''}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`recent-runs HTTP ${res.status}`);
+  const body: unknown = await res.json();
+  if (!body || typeof body !== 'object' || !(body as { ok?: unknown }).ok) {
+    throw new Error('recent-runs: malformed envelope');
+  }
+  return (body as { data: RecentRunsResponse }).data;
+}
+
+export async function fetchAgentRun(port: number, id: string): Promise<AgentRunWithScrollback> {
+  const res = await fetch(`http://127.0.0.1:${port}/api/runs/${encodeURIComponent(id)}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`run fetch HTTP ${res.status}`);
+  const body = (await res.json()) as {
+    ok: boolean;
+    data?: AgentRunWithScrollback;
+    error?: { code: string; message: string };
+  };
+  if (!body.ok || !body.data) {
+    throw new Error(body.error?.message ?? 'run fetch: malformed envelope');
+  }
+  return body.data;
+}
+
+export async function cancelAgentRun(port: number, id: string): Promise<AgentRunSummary> {
+  const res = await fetch(`http://127.0.0.1:${port}/api/runs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  });
+  const body = (await res.json()) as {
+    ok: boolean;
+    data?: AgentRunSummary;
+    error?: { code: string; message: string };
+  };
+  if (!body.ok || !body.data) {
+    throw new Error(body.error?.message ?? `cancel failed HTTP ${res.status}`);
+  }
+  return body.data;
+}

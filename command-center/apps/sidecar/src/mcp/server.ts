@@ -22,8 +22,13 @@ import { TOOLS, TOOLS_BY_NAME } from './tools-registry';
  * missing). External MCP clients use the canonical POST /mcp entry.
  */
 
+import type { Logger } from '@commander/shared';
+import type { WsBus } from '../services/ws-bus';
+
 export interface McpServerOpts {
   db: CommanderDb;
+  bus: WsBus;
+  logger: Logger;
   expectedToken: string;
 }
 
@@ -129,7 +134,10 @@ export const mcpServer: FastifyPluginAsync<McpServerOpts> = async (app, opts) =>
               return rpcError(id, JSON_RPC_ERRORS.METHOD_NOT_FOUND, `unknown tool: ${toolName}`);
             }
 
-            const toolResult = await tool.handler({ db: opts.db }, args);
+            const toolResult = await tool.handler(
+              { db: opts.db, bus: opts.bus, logger: opts.logger },
+              args,
+            );
             // MCP tool response shape: { content: [{type:'text', text}] } OR
             // { isError: true, content: [...] }. We surface our envelope
             // JSON as a single text block so the caller can parse it.

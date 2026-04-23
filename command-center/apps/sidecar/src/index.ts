@@ -16,10 +16,9 @@ async function main() {
 
   // Pass the boot logger so loadOrCreateConfig emits preserved/minted trace
   // — lets future bearer-rotation incidents be diagnosed from logs alone.
-  const config = await loadOrCreateConfig(
-    port,
-    logger as unknown as Parameters<typeof loadOrCreateConfig>[1],
-  );
+  // Pino's Logger + Fastify's FastifyBaseLogger both structurally satisfy
+  // `@commander/shared.Logger` (Debt 16 closed N3 T0).
+  const config = await loadOrCreateConfig(port, logger);
 
   let dbHandles: ReturnType<typeof openDb>;
   try {

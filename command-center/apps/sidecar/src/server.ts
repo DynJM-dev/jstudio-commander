@@ -75,7 +75,14 @@ export function createServer(opts: CreateServerOpts): FastifyInstance {
 
   // MCP server on /mcp (JSON-RPC POST), registered as its own plugin so its
   // catch-all /mcp/* route doesn't collide with /hooks or /api prefixes.
-  app.register(mcpServer, { db: opts.db, expectedToken: opts.config.bearerToken });
+  // bus + logger threaded through so spawn_agent_run/cancel_agent_run tool
+  // handlers can publish status/pty events + log lifecycle transitions.
+  app.register(mcpServer, {
+    db: opts.db,
+    bus,
+    logger: app.log,
+    expectedToken: opts.config.bearerToken,
+  });
 
   // Frontend-facing /api/* surface (recent events + replay button).
   app.register(apiRoutes, {

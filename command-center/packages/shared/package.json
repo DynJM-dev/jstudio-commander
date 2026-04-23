@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./pty-env": "./src/pty-env.ts",
     "./scrollback-codec": "./src/scrollback-codec.ts",
-    "./events": "./src/events.ts"
+    "./events": "./src/events.ts",
+    "./logger": "./src/logger.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

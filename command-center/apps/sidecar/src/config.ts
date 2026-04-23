@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { FastifyBaseLogger } from 'fastify';
+import type { Logger } from '@commander/shared';
 
 export const SIDECAR_VERSION = '0.1.0-n2';
 
@@ -71,10 +71,7 @@ export const LOGS_DIR = logsDir();
  *   on next boot → bearer remints" race that would otherwise be undetectable
  *   outside the incident window.
  */
-export async function loadOrCreateConfig(
-  port: number,
-  logger?: FastifyBaseLogger,
-): Promise<SidecarConfig> {
+export async function loadOrCreateConfig(port: number, logger?: Logger): Promise<SidecarConfig> {
   const dir = configDir();
   const file = configFile();
   await mkdir(dir, { recursive: true });

@@ -1,5 +1,8 @@
+import { desc } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
+import { cancelAgentRun as runCancel, spawnAgentRun as runSpawn } from '../agent-run/lifecycle';
 import type { CommanderDb } from '../db/client';
+import { agentRuns } from '../db/schema';
 import { requireBearerOrTauriOrigin } from '../middleware/auth';
 import { lastHookEvent, recentHookEvents } from '../services/hook-events';
 import { runHookPipeline } from '../services/hook-pipeline';
@@ -12,24 +15,25 @@ export interface ApiRoutesOpts {
 }
 
 /**
- * Frontend-facing API surface for the Preferences Debug + Plugin tabs.
+ * Frontend-facing API surface. Powers the Preferences Debug panel (Recent
+ * hook events + Recent agent runs) + the smoke-only Replay button + N3's
+ * run spawn / cancel HTTP path (ARCHITECTURE_SPEC §7.2).
  *
- * - `GET  /api/recent-events` — returns the most recent N hook events for the
- *   Debug tab. Powers acceptance 2.2 ("Recent hook events" panel) + 2.7
- *   ("Plugin detected" status flip — a row within the last 10 min = detected).
- * - `POST /api/events/replay` — smoke-only button per dispatch §2.3. Fetches
- *   the last persisted hook event and re-posts it through the same pipeline;
- *   de-dupe must block the insert, so the total row count stays unchanged
- *   (verified by the Debug panel's recent-count not growing).
+ * MCP tool handlers (`spawn_agent_run` / `cancel_agent_run`) and HTTP
+ * routes (`POST /api/runs` / `DELETE /api/runs/:id`) both call into
+ * `agent-run/lifecycle.ts` — single source of CRUD truth per dispatch §2 T6
+ * composition rule. No duplicated semantics between the two interfaces.
  *
- * Bearer auth required unless origin is a Tauri webview (default behavior in
- * the running `Command Center.app`). Auth check via shared middleware.
+ * Bearer auth required unless origin is a Tauri webview (default from the
+ * running Command Center.app). Auth check via shared middleware.
  */
 export const apiRoutes: FastifyPluginAsync<ApiRoutesOpts> = async (app, opts) => {
   const auth = requireBearerOrTauriOrigin({ expectedToken: opts.expectedToken });
 
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', auth);
+
+    // ---- Hook events (N2) ----
 
     scoped.get('/api/recent-events', async (req) => {
       const query = req.query as Record<string, unknown>;
@@ -63,9 +67,6 @@ export const apiRoutes: FastifyPluginAsync<ApiRoutesOpts> = async (app, opts) =>
           },
         };
       }
-      // Feed the exact raw payload back through the pipeline. De-dupe should
-      // block the insert (acceptance 2.3) — we return the pipeline response
-      // so the caller can see the typical `{continue:true}` envelope.
       const response = await runHookPipeline(
         { db: opts.db, bus: opts.bus, logger: app.log },
         last.eventName,
@@ -80,5 +81,103 @@ export const apiRoutes: FastifyPluginAsync<ApiRoutesOpts> = async (app, opts) =>
         },
       };
     });
+
+    // ---- Agent runs (N3) — ARCHITECTURE_SPEC §7.2 ----
+
+    scoped.get('/api/recent-runs', async (req) => {
+      const query = req.query as Record<string, unknown>;
+      const rawLimit = query.limit;
+      const limit =
+        typeof rawLimit === 'string' && /^\d+$/.test(rawLimit)
+          ? Math.min(500, Number.parseInt(rawLimit, 10))
+          : 50;
+      const rows = await opts.db.query.agentRuns.findMany({
+        orderBy: [desc(agentRuns.id)],
+        limit,
+      });
+      return { ok: true, data: { count: rows.length, runs: rows } };
+    });
+
+    scoped.post('/api/runs', async (req, reply) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      try {
+        const row = await runSpawn(
+          { db: opts.db, bus: opts.bus, logger: app.log },
+          {
+            taskId: typeofStrOrUndef(body.task_id),
+            agentId: typeofStrOrUndef(body.agent_id),
+            command: typeofStrOrUndef(body.command),
+            projectId: typeofStrOrUndef(body.project_id),
+            cwdHint: typeofStrOrUndef(body.cwd_hint),
+            title: typeofStrOrUndef(body.title),
+            maxWallClockSeconds: typeofNumOrUndef(body.max_wall_clock_seconds),
+            maxTokens: typeofNumOrUndef(body.max_tokens),
+            maxIterations: typeofNumOrUndef(body.max_iterations),
+          },
+        );
+        return { ok: true, data: row };
+      } catch (err) {
+        reply.status(500);
+        return {
+          ok: false,
+          error: {
+            code: 'SPAWN_FAILED',
+            message: err instanceof Error ? err.message : 'unknown',
+          },
+        };
+      }
+    });
+
+    scoped.delete('/api/runs/:id', async (req, reply) => {
+      const params = req.params as { id?: string };
+      const id = typeof params.id === 'string' ? params.id : '';
+      if (id.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing run id' } };
+      }
+      const row = await runCancel({ db: opts.db, bus: opts.bus, logger: app.log }, id);
+      if (!row) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no agent_run id=${id}` } };
+      }
+      return { ok: true, data: row };
+    });
+
+    scoped.get('/api/runs/:id', async (req, reply) => {
+      const params = req.params as { id?: string };
+      const id = typeof params.id === 'string' ? params.id : '';
+      if (id.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing run id' } };
+      }
+      const row = await opts.db.query.agentRuns.findFirst({
+        where: (r, { eq }) => eq(r.id, id),
+      });
+      if (!row) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no agent_run id=${id}` } };
+      }
+      // Join the session's scrollback_blob so the run viewer can seed xterm
+      // with persisted history before subscribing to live bytes. N3 scope
+      // per dispatch §6 — this is single-run historical read, NOT the full
+      // UI re-hydration across restarts that lands in N4.
+      let scrollback: string | null = null;
+      if (row.sessionId) {
+        const session = await opts.db.query.sessions.findFirst({
+          where: (s, { eq }) => eq(s.id, row.sessionId as string),
+          columns: { scrollbackBlob: true },
+        });
+        scrollback = session?.scrollbackBlob ?? null;
+      }
+      return { ok: true, data: { ...row, scrollbackBlob: scrollback } };
+    });
   });
 };
+
+function typeofStrOrUndef(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function typeofNumOrUndef(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}

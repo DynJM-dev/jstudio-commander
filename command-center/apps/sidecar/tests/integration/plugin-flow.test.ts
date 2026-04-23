@@ -311,8 +311,10 @@ describe('plugin-flow integration', () => {
     expect(res.status).toBe(401);
   });
 
-  it('MCP spawn_agent_run stub inserts agent_run with status=queued', async () => {
-    // First create a task so there's something to spawn against.
+  it('MCP spawn_agent_run now really spawns (status=running) and completes', async () => {
+    // N2 stub asserted status=queued. N3 replaces the stub with a real PTY
+    // spawn (agent-run/lifecycle.ts). Return-value row shows status=running
+    // with a real pty_pid; a short poll confirms transition to completed.
     const project = raw
       .query<{ id: string }, [string]>('SELECT id FROM projects WHERE identity_file_path = ?')
       .get('/tmp/test-project');
@@ -331,7 +333,7 @@ describe('plugin-flow integration', () => {
           name: 'create_task',
           arguments: {
             project_id: project?.id,
-            title: 'N2 integration test task',
+            title: 'N3 integration test task',
             instructions_md: 'no-op — exists for spawn test',
           },
         },
@@ -353,7 +355,10 @@ describe('plugin-flow integration', () => {
       body: JSON.stringify({
         jsonrpc: '2.0',
         method: 'tools/call',
-        params: { name: 'spawn_agent_run', arguments: { task_id: task.id } },
+        params: {
+          name: 'spawn_agent_run',
+          arguments: { task_id: task.id, command: 'echo integration-plugin-flow' },
+        },
         id: 4,
       }),
     });
@@ -364,6 +369,16 @@ describe('plugin-flow integration', () => {
       id: string;
       status: string;
     };
-    expect(run.status).toBe('queued');
+    expect(run.status).toBe('running');
+
+    // Wait for natural exit (echo is instant; give the FSM a few ticks).
+    await new Promise((r) => setTimeout(r, 400));
+    const finalRow = raw
+      .query<{ status: string; exit_reason: string | null }, [string]>(
+        'SELECT status, exit_reason FROM agent_runs WHERE id = ?',
+      )
+      .get(run.id);
+    expect(finalRow?.status).toBe('completed');
+    expect(finalRow?.exit_reason).toBe('exit-code-0');
   });
 });

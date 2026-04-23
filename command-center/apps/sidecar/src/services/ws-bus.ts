@@ -1,5 +1,4 @@
-import type { FastifyBaseLogger } from 'fastify';
-type Logger = FastifyBaseLogger;
+import type { Logger } from '@commander/shared';
 
 /**
  * Minimal pub/sub topic bus. Per-session topics per KB-P1.13 — never multiplex
