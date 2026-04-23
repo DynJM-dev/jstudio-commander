@@ -107,7 +107,24 @@ All N4 tests use `:memory:` SQLite DBs + `mkdtemp` tmpdirs + `afterAll(rm)` clea
 
 ### 3.3 User-facing smoke outcome
 
-*[reserved for PM to fill after Jose's smoke run — this CODER section deliberately left blank per SMOKE_DISCIPLINE v1.2]*
+**Result: PARTIAL — 6/10 steps passed, step 7 BLOCKED by newly discovered Debt 24 (see §4 D3), steps 8-10 deferred. Full 10-step rerun follows N4a.1 hotfix.**
+
+| # | Step | Outcome |
+|---|------|---------|
+| 1 | Launch + window presence | PASS (post-unblock; see §4 D3 for the boot-halt that required PM unblock) |
+| 2 | Kanban first-paint, 4 columns, 0 badges | PASS (implicit — advanced to step 3) |
+| 3 | Add-task modal, Radix focus trap | PASS (implicit) |
+| 4 | Create `smoke-task-1`, lands in Todo, badge 1 | PASS (card reached spawn flow) |
+| 5 | MCP `spawn_agent_run`, pill queued→running→completed | PASS — two successful spawns (`echo hello && sleep 3` × 2) while project row still at pre-migration raw-cwd form |
+| 6 | RunViewer open, xterm output, Back to kanban | PASS (implicit — Jose could click into viewer to inspect step-5 outputs) |
+| 7 | **Debt 23 regression check** (`sleep 5 && echo done`, viewer open through running→completed) | **BLOCKED** — spawn failed with `ENOTDIR: /tmp/coder-smoke/.commander.json/.worktrees` BEFORE reaching the lifecycle transition Debt 23 covers. Root cause: §4 D3 below. Debt 23 regression NOT exercised. |
+| 8 | Kanban PATCH smoke-task-1 to Done | NOT RUN (halted at step 7) |
+| 9 | Knowledge tab: append + persist across viewer close/reopen | NOT RUN |
+| 10 | Cold-relaunch hydration | NOT RUN |
+
+**Steps 2/3/4/6 flagged "implicit":** Jose did not provide step-by-step PASS confirmations for these; they're inferred from the fact that the smoke advanced to step 5 (spawn flow) and step 7 (viewer-open context). N4a.1 rerun will capture explicit per-step confirmations.
+
+**Pre-step-7 PM unblock (out of smoke scope but material to the run):** between steps 6 and 7, Jose relaunched the app, which triggered the T1 migration to attempt re-migrating a duplicate row (`bcfca492`, created by §4 D3 root cause during step-5 spawns) → UNIQUE constraint violation → sidecar exit code 4 → "loading → load failed". PM unblocked via direct SQL DELETE against the zero-dependent orphan row (verified 0 tasks, 0 agent_runs, 0 sessions, 0 hook_events, 0 knowledge_entries under `bcfca492`). That unblock is what enabled step 7 to even attempt — but the **underlying bug is still live** and re-fires on every new Claude Code SessionStart in a migrated project.
 
 **Proposed Jose smoke matrix (dispatch §9-analog for N4a):**
 
@@ -131,6 +148,15 @@ No speculative infrastructure shipped. Every acceptance point above corresponds 
 **§4 D1 — identity migration deleted-on-disk policy.** Dispatch §7 listed two options: "mark with `deleted_on_disk` flag OR schema-preserving equivalent." I chose **"leave unchanged"** as the schema-preserving equivalent. Rationale: any sentinel-in-column approach (e.g. prefixing the path with `DELETED:`) would require every consumer of `identity_file_path` to know about the sentinel — worse than filtering at the query layer if it becomes needed. Documented inline in `commander-json-identity.ts` header comment. Idempotent across boots: these rows retry every boot, succeed if the dir reappears.
 
 **§4 D2 — no `projectId` filter on N4a kanban query.** Dispatch hinted at workspace-scoped filtering. N4a ships without a workspace concept, so the kanban queries `/api/tasks/with-latest-run` with no project filter — it shows all tasks across all projects. Once N4b T10 lands the workspace sidebar, the same endpoint will be called with `project_id=` from the active workspace. Already wired at the HTTP + service layer; the frontend just doesn't pass it yet.
+
+**§4 D3 — Debt 24 discovered mid-smoke (architectural, blocks Debt 23 regression check).** The T1 migration flipped `projects.identity_file_path` semantics from "project root directory path" to "path to the `.commander.json` identity file". Two downstream consumers were not updated to match:
+
+1. **`apps/sidecar/src/agent-run/lifecycle.ts:116`** — `const projectRoot = project.identityFilePath;` — passes the file path (not the dir) into `createWorktree`, which then does `mkdir('<cwd>/.commander.json/.worktrees')` at `worktree/create.ts:59` → `ENOTDIR` on every spawn for any project whose row has been migrated. No try/catch on that mkdir; error propagates → `spawnAgentRun` throws → MCP call fails.
+2. **`apps/sidecar/src/services/projects.ts:25-42`** — `ensureProjectByCwd` still looks up + inserts by raw cwd. Every new Claude Code SessionStart hook in a project that already has a migrated row creates a duplicate at raw-cwd form. Next sidecar boot: T1 migration tries to re-migrate the duplicate → UNIQUE constraint violation → boot halts (this is what happened in step-1 relaunch during Jose's smoke).
+
+**Why CODER's test suite didn't catch this.** Migration tests run in isolation against in-memory DBs; they don't spawn follow-on MCP sessions that would re-enter `ensureProjectByCwd` post-migration. Worktree-creation tests pass `projectRoot` directly rather than resolving via `getProjectById`. No test covers the end-to-end path `SessionStart hook → ensureProjectByCwd → migration → spawn_agent_run → createWorktree` on a project that has transitioned through the identity-file format flip.
+
+**Routed to CODER as N4a.1 hotfix dispatch** (see `~/Desktop/N4A.1_CODER_PROMPT.md`): fixes the two consumers, adds UNIQUE-collision dedup to the T1 migration, adds the missing end-to-end test coverage, includes smoke rerun of steps 7-10 against the rebuilt bundle.
 
 **No G5 / G8 / G10 / G12 violations.** Rust shell untouched (still 149/150 LOC). G8 deviations recorded here (§4 D1 + D2). G10 instrumentation rotation not fired — Debt 23 root-cause identified from first principles (callback identity churn + XtermContainer effect dep), fix is architecturally sound. If Jose's §7 smoke step shows the buffer still clearing, G10 fires then. G12 dep-hygiene: zero new deps introduced.
 
