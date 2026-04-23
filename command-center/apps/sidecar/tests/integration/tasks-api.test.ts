@@ -1,10 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import type { FastifyInstance } from 'fastify';
 import type { SidecarConfig } from '../../src/config';
 import { runMigrations } from '../../src/db/client';
 import * as schema from '../../src/db/schema';
+import { projects } from '../../src/db/schema';
 import { createServer } from '../../src/server';
 
 const TOKEN = 'n4-tasks-api-integration-token';
@@ -26,11 +30,27 @@ describe('N4 tasks HTTP API', () => {
     Authorization: `Bearer ${TOKEN}`,
   };
 
+  let scratchProjectDir: string;
+  let seededProjectId: string;
+
   beforeAll(async () => {
     raw = new Database(':memory:');
     raw.exec('PRAGMA foreign_keys = ON;');
     runMigrations(raw);
     const db = drizzle(raw, { schema });
+
+    // State isolation §3.4.2: seed a project row at canonical form pointing
+    // at a mkdtemp-allocated scratch dir. This short-circuits the POST
+    // /api/tasks "auto-create from process.cwd()" fallback which would
+    // otherwise write `.commander.json` to the repo root.
+    scratchProjectDir = await mkdtemp(join(tmpdir(), 'n4-tasks-api-'));
+    seededProjectId = 'p-tasks-api-seed';
+    await db.insert(projects).values({
+      id: seededProjectId,
+      name: 'tasks-api-seed',
+      identityFilePath: join(scratchProjectDir, '.commander.json'),
+    });
+
     server = createServer({ config, raw, db, logLevel: 'silent' });
     await server.listen({ port: 0, host: '127.0.0.1' });
     const addr = server.server.address();
@@ -41,9 +61,10 @@ describe('N4 tasks HTTP API', () => {
   afterAll(async () => {
     await server.close();
     raw.close();
+    await rm(scratchProjectDir, { recursive: true, force: true });
   });
 
-  it('POST /api/tasks with no project_id auto-creates a project from cwd', async () => {
+  it('POST /api/tasks with no project_id resolves to the first existing project', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: authHeaders,
@@ -53,7 +74,7 @@ describe('N4 tasks HTTP API', () => {
     const body = (await res.json()) as { ok: boolean; data?: { id: string; projectId: string } };
     expect(body.ok).toBe(true);
     expect(body.data?.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(body.data?.projectId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.data?.projectId).toBe(seededProjectId);
   });
 
   it('GET /api/tasks returns all tasks (no filter)', async () => {

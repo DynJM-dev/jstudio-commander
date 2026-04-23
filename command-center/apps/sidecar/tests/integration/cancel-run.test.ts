@@ -125,9 +125,13 @@ describe('N3 T10 — cancel-run integration', () => {
     // transitions to running (race-narrow; tests the idempotent shape).
     // We simulate by inserting a queued row directly — the cancel service
     // layer should degrade gracefully when the RUNNING map misses.
+    // Dual-form lookup tolerates pre- and post-N4a.1 ensureProjectByCwd
+    // row shapes (raw cwd OR <cwd>/.commander.json).
     const project = raw
-      .query<{ id: string }, [string]>('SELECT id FROM projects WHERE identity_file_path = ?')
-      .get(projectRoot);
+      .query<{ id: string }, [string, string]>(
+        'SELECT id FROM projects WHERE identity_file_path = ? OR identity_file_path = ?',
+      )
+      .get(projectRoot, `${projectRoot}/.commander.json`);
     expect(project).not.toBeNull();
 
     // Create a task

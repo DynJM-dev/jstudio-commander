@@ -11,7 +11,12 @@ import {
   cancelAgentRun as markCancelledRow,
   queueAgentRun,
 } from '../services/agent-runs';
-import { ensureProjectByCwd, getProjectById, listProjects } from '../services/projects';
+import {
+  ensureProjectByCwd,
+  getProjectById,
+  listProjects,
+  resolveProjectRoot,
+} from '../services/projects';
 import { ensureSessionByClaudeId } from '../services/sessions';
 import { createTask, getTaskById } from '../services/tasks';
 import type { WsBus } from '../services/ws-bus';
@@ -113,7 +118,11 @@ export async function spawnAgentRun(deps: LifecycleDeps, args: SpawnArgs): Promi
   if (!project) {
     throw new Error(`spawnAgentRun: missing project ${task.projectId} for task ${taskId}`);
   }
-  const projectRoot = project.identityFilePath;
+  // N4a.1 Debt 24 fix: after T1 migration, identity_file_path points at the
+  // .commander.json FILE, not the project-root directory. Route every
+  // consumer through resolveProjectRoot so a future format flip doesn't
+  // trap this code path the same way again.
+  const projectRoot = resolveProjectRoot(project.identityFilePath);
 
   // 5. Materialize worktree (git primary / shallow-copy fallback / no-isolation fallback).
   const { worktreePath, isGitWorktree } = await createWorktree({

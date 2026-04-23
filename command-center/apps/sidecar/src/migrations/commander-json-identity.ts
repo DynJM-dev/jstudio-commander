@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { Logger } from '@commander/shared';
 import { eq } from 'drizzle-orm';
 import type { CommanderDb } from '../db/client';
-import { projects } from '../db/schema';
+import { hookEvents, projects, sessions, tasks, workspaces } from '../db/schema';
 
 /**
  * T1 migration — KB-P1.5 identity-file pattern.
@@ -51,8 +52,56 @@ export interface MigrationSummary {
   migrated: number;
   already_migrated: number;
   skipped_deleted_on_disk: number;
+  /**
+   * **N4a.1 H3 addition.** Count of rows that collided with an already-
+   * migrated canonical row (same cwd) AND had zero dependents (tasks +
+   * workspaces). These duplicates were DELETED during migration — a safe
+   * cleanup of the pre-N4a.1 `ensureProjectByCwd` bug that could create
+   * post-migration raw-cwd rows. A forensic `system:migration-dedup` row
+   * is appended to `hook_events` for each dedup.
+   */
+  deduplicated: number;
   failed: number;
   failures: Array<{ projectId: string; path: string; error: string }>;
+}
+
+/** Sentinel session ID for system-origin hook_events (migration dedup forensics, etc). */
+export const SYSTEM_BOOT_SESSION_ID = 'system-boot';
+
+/**
+ * Seed the `system-boot` sentinel session row idempotently. `hook_events`
+ * has a NOT NULL FK to `sessions(id)` — system-origin events (like the
+ * migration-dedup forensic trail) need a valid session to reference. One
+ * sentinel per DB lifetime, created on first migration run, persists across
+ * boots.
+ */
+export async function ensureSystemBootSession(db: CommanderDb): Promise<void> {
+  await db
+    .insert(sessions)
+    .values({
+      id: SYSTEM_BOOT_SESSION_ID,
+      cwd: '<system>',
+      status: 'completed',
+    })
+    .onConflictDoNothing();
+}
+
+/**
+ * Append a system-origin hook event referencing the sentinel session.
+ * Used for forensic trails (migration dedup, future system-level events).
+ * Caller is responsible for ensuring `ensureSystemBootSession` has run.
+ */
+async function appendSystemEvent(
+  db: CommanderDb,
+  eventName: string,
+  payload: unknown,
+): Promise<void> {
+  await db.insert(hookEvents).values({
+    id: randomUUID(),
+    sessionId: SYSTEM_BOOT_SESSION_ID,
+    eventName,
+    payloadJson: payload,
+  });
 }
 
 /**
@@ -70,9 +119,14 @@ export async function migrateIdentityFiles(
     migrated: 0,
     already_migrated: 0,
     skipped_deleted_on_disk: 0,
+    deduplicated: 0,
     failed: 0,
     failures: [],
   };
+
+  // H3: seed the sentinel session once before any per-row work so the
+  // forensic hook_events insert in the dedup branch can't fail on FK.
+  await ensureSystemBootSession(db);
 
   const rows = await db.query.projects.findMany();
   summary.total_rows = rows.length;
@@ -98,6 +152,59 @@ export async function migrateIdentityFiles(
 
     // Build the target file path + identity body.
     const targetFile = join(currentPath, '.commander.json');
+
+    // H3 pre-collision check: does a canonical row already exist at
+    // targetFile? If yes, we're in a dedup scenario — a prior migration
+    // created the canonical, then the pre-N4a.1 `ensureProjectByCwd` bug
+    // inserted a duplicate at raw-cwd form. Handle without touching disk
+    // (the .commander.json on disk retains canonical's project_id + body).
+    const canonical = await db.query.projects.findFirst({
+      where: eq(projects.identityFilePath, targetFile),
+    });
+    if (canonical && canonical.id !== row.id) {
+      const depTasks = await db.query.tasks.findMany({
+        where: eq(tasks.projectId, row.id),
+      });
+      const depWorkspaces = await db.query.workspaces.findMany({
+        where: eq(workspaces.projectId, row.id),
+      });
+      const dependentCount = depTasks.length + depWorkspaces.length;
+
+      if (dependentCount === 0) {
+        // Safe dedup: drop the zero-dependent duplicate, keep canonical.
+        await db.delete(projects).where(eq(projects.id, row.id));
+        await appendSystemEvent(db, 'system:migration-dedup', {
+          dropped_project_id: row.id,
+          cwd: currentPath,
+          canonical_project_id: canonical.id,
+          reason: 'post-migration-duplicate-from-ensureProjectByCwd-pre-N4a.1',
+        });
+        summary.deduplicated += 1;
+        logger?.warn(
+          { droppedId: row.id, canonicalId: canonical.id, cwd: currentPath },
+          'identity migration: deduplicated zero-dependent duplicate row',
+        );
+      } else {
+        // Dependents present — manual merge required. Record as failure;
+        // caller halts on summary.failed > 0. We do NOT auto-merge because
+        // merging tasks/workspaces across project IDs needs human judgment.
+        summary.failed += 1;
+        const message = `UNIQUE collision with dependents — manual merge required: dropped=${row.id} canonical=${canonical.id}`;
+        summary.failures.push({ projectId: row.id, path: currentPath, error: message });
+        logger?.error(
+          {
+            droppedId: row.id,
+            canonicalId: canonical.id,
+            cwd: currentPath,
+            depTasks: depTasks.length,
+            depWorkspaces: depWorkspaces.length,
+          },
+          'identity migration: UNIQUE collision WITH dependents — halt required',
+        );
+      }
+      continue;
+    }
+
     const identity: CommanderIdentityFile = { project_id: row.id, schema_version: 1 };
     const body = `${JSON.stringify(identity, null, 2)}\n`;
     const tmpFile = `${targetFile}.tmp`;
@@ -167,6 +274,7 @@ export async function migrateIdentityFilesOnBoot(
       migrated: summary.migrated,
       already: summary.already_migrated,
       skipped_deleted: summary.skipped_deleted_on_disk,
+      deduplicated: summary.deduplicated,
       failed: summary.failed,
     },
     summary.failed === 0

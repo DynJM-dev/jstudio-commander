@@ -99,12 +99,18 @@ describe('N3 T10 — worktree isolation', () => {
     const runA = rows.find((r) => r.id === a.id);
     const runB = rows.find((r) => r.id === b.id);
 
+    expect(typeof runA?.worktree_path).toBe('string');
+    expect(typeof runB?.worktree_path).toBe('string');
     expect(runA?.worktree_path).toMatch(/\.worktrees\/run-/);
     expect(runB?.worktree_path).toMatch(/\.worktrees\/run-/);
     expect(runA?.worktree_path).not.toBe(runB?.worktree_path);
     // Paths contain the agent_run id suffix (run-<uuid>).
     expect(runA?.worktree_path).toContain(a.id);
     expect(runB?.worktree_path).toContain(b.id);
+    // Worktrees must materialize under <projectRoot>/.worktrees/, NOT
+    // inside <projectRoot>/.commander.json/ (N4a.1 H1 Debt 24 regression).
+    expect(runA?.worktree_path).not.toContain('.commander.json/');
+    expect(runB?.worktree_path).not.toContain('.commander.json/');
 
     // Wait for both to complete before cleanup teardown.
     const deadline = Date.now() + 6_000;

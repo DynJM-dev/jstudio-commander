@@ -1,10 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import type { FastifyInstance } from 'fastify';
 import type { SidecarConfig } from '../../src/config';
 import { runMigrations } from '../../src/db/client';
 import * as schema from '../../src/db/schema';
+import { projects } from '../../src/db/schema';
 import { createServer } from '../../src/server';
 
 const TOKEN = 'n4-knowledge-integration-token';
@@ -26,11 +30,24 @@ describe('N4 T7 — knowledge HTTP API (KB-P1.3 append-only)', () => {
     Authorization: `Bearer ${TOKEN}`,
   };
 
+  let scratchProjectDir: string;
+
   beforeAll(async () => {
     raw = new Database(':memory:');
     raw.exec('PRAGMA foreign_keys = ON;');
     runMigrations(raw);
     const db = drizzle(raw, { schema });
+
+    // State isolation §3.4.2: seed a project so POST /api/tasks doesn't
+    // fall back to ensureProjectByCwd(process.cwd()) and leak a real
+    // .commander.json into the repo root.
+    scratchProjectDir = await mkdtemp(join(tmpdir(), 'n4-knowledge-api-'));
+    await db.insert(projects).values({
+      id: 'p-knowledge-seed',
+      name: 'knowledge-seed',
+      identityFilePath: join(scratchProjectDir, '.commander.json'),
+    });
+
     server = createServer({ config, raw, db, logLevel: 'silent' });
     await server.listen({ port: 0, host: '127.0.0.1' });
     const addr = server.server.address();
@@ -49,6 +66,7 @@ describe('N4 T7 — knowledge HTTP API (KB-P1.3 append-only)', () => {
   afterAll(async () => {
     await server.close();
     raw.close();
+    await rm(scratchProjectDir, { recursive: true, force: true });
   });
 
   it('GET /api/tasks/:taskId/knowledge on a new task returns empty list', async () => {

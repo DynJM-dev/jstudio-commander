@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { rm } from 'node:fs/promises';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import type { FastifyInstance } from 'fastify';
 import type { SidecarConfig } from '../../src/config';
@@ -22,6 +23,12 @@ describe('plugin-flow integration', () => {
   };
 
   beforeAll(async () => {
+    // State isolation §3.4.2 — our fabricated SessionStart payload uses
+    // `/tmp/test-project` as a synthetic cwd. Nuke any stale real dir left
+    // by prior runs so `ensureProjectByCwd` takes the non-existent-cwd
+    // fallback path (raw-cwd DB insert, no disk write) consistently.
+    await rm('/tmp/test-project', { recursive: true, force: true });
+
     raw = new Database(':memory:');
     raw.exec('PRAGMA foreign_keys = ON;');
     runMigrations(raw);
@@ -37,6 +44,9 @@ describe('plugin-flow integration', () => {
   afterAll(async () => {
     await server.close();
     raw.close();
+    // Clean up anything createWorktree may have materialized under the
+    // synthetic cwd during spawn_agent_run tests.
+    await rm('/tmp/test-project', { recursive: true, force: true });
   });
 
   // ---- Fabricated payloads ----
@@ -127,11 +137,14 @@ describe('plugin-flow integration', () => {
   });
 
   it('auto-creates project + session on SessionStart', async () => {
+    // Dual-form lookup (N4a.1): row may be at raw-cwd OR <cwd>/.commander.json
+    // form depending on whether the synthetic cwd existed when ensureProjectByCwd
+    // ran.
     const project = raw
-      .query<{ id: string; name: string; identity_file_path: string }, [string]>(
-        'SELECT id, name, identity_file_path FROM projects WHERE identity_file_path = ?',
+      .query<{ id: string; name: string; identity_file_path: string }, [string, string]>(
+        'SELECT id, name, identity_file_path FROM projects WHERE identity_file_path = ? OR identity_file_path = ?',
       )
-      .get('/tmp/test-project');
+      .get('/tmp/test-project', '/tmp/test-project/.commander.json');
     expect(project).not.toBeNull();
     expect(project?.name).toBe('test-project');
 
@@ -316,8 +329,10 @@ describe('plugin-flow integration', () => {
     // spawn (agent-run/lifecycle.ts). Return-value row shows status=running
     // with a real pty_pid; a short poll confirms transition to completed.
     const project = raw
-      .query<{ id: string }, [string]>('SELECT id FROM projects WHERE identity_file_path = ?')
-      .get('/tmp/test-project');
+      .query<{ id: string }, [string, string]>(
+        'SELECT id FROM projects WHERE identity_file_path = ? OR identity_file_path = ?',
+      )
+      .get('/tmp/test-project', '/tmp/test-project/.commander.json');
     expect(project).not.toBeNull();
 
     const createTaskRes = await fetch(`${baseUrl}/mcp`, {
