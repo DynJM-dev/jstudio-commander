@@ -6,6 +6,17 @@ import { agentRuns } from '../db/schema';
 import { requireBearerOrTauriOrigin } from '../middleware/auth';
 import { lastHookEvent, recentHookEvents } from '../services/hook-events';
 import { runHookPipeline } from '../services/hook-pipeline';
+import { appendKnowledge, listKnowledgeByTask } from '../services/knowledge';
+import { ensureProjectByCwd, listProjects } from '../services/projects';
+import {
+  TASK_STATUSES,
+  type TaskStatus,
+  createTask,
+  getTaskById,
+  listAllTasks,
+  listTasksWithLatestRun,
+  updateTask,
+} from '../services/tasks';
 import type { WsBus } from '../services/ws-bus';
 
 export interface ApiRoutesOpts {
@@ -171,8 +182,179 @@ export const apiRoutes: FastifyPluginAsync<ApiRoutesOpts> = async (app, opts) =>
       }
       return { ok: true, data: { ...row, scrollbackBlob: scrollback } };
     });
+
+    // ---- Tasks (N4 kanban) — ARCHITECTURE_SPEC §7.2 ----
+    //
+    // GET  /api/tasks?status=&project_id=      → TaskRow[]
+    // GET  /api/tasks/with-latest-run?status=  → TaskWithLatestRun[] (kanban cards)
+    // POST /api/tasks                          → TaskRow (auto-picks first project
+    //                                             if project_id omitted; auto-creates
+    //                                             one for the sidecar cwd if none exist)
+    // GET  /api/tasks/:id                      → TaskRow | 404
+    // PATCH /api/tasks/:id                     → TaskRow (title / instructions_md / status)
+
+    scoped.get('/api/tasks', async (req) => {
+      const query = req.query as Record<string, unknown>;
+      const status = parseTaskStatus(query.status);
+      const projectId = typeofStrOrUndef(query.project_id);
+      const rows = await listAllTasks(opts.db, { status, projectId });
+      return { ok: true, data: { count: rows.length, tasks: rows } };
+    });
+
+    scoped.get('/api/tasks/with-latest-run', async (req) => {
+      const query = req.query as Record<string, unknown>;
+      const status = parseTaskStatus(query.status);
+      const projectId = typeofStrOrUndef(query.project_id);
+      const rows = await listTasksWithLatestRun(opts.db, { status, projectId });
+      return { ok: true, data: { count: rows.length, tasks: rows } };
+    });
+
+    scoped.post('/api/tasks', async (req, reply) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const title = typeofStrOrUndef(body.title);
+      const instructions = typeofStrOrUndef(body.instructions_md) ?? '';
+      const requestedStatus = parseTaskStatus(body.status);
+      let projectId = typeofStrOrUndef(body.project_id);
+
+      if (!title) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'title is required' } };
+      }
+
+      // Resolve project: explicit project_id → existing projects → auto-create
+      // from sidecar cwd. Gives the kanban a functional home-view without the
+      // user first running an Open Folder flow.
+      if (!projectId) {
+        const all = await listProjects(opts.db);
+        const first = all[0];
+        if (first) {
+          projectId = first.id;
+        } else {
+          const fallback = await ensureProjectByCwd(opts.db, process.cwd());
+          projectId = fallback.id;
+        }
+      }
+
+      try {
+        const row = await createTask(opts.db, {
+          projectId,
+          title,
+          instructionsMd: instructions,
+          status: requestedStatus,
+        });
+        return { ok: true, data: row };
+      } catch (err) {
+        reply.status(500);
+        return {
+          ok: false,
+          error: {
+            code: 'TASK_CREATE_FAILED',
+            message: err instanceof Error ? err.message : 'unknown',
+          },
+        };
+      }
+    });
+
+    scoped.get('/api/tasks/:id', async (req, reply) => {
+      const params = req.params as { id?: string };
+      const id = typeof params.id === 'string' ? params.id : '';
+      if (id.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing task id' } };
+      }
+      const row = await getTaskById(opts.db, id);
+      if (!row) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no task id=${id}` } };
+      }
+      return { ok: true, data: row };
+    });
+
+    // ---- Knowledge entries (N4 T7) — KB-P1.3 append-only ----
+    //
+    // GET  /api/tasks/:taskId/knowledge  → KnowledgeEntryRow[] (chronological)
+    // POST /api/tasks/:taskId/knowledge  → KnowledgeEntryRow
+    //
+    // No PATCH, no DELETE by design (KB-P1.3). Supersession is a new row
+    // with `superseded_by_id` pointing at it from the original — future UI
+    // concern, not part of T7 scope.
+
+    scoped.get('/api/tasks/:taskId/knowledge', async (req, reply) => {
+      const params = req.params as { taskId?: string };
+      const taskId = typeof params.taskId === 'string' ? params.taskId : '';
+      if (taskId.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing task id' } };
+      }
+      const task = await getTaskById(opts.db, taskId);
+      if (!task) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no task id=${taskId}` } };
+      }
+      const rows = await listKnowledgeByTask(opts.db, taskId);
+      return { ok: true, data: { count: rows.length, entries: rows } };
+    });
+
+    scoped.post('/api/tasks/:taskId/knowledge', async (req, reply) => {
+      const params = req.params as { taskId?: string };
+      const taskId = typeof params.taskId === 'string' ? params.taskId : '';
+      if (taskId.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing task id' } };
+      }
+      const task = await getTaskById(opts.db, taskId);
+      if (!task) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no task id=${taskId}` } };
+      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const content = typeofStrOrUndef(body.content_md);
+      if (!content) {
+        reply.status(400);
+        return {
+          ok: false,
+          error: { code: 'INVALID_ARG', message: 'content_md is required and non-empty' },
+        };
+      }
+      const row = await appendKnowledge(opts.db, {
+        taskId,
+        contentMd: content,
+        agentId: typeofStrOrUndef(body.agent_id),
+        agentRunId: typeofStrOrUndef(body.agent_run_id),
+      });
+      return { ok: true, data: row };
+    });
+
+    scoped.patch('/api/tasks/:id', async (req, reply) => {
+      const params = req.params as { id?: string };
+      const id = typeof params.id === 'string' ? params.id : '';
+      if (id.length === 0) {
+        reply.status(400);
+        return { ok: false, error: { code: 'INVALID_ARG', message: 'missing task id' } };
+      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const patch: Parameters<typeof updateTask>[2] = {};
+      const title = typeofStrOrUndef(body.title);
+      if (title !== undefined) patch.title = title;
+      const instr = typeofStrOrUndef(body.instructions_md);
+      if (instr !== undefined) patch.instructionsMd = instr;
+      const status = parseTaskStatus(body.status);
+      if (status !== undefined) patch.status = status;
+
+      const row = await updateTask(opts.db, id, patch);
+      if (!row) {
+        reply.status(404);
+        return { ok: false, error: { code: 'NOT_FOUND', message: `no task id=${id}` } };
+      }
+      return { ok: true, data: row };
+    });
   });
 };
+
+function parseTaskStatus(v: unknown): TaskStatus | undefined {
+  if (typeof v !== 'string' || v.length === 0) return undefined;
+  return TASK_STATUSES.includes(v as TaskStatus) ? (v as TaskStatus) : undefined;
+}
 
 function typeofStrOrUndef(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;

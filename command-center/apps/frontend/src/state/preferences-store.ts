@@ -9,8 +9,8 @@ interface PreferencesStore {
   setActiveTab: (tab: PreferencesTab) => void;
   /**
    * ID of the agent_run currently being viewed in the RunViewer modal.
-   * Null = viewer closed. Lives in this store because multiple surfaces
-   * trigger it (Preferences → Debug → Recent agent runs + N4 kanban).
+   * Null = viewer closed. Lives in this store because kanban cards open
+   * the viewer, but App.tsx renders it — cross-cutting UI state.
    */
   viewingRunId: string | null;
   setViewingRunId: (runId: string | null) => void;

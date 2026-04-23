@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from 'react';
-import { HomePage } from './pages/home';
+import { KanbanPage } from './pages/kanban';
 import { usePreferencesStore } from './state/preferences-store';
 
 // Route-level code splitting — Preferences (Dialog + Tabs + xterm probe) is a
@@ -35,7 +35,7 @@ export function App() {
 
   return (
     <>
-      <HomePage />
+      <KanbanPage />
       <Suspense fallback={null}>
         {open && <PreferencesModal open={open} onOpenChange={setOpen} />}
       </Suspense>

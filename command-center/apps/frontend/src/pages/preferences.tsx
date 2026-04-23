@@ -7,14 +7,11 @@ import { TabsShell } from '../components/ui/tabs';
 import { getFirstPaintMs } from '../lib/first-paint';
 import { probeGpu } from '../lib/gpu-probe';
 import {
-  type AgentRunSummary,
   type HealthResponse,
   type HookEventSummary,
   type RecentEventsResponse,
-  type RecentRunsResponse,
   fetchHealth,
   fetchRecentEvents,
-  fetchRecentRuns,
   readSidecarConfig,
   replayLastEvent,
 } from '../lib/sidecar-client';
@@ -59,7 +56,6 @@ export function PreferencesModal({ open, onOpenChange }: PreferencesModalProps) 
 const HEALTH_QUERY_KEY = ['sidecar', 'health'] as const;
 const CONFIG_QUERY_KEY = ['sidecar', 'config'] as const;
 const RECENT_EVENTS_QUERY_KEY = ['sidecar', 'recent-events'] as const;
-const RECENT_RUNS_QUERY_KEY = ['sidecar', 'recent-runs'] as const;
 
 // ----- General tab -----
 
@@ -198,8 +194,6 @@ function DebugTab() {
 
   return (
     <div className="space-y-6">
-      <RecentRunsPanel port={configQuery.data?.port} />
-
       <RecentEventsPanel port={configQuery.data?.port} />
 
       <section>
@@ -390,110 +384,5 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
       {children}
     </div>
-  );
-}
-
-// ----- Recent agent runs panel (N3 T9) -----
-
-function RecentRunsPanel({ port }: { port: number | undefined }) {
-  const setViewingRunId = usePreferencesStore((s) => s.setViewingRunId);
-  const setOpen = usePreferencesStore((s) => s.setOpen);
-
-  const runsQuery = useQuery<RecentRunsResponse>({
-    queryKey: RECENT_RUNS_QUERY_KEY,
-    queryFn: async () => {
-      if (!port) throw new Error('no port');
-      return fetchRecentRuns(port, { limit: 20 });
-    },
-    enabled: Boolean(port),
-    refetchInterval: 5_000,
-  });
-
-  const runs = runsQuery.data?.runs ?? [];
-  const count = runsQuery.data?.count ?? 0;
-
-  return (
-    <section>
-      <div className="flex items-center justify-between">
-        <SectionLabel>Recent agent runs</SectionLabel>
-        <span className="text-[11px] text-neutral-500 font-mono">
-          {count} run{count === 1 ? '' : 's'}
-        </span>
-      </div>
-
-      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 max-h-64 overflow-y-auto">
-        {runsQuery.isLoading ? (
-          <div className="p-3 text-xs text-neutral-500">Loading…</div>
-        ) : runsQuery.error ? (
-          <div className="p-3 text-xs text-red-400">
-            {runsQuery.error instanceof Error ? runsQuery.error.message : 'fetch failed'}
-          </div>
-        ) : runs.length === 0 ? (
-          <div className="p-3 text-xs text-neutral-500">
-            No agent runs yet. Spawn one via the Claude Code MCP tool
-            <code className="mx-1 text-neutral-300">spawn_agent_run</code>.
-          </div>
-        ) : (
-          <ul className="divide-y divide-neutral-800">
-            {runs.map((r) => (
-              <AgentRunRow
-                key={r.id}
-                run={r}
-                onView={() => {
-                  setViewingRunId(r.id);
-                  setOpen(false); // close Preferences so the viewer is frontmost
-                }}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function AgentRunRow({
-  run,
-  onView,
-}: {
-  run: AgentRunSummary;
-  onView: () => void;
-}) {
-  const hhmmss = run.startedAt ? run.startedAt.slice(11, 19) : '—';
-  const sid = run.sessionId ? `${run.sessionId.slice(0, 8)}…` : '—';
-  const wall = run.wallClockSeconds && run.wallClockSeconds > 0 ? `${run.wallClockSeconds}s` : '—';
-  return (
-    <li className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
-      <div className="min-w-0 flex-1 grid grid-cols-[auto_auto_1fr_auto] gap-3 items-center">
-        <span className="text-neutral-500 font-mono">{hhmmss}</span>
-        <RunStatusPill status={run.status} />
-        <span className="font-mono text-neutral-500 truncate">
-          run:{run.id.slice(0, 8)}… · sid:{sid} · {wall}
-        </span>
-      </div>
-      <Button variant="outline" onClick={onView} aria-label={`View run ${run.id.slice(0, 8)}`}>
-        View
-      </Button>
-    </li>
-  );
-}
-
-function RunStatusPill({ status }: { status: string }) {
-  const color =
-    status === 'running'
-      ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
-      : status === 'completed'
-        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-        : status === 'cancelled' || status === 'timed-out'
-          ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-          : status === 'failed'
-            ? 'bg-red-500/20 text-red-300 border-red-500/30'
-            : 'bg-neutral-700/40 text-neutral-300 border-neutral-700';
-  return (
-    <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-semibold border ${color}`}
-    >
-      {status}
-    </span>
   );
 }

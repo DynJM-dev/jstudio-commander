@@ -1,6 +1,7 @@
 import { SIDECAR_VERSION, loadOrCreateConfig } from './config';
 import { countTables, openDb, runMigrations } from './db/client';
 import { createLogger } from './logger';
+import { migrateIdentityFilesOnBoot } from './migrations/commander-json-identity';
 import { SIDECAR_PORT_RANGE, scanPort } from './port-scan';
 import { createServer } from './server';
 
@@ -33,6 +34,21 @@ async function main() {
   } catch (err) {
     logger.error({ err }, 'migration failed — sidecar exiting');
     process.exit(2);
+  }
+
+  // N4 T1 identity-file migration (KB-P1.5 + OS §20.LL-L16). Runs AFTER
+  // schema migration but BEFORE server accepts requests, so the frontend
+  // and MCP never see half-migrated state. Boot-halt on failure per
+  // dispatch §4 G10 + SPEC §9 "migration-failure" error path.
+  try {
+    const ok = await migrateIdentityFilesOnBoot(dbHandles.db, logger);
+    if (!ok) {
+      logger.error({}, 'identity migration failed on one or more rows — sidecar exiting');
+      process.exit(4);
+    }
+  } catch (err) {
+    logger.error({ err }, 'identity migration threw — sidecar exiting');
+    process.exit(4);
   }
 
   const server = createServer({

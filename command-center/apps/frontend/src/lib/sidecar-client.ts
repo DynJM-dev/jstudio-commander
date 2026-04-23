@@ -205,3 +205,166 @@ export async function cancelAgentRun(port: number, id: string): Promise<AgentRun
   }
   return body.data;
 }
+
+// ---- Tasks API (N4 kanban) ----
+
+export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'done';
+
+export const TASK_STATUSES: TaskStatus[] = ['todo', 'in_progress', 'in_review', 'done'];
+
+export interface TaskRow {
+  id: string;
+  projectId: string;
+  title: string;
+  instructionsMd: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskLatestRun {
+  id: string;
+  status: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  exitReason: string | null;
+  wallClockSeconds: number;
+  tokensUsed: number;
+}
+
+export interface TaskWithLatestRun extends TaskRow {
+  latestRun: TaskLatestRun | null;
+}
+
+export interface TasksResponse {
+  count: number;
+  tasks: TaskRow[];
+}
+
+export interface TasksWithLatestRunResponse {
+  count: number;
+  tasks: TaskWithLatestRun[];
+}
+
+async function envelope<T>(res: Response, label: string): Promise<T> {
+  const body = (await res.json()) as {
+    ok: boolean;
+    data?: T;
+    error?: { code: string; message: string };
+  };
+  if (!res.ok || !body.ok || !body.data) {
+    throw new Error(body.error?.message ?? `${label} failed HTTP ${res.status}`);
+  }
+  return body.data;
+}
+
+export async function fetchTasks(
+  port: number,
+  opts: { status?: TaskStatus; projectId?: string } = {},
+): Promise<TasksResponse> {
+  const qs = new URLSearchParams();
+  if (opts.status) qs.set('status', opts.status);
+  if (opts.projectId) qs.set('project_id', opts.projectId);
+  const url = `http://127.0.0.1:${port}/api/tasks${qs.toString() ? `?${qs}` : ''}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  return envelope<TasksResponse>(res, 'tasks');
+}
+
+export async function fetchTasksWithLatestRun(
+  port: number,
+  opts: { status?: TaskStatus; projectId?: string } = {},
+): Promise<TasksWithLatestRunResponse> {
+  const qs = new URLSearchParams();
+  if (opts.status) qs.set('status', opts.status);
+  if (opts.projectId) qs.set('project_id', opts.projectId);
+  const url = `http://127.0.0.1:${port}/api/tasks/with-latest-run${qs.toString() ? `?${qs}` : ''}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  return envelope<TasksWithLatestRunResponse>(res, 'tasks-with-latest-run');
+}
+
+export async function createTask(
+  port: number,
+  args: {
+    title: string;
+    instructionsMd?: string;
+    status?: TaskStatus;
+    projectId?: string;
+  },
+): Promise<TaskRow> {
+  const res = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: args.title,
+      instructions_md: args.instructionsMd ?? '',
+      status: args.status,
+      project_id: args.projectId,
+    }),
+  });
+  return envelope<TaskRow>(res, 'create-task');
+}
+
+// ---- Knowledge entries API (N4 T7 — KB-P1.3 append-only) ----
+
+export interface KnowledgeEntryRow {
+  id: string;
+  taskId: string;
+  agentRunId: string | null;
+  agentId: string | null;
+  timestamp: string;
+  contentMd: string;
+  supersededById: string | null;
+}
+
+export interface KnowledgeListResponse {
+  count: number;
+  entries: KnowledgeEntryRow[];
+}
+
+export async function fetchKnowledgeByTask(
+  port: number,
+  taskId: string,
+): Promise<KnowledgeListResponse> {
+  const res = await fetch(
+    `http://127.0.0.1:${port}/api/tasks/${encodeURIComponent(taskId)}/knowledge`,
+    { headers: { Accept: 'application/json' } },
+  );
+  return envelope<KnowledgeListResponse>(res, 'knowledge');
+}
+
+export async function appendKnowledgeEntry(
+  port: number,
+  taskId: string,
+  args: { contentMd: string; agentRunId?: string; agentId?: string },
+): Promise<KnowledgeEntryRow> {
+  const res = await fetch(
+    `http://127.0.0.1:${port}/api/tasks/${encodeURIComponent(taskId)}/knowledge`,
+    {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content_md: args.contentMd,
+        agent_run_id: args.agentRunId,
+        agent_id: args.agentId,
+      }),
+    },
+  );
+  return envelope<KnowledgeEntryRow>(res, 'append-knowledge');
+}
+
+export async function patchTask(
+  port: number,
+  id: string,
+  patch: Partial<Pick<TaskRow, 'title' | 'instructionsMd' | 'status'>>,
+): Promise<TaskRow> {
+  const body: Record<string, unknown> = {};
+  if (patch.title !== undefined) body.title = patch.title;
+  if (patch.instructionsMd !== undefined) body.instructions_md = patch.instructionsMd;
+  if (patch.status !== undefined) body.status = patch.status;
+  const res = await fetch(`http://127.0.0.1:${port}/api/tasks/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return envelope<TaskRow>(res, 'patch-task');
+}

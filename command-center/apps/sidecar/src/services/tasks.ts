@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { CommanderDb } from '../db/client';
-import { tasks } from '../db/schema';
+import { agentRuns, tasks } from '../db/schema';
 
 export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'done';
+
+export const TASK_STATUSES: TaskStatus[] = ['todo', 'in_progress', 'in_review', 'done'];
 
 export interface TaskRow {
   id: string;
@@ -21,6 +23,77 @@ export async function listTasksByProject(db: CommanderDb, projectId: string): Pr
     orderBy: [desc(tasks.updatedAt)],
   });
   return rows as TaskRow[];
+}
+
+/**
+ * List ALL tasks across projects, optionally filtered by status + projectId.
+ * Kanban (N4) queries without projectId filter for a cross-project view when
+ * workspace switching isn't yet wired (N4b). Newest-updated first.
+ */
+export async function listAllTasks(
+  db: CommanderDb,
+  opts: { status?: TaskStatus; projectId?: string } = {},
+): Promise<TaskRow[]> {
+  const clauses = [];
+  if (opts.status) clauses.push(eq(tasks.status, opts.status));
+  if (opts.projectId) clauses.push(eq(tasks.projectId, opts.projectId));
+  const where =
+    clauses.length === 0 ? undefined : clauses.length === 1 ? clauses[0] : and(...clauses);
+  const rows = await db.query.tasks.findMany({
+    where,
+    orderBy: [desc(tasks.updatedAt)],
+  });
+  return rows as TaskRow[];
+}
+
+export interface TaskWithLatestRun extends TaskRow {
+  latestRun: {
+    id: string;
+    status: string;
+    startedAt: string | null;
+    endedAt: string | null;
+    exitReason: string | null;
+    wallClockSeconds: number;
+    tokensUsed: number;
+  } | null;
+}
+
+/**
+ * Tasks joined with their latest agent_run — kanban card payload.
+ * Latest = highest `id` for the task_id (UUIDv4 isn't temporally sortable in
+ * general, but agent_runs id is inserted strictly monotonically within a
+ * single-writer process; for rigor we sort by `started_at DESC NULLS LAST,
+ * id DESC`). Done as N+1 per task on purpose: Drizzle's nested-query surface
+ * keeps the two-step explicit and readable. Task count stays small (O(100s)
+ * single-user); O(tasks × 1) queries is fine.
+ */
+export async function listTasksWithLatestRun(
+  db: CommanderDb,
+  opts: { status?: TaskStatus; projectId?: string } = {},
+): Promise<TaskWithLatestRun[]> {
+  const taskRows = await listAllTasks(db, opts);
+  const out: TaskWithLatestRun[] = [];
+  for (const t of taskRows) {
+    const run = await db.query.agentRuns.findFirst({
+      where: eq(agentRuns.taskId, t.id),
+      orderBy: [desc(agentRuns.startedAt), desc(agentRuns.id)],
+    });
+    out.push({
+      ...t,
+      latestRun: run
+        ? {
+            id: run.id,
+            status: run.status,
+            startedAt: run.startedAt,
+            endedAt: run.endedAt,
+            exitReason: run.exitReason,
+            wallClockSeconds: run.wallClockSeconds,
+            tokensUsed: run.tokensUsed,
+          }
+        : null,
+    });
+  }
+  return out;
 }
 
 export async function createTask(
