@@ -3,10 +3,7 @@
   "version": "0.1.0-n1",
   "private": true,
   "description": "JStudio Command-Center — Tauri v2 + Bun sidecar monorepo.",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build:sidecar": "bun --filter '@commander/sidecar' build:binary",
     "build:frontend": "bun --filter '@commander/frontend' build",

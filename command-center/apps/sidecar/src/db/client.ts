@@ -1,6 +1,6 @@
-import { mkdirSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
-import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
+import { mkdirSync } from 'node:fs';
+import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite';
 import { CONFIG_DIR, DB_FILE } from '../config';
 import * as schema from './schema';
 import { BOOT_SCHEMA_SQL } from './schema';

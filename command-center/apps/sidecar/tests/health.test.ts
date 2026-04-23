@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { createServer } from '../src/server';
-import { runMigrations, countTables, listTableNames } from '../src/db/client';
-import type { SidecarConfig } from '../src/config';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { FastifyInstance } from 'fastify';
+import type { SidecarConfig } from '../src/config';
+import { countTables, listTableNames, runMigrations } from '../src/db/client';
+import { createServer } from '../src/server';
 
 describe('sidecar health + schema', () => {
   let raw: Database;

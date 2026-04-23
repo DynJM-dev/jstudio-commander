@@ -1,7 +1,5 @@
-// JStudio Command-Center — Tauri v2 Rust shell. ARCHITECTURE_SPEC §2.2.
-// Scope: window host + single-instance + GPU defaults + sidecar lifecycle +
-// thin IPC bridge. No PTY, no DB, no hooks, no approval logic — those live
-// in the Bun sidecar. G5 hard cap: ≤150 LOC total in this file.
+// Tauri v2 shell — window host + single-instance + sidecar lifecycle + IPC
+// bridge. No PTY/DB/hook/approval logic (sidecar owns those). G5: ≤150 LOC.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -19,12 +17,9 @@ struct SidecarState {
     child: Mutex<Option<CommandChild>>,
 }
 
-fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
-}
-
 fn config_path() -> PathBuf {
-    home_dir().join(".jstudio-commander").join("config.json")
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+    PathBuf::from(home).join(".jstudio-commander").join("config.json")
 }
 
 #[cfg(unix)]
@@ -89,6 +84,11 @@ fn get_config_path() -> String {
 }
 
 #[tauri::command]
+fn read_config() -> Result<String, String> {
+    std::fs::read_to_string(config_path()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_resource_path(app: AppHandle, name: String) -> Result<String, String> {
     let dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     Ok(dir.join(name).to_string_lossy().to_string())
@@ -121,6 +121,7 @@ pub fn run() {
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             get_config_path,
+            read_config,
             get_resource_path,
             show_window,
             quit_app

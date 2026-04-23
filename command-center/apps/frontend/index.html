@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Commander</title>
+    <style>
+      /* Pre-React skeleton paint — visible within ~50ms of webview load per
+         KB-P1.14 boot-path discipline. Script parse still needed for full
+         React mount but user never sees a blank white window. */
+      html, body { margin: 0; padding: 0; background: #0a0a0a; color: #e5e5e5;
+        font-family: -apple-system, system-ui, sans-serif; height: 100%;
+        overflow: hidden; }
+      #root { height: 100%; }
+      .skeleton-pre {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; height: 100%; gap: 12px;
+        font-size: 14px; color: #9ca3af;
+      }
+      .skeleton-pre .title { font-size: 28px; font-weight: 600; color: #f5f5f5; letter-spacing: -0.02em; }
+      .skeleton-pre .hint { opacity: 0.7; }
+      @media (prefers-color-scheme: light) {
+        html, body { background: #fafafa; color: #171717; }
+        .skeleton-pre .title { color: #0a0a0a; }
+        .skeleton-pre { color: #525252; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="skeleton-pre">
+        <div class="title">Command-Center</div>
+        <div class="hint">Booting…</div>
+      </div>
+    </div>
+    <script>
+      // First-paint probe for T7 boot-path verification. Frontend React mount
+      // reads this to surface in the Debug tab per §1.3 acceptance.
+      window.__CMDR_BOOT__ = { started: performance.now() };
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

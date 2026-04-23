@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/* Tailwind v4 CSS-first theme — no tailwind.config.js. Design tokens land in
+   N4 per KB-P1.10; N1 is minimal dark palette. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui,
+    sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, ui-monospace, "Cascadia Code", "Liberation Mono", monospace;
+
+  --color-commander-50: #fafafa;
+  --color-commander-900: #0a0a0a;
+  --color-commander-accent: #60a5fa;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-commander-900);
+  color: #f5f5f5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Hide the pre-React skeleton once React mounts over #root — React clears
+   the loader automatically on render, no extra work needed. */

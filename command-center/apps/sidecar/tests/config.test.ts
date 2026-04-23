@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadOrCreateConfig, configFile, configDir } from '../src/config';
+import { configDir, configFile, loadOrCreateConfig } from '../src/config';
 
 // Exercise the config shape + bearer-token persistence on a temp HOME so we
 // don't touch the real ~/.jstudio-commander/ during test. `config.ts` now
@@ -20,7 +20,7 @@ describe('config.loadOrCreateConfig', () => {
   });
 
   afterEach(async () => {
-    if (origHome === undefined) delete process.env.HOME;
+    if (origHome === undefined) process.env.HOME = undefined;
     else process.env.HOME = origHome;
     await rm(tempHome, { recursive: true, force: true });
   });

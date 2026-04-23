@@ -1,7 +1,7 @@
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { Database } from 'bun:sqlite';
-import { countTables, listTableNames } from '../db/client';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { SidecarConfig } from '../config';
+import { countTables, listTableNames } from '../db/client';
 
 export interface HealthRouteOpts {
   config: SidecarConfig;

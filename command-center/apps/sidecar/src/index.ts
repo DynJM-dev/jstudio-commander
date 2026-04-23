@@ -1,7 +1,7 @@
-import { scanPort, SIDECAR_PORT_RANGE } from './port-scan';
-import { loadOrCreateConfig, SIDECAR_VERSION } from './config';
+import { SIDECAR_VERSION, loadOrCreateConfig } from './config';
+import { countTables, openDb, runMigrations } from './db/client';
 import { createLogger } from './logger';
-import { openDb, runMigrations, countTables } from './db/client';
+import { SIDECAR_PORT_RANGE, scanPort } from './port-scan';
 import { createServer } from './server';
 
 async function main() {
@@ -10,10 +10,7 @@ async function main() {
 
   const port = await scanPort();
   if (!port) {
-    logger.error(
-      { range: SIDECAR_PORT_RANGE },
-      'no available port in sidecar range — aborting',
-    );
+    logger.error({ range: SIDECAR_PORT_RANGE }, 'no available port in sidecar range — aborting');
     process.exit(1);
   }
 

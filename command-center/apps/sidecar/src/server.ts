@@ -1,5 +1,5 @@
-import Fastify, { type FastifyInstance } from 'fastify';
 import type { Database } from 'bun:sqlite';
+import Fastify, { type FastifyInstance } from 'fastify';
 import type { SidecarConfig } from './config';
 import { healthRoute } from './routes/health';
 
