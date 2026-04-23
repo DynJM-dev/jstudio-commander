@@ -29,13 +29,13 @@ import type { Osc133Event } from '../osc133/parser.js';
 
 export const DEFAULT_QUIET_MS = 800;
 export const DEFAULT_READY_TIMEOUT_MS = 15_000;
-// N2.1.4 Bug D fix: delay between writing bootstrap content and the submit
-// byte (\r) so Claude Code's TUI fully registers the content as a paste
-// buffer before we commit it. 200ms is ample; probe at
-// docs/diagnostics/N2.1.4-bootstrap-autosend-evidence.md verified that a
-// single \r with any gap after the content write (observed with 10s gap)
-// cleanly commits the paste.
-export const DEFAULT_SUBMIT_DELAY_MS = 200;
+// N2.1.4 introduced this as a fixed post-content delay. N2.1.5 evolves it
+// into a chunk-gap-based wait: after writing bootstrap content, any pty
+// output received resets the submit timer. Commit fires when
+// `submitDelayMs` of silence passes OR when `submitMaxWaitMs` hard
+// deadline expires. Docs: diagnostics/N2.1.5-bug-d-evidence.md.
+export const DEFAULT_SUBMIT_DELAY_MS = 300;
+export const DEFAULT_SUBMIT_MAX_WAIT_MS = 3_000;
 
 export interface BootstrapInject {
   kind: 'inject';
@@ -96,9 +96,14 @@ export interface LaunchOptions {
   handle: PtyHandle;
   quietMs?: number;
   readyTimeoutMs?: number;
-  /** Milliseconds to wait between the content write and the submit `\r` byte.
-   *  See DEFAULT_SUBMIT_DELAY_MS for rationale. Tests override to small values. */
+  /** Chunk-gap (ms) after the paste write: if no new pty output arrives
+   *  within this window, commit via `\r`. Reset on every new chunk. Tests
+   *  override to small values. Default 300 ms. */
   submitDelayMs?: number;
+  /** Hard deadline (ms) after the paste write. Even if pty output keeps
+   *  streaming, we commit once this deadline passes. Guards against Claude
+   *  Code TUIs that never go quiet. Default 3000 ms. */
+  submitMaxWaitMs?: number;
   onError?: (err: Error) => void;
   onInjected?: () => void;
 }
@@ -112,20 +117,29 @@ export interface LaunchOptions {
  *   - bailing out if Claude never produces output within readyTimeoutMs
  */
 export class BootstrapLauncher {
-  private state: 'wait-for-zsh-prompt' | 'wait-for-claude-ready' | 'done' | 'errored' =
-    'wait-for-zsh-prompt';
+  // N2.1.5 added 'wait-for-paste-quiet' — the post-content-write window
+  // during which we watch for pty quiescence before committing with \r.
+  private state:
+    | 'wait-for-zsh-prompt'
+    | 'wait-for-claude-ready'
+    | 'wait-for-paste-quiet'
+    | 'done'
+    | 'errored' = 'wait-for-zsh-prompt';
   private quietTimer: NodeJS.Timeout | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
   private submitTimer: NodeJS.Timeout | null = null;
+  private submitDeadline = 0;
   private sawClaudeOutput = false;
   private readonly quietMs: number;
   private readonly readyTimeoutMs: number;
   private readonly submitDelayMs: number;
+  private readonly submitMaxWaitMs: number;
 
   constructor(private readonly opts: LaunchOptions) {
     this.quietMs = opts.quietMs ?? DEFAULT_QUIET_MS;
     this.readyTimeoutMs = opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.submitDelayMs = opts.submitDelayMs ?? DEFAULT_SUBMIT_DELAY_MS;
+    this.submitMaxWaitMs = opts.submitMaxWaitMs ?? DEFAULT_SUBMIT_MAX_WAIT_MS;
   }
 
   /** Invoked by orchestrator on every OSC 133 event observed on this pty. */
@@ -144,10 +158,27 @@ export class BootstrapLauncher {
 
   /** Invoked on every pty output chunk while the launcher is active. */
   onData(_chunk: string): void {
-    if (this.state !== 'wait-for-claude-ready') return;
-    this.sawClaudeOutput = true;
-    if (this.quietTimer) clearTimeout(this.quietTimer);
-    this.quietTimer = setTimeout(() => this.onQuiet(), this.quietMs);
+    if (this.state === 'wait-for-claude-ready') {
+      this.sawClaudeOutput = true;
+      if (this.quietTimer) clearTimeout(this.quietTimer);
+      this.quietTimer = setTimeout(() => this.onQuiet(), this.quietMs);
+      return;
+    }
+    if (this.state === 'wait-for-paste-quiet') {
+      // Claude's TUI is actively rendering the paste we just wrote. Push
+      // the submit-timer out — commit fires only when output stays quiet
+      // for submitDelayMs. Hard deadline guards against TUIs that never
+      // go quiet (rare, but see N2.1.5 Bug D evidence cold-3 case).
+      const now = Date.now();
+      if (now >= this.submitDeadline) {
+        this.commit();
+        return;
+      }
+      if (this.submitTimer) clearTimeout(this.submitTimer);
+      const remaining = this.submitDeadline - now;
+      const wait = Math.min(this.submitDelayMs, remaining);
+      this.submitTimer = setTimeout(() => this.commit(), wait);
+    }
   }
 
   cancel(): void {
@@ -171,32 +202,52 @@ export class BootstrapLauncher {
   private onQuiet(): void {
     if (this.state !== 'wait-for-claude-ready') return;
     if (this.opts.plan.kind === 'inject') {
-      // Write content + trailing newline (hygiene — some bootstrap files
-      // omit a final \n). Claude Code's Ink-based TUI treats this
-      // multi-line blob as a paste buffer, NOT as a typed message: the
-      // content renders as `[Pasted text #N +M lines]` placeholders but
-      // stays in Claude's input line until the user presses Enter. See
-      // docs/diagnostics/N2.1.4-bootstrap-autosend-evidence.md.
+      // N2.1.4 Bug D: Claude Code's Ink TUI treats multi-line pty input as
+      // a paste buffer (see `[Pasted text #N]` placeholders), so a trailing
+      // \n lands inside the paste. A separate \r (Enter-key) is the submit.
       //
-      // Schedule a \r (Enter-key) after submitDelayMs to COMMIT the paste
-      // as a fresh user message. The short delay lets Claude's TUI fully
-      // register the paste before we submit; skipping the delay works in
-      // probes but races in slower environments.
+      // N2.1.5 Bug D residual: wrap content in bracketed-paste markers
+      // (\x1b[200~…\x1b[201~) so Claude's TUI recognizes the paste
+      // explicitly — independent of chunk-size heuristics that can fail on
+      // a cold-launched TUI. Terminator \x1b[201~ tells Claude "paste ends",
+      // so the subsequent \r is unambiguously a submit.
+      //
+      // Also replace N2.1.4's fixed 200ms submit delay with a post-write
+      // chunk-gap-based quiesce + hard deadline. Cold launches can have
+      // 2-9s silent windows during Claude boot; fixed-timer racing those
+      // caused the N2.1.4 Step 10 intermittent failure.
+      // See docs/diagnostics/N2.1.5-bug-d-evidence.md.
+      this.opts.handle.write('\x1b[200~');
       this.opts.handle.write(this.opts.plan.content);
       if (!this.opts.plan.content.endsWith('\n')) this.opts.handle.write('\n');
-      this.submitTimer = setTimeout(() => {
-        this.submitTimer = null;
-        this.opts.handle.write('\r');
-        this.opts.onInjected?.();
-      }, this.submitDelayMs);
+      this.opts.handle.write('\x1b[201~');
+      this.state = 'wait-for-paste-quiet';
+      this.submitDeadline = Date.now() + this.submitMaxWaitMs;
+      // Prime the submit timer; onData will reset it on every new chunk.
+      if (this.submitTimer) clearTimeout(this.submitTimer);
+      this.submitTimer = setTimeout(() => this.commit(), this.submitDelayMs);
+      if (this.readyTimer) clearTimeout(this.readyTimer);
+      return;
     }
     if (this.readyTimer) clearTimeout(this.readyTimer);
     this.state = 'done';
   }
 
+  private commit(): void {
+    if (this.state !== 'wait-for-paste-quiet') return;
+    if (this.submitTimer) {
+      clearTimeout(this.submitTimer);
+      this.submitTimer = null;
+    }
+    this.opts.handle.write('\r');
+    this.state = 'done';
+    this.opts.onInjected?.();
+  }
+
   private fail(err: Error): void {
     if (this.quietTimer) clearTimeout(this.quietTimer);
     if (this.readyTimer) clearTimeout(this.readyTimer);
+    if (this.submitTimer) clearTimeout(this.submitTimer);
     this.state = 'errored';
     this.opts.onError?.(err);
   }

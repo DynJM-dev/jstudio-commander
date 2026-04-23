@@ -97,7 +97,7 @@ describe('BootstrapLauncher', () => {
     launcher.cancel();
   });
 
-  it('injects bootstrap after quiet period then commits with \\r after submitDelayMs', async () => {
+  it('N2.1.5: wraps content in bracketed-paste markers + commits after quiesce', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
@@ -106,40 +106,79 @@ describe('BootstrapLauncher', () => {
       quietMs: 80,
       readyTimeoutMs: 5_000,
       submitDelayMs: 30,
+      submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     expect(writes).toEqual(['claude\n']);
 
-    // Simulate Claude's boot banner arriving over several chunks.
     launcher.onData('Welcome to Claude.');
     launcher.onData('Loaded tools.');
     await new Promise((r) => setTimeout(r, 30));
-    // Still within quiet window — should not have injected yet.
+    // Still within Claude-ready quiet window — no paste yet.
     expect(writes).toEqual(['claude\n']);
-    await new Promise((r) => setTimeout(r, 120));
-    // After 80ms quiet the content is written, but \r is still pending behind
-    // submitDelayMs=30 — the content write happens before the submit byte.
-    expect(writes).toEqual(['claude\n', 'BOOT\n', '\r']);
+    await new Promise((r) => setTimeout(r, 70));
+    // After 80ms quiet the bracketed-paste-wrapped content is flushed.
+    // \r is still pending in the post-write quiesce window.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    await new Promise((r) => setTimeout(r, 60));
+    // After submitDelayMs of post-write quiesce, commit byte lands.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
 
-  it('N2.1.4 Bug D fix — writes content BEFORE \\r and waits submitDelayMs between them', async () => {
+  it('N2.1.5: post-write pty chunks extend the quiesce; commit waits for gap', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
       plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
       handle,
       quietMs: 40,
-      submitDelayMs: 120,
+      submitDelayMs: 80,
+      submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     launcher.onData('banner');
-    await new Promise((r) => setTimeout(r, 80));
-    // Content flushed at quiet-period end; \r still pending.
-    expect(writes).toEqual(['claude\n', 'BOOT\n']);
-    await new Promise((r) => setTimeout(r, 180));
-    // After submitDelayMs, the commit byte lands.
-    expect(writes).toEqual(['claude\n', 'BOOT\n', '\r']);
+    await new Promise((r) => setTimeout(r, 60));
+    // Content has been flushed; submitTimer is counting toward commit.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    // Claude continues to render the paste — each chunk pushes submit out.
+    launcher.onData('rendering paste line 1');
+    await new Promise((r) => setTimeout(r, 40));
+    launcher.onData('rendering paste line 2');
+    await new Promise((r) => setTimeout(r, 40));
+    // Still no \r — we kept pushing it.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    // Now let silence pass.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
+    launcher.cancel();
+  });
+
+  it('N2.1.5: hard deadline commits even if pty never quiesces', async () => {
+    const { handle, writes } = makeFakeHandle();
+    const launcher = new BootstrapLauncher({
+      clientBinary: 'claude',
+      plan: { kind: 'inject', path: '/x', content: 'BOOT\n' },
+      handle,
+      quietMs: 20,
+      submitDelayMs: 500,
+      submitMaxWaitMs: 120,
+    });
+    launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
+    launcher.onData('banner');
+    await new Promise((r) => setTimeout(r, 40));
+    // Content flushed.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~']);
+    // Keep feeding chunks at intervals shorter than submitDelayMs=500 so
+    // chunk-gap-based quiesce never triggers — but hard deadline 120ms will.
+    launcher.onData('chunk');
+    await new Promise((r) => setTimeout(r, 50));
+    launcher.onData('chunk');
+    await new Promise((r) => setTimeout(r, 50));
+    launcher.onData('chunk');
+    await new Promise((r) => setTimeout(r, 60));
+    // By now past hard-deadline from paste flush — commit has fired.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'BOOT\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
 
@@ -151,15 +190,16 @@ describe('BootstrapLauncher', () => {
       handle,
       quietMs: 40,
       submitDelayMs: 20,
+      submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     launcher.onData('banner');
     await new Promise((r) => setTimeout(r, 100));
-    expect(writes).toEqual(['claude\n', 'HELLO', '\n', '\r']);
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'HELLO', '\n', '\x1b[201~', '\r']);
     launcher.cancel();
   });
 
-  it('cancel() before submit delay fires aborts the \\r write', async () => {
+  it('cancel() before submit fires aborts the \\r write', async () => {
     const { handle, writes } = makeFakeHandle();
     const launcher = new BootstrapLauncher({
       clientBinary: 'claude',
@@ -167,16 +207,17 @@ describe('BootstrapLauncher', () => {
       handle,
       quietMs: 20,
       submitDelayMs: 200,
+      submitMaxWaitMs: 2_000,
     });
     launcher.onOsc133({ marker: 'A', params: '', exitCode: null, raw: '', byteOffset: 0 });
     launcher.onData('banner');
     await new Promise((r) => setTimeout(r, 50));
-    // Content written but \r timer still pending.
-    expect(writes).toEqual(['claude\n', 'HI\n']);
+    // Content + bracketed-paste wrappers written; \r timer still pending.
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'HI\n', '\x1b[201~']);
     launcher.cancel();
     await new Promise((r) => setTimeout(r, 250));
     // No \r should have fired after cancel.
-    expect(writes).toEqual(['claude\n', 'HI\n']);
+    expect(writes).toEqual(['claude\n', '\x1b[200~', 'HI\n', '\x1b[201~']);
   });
 
   it('skip plan launches client but writes no bootstrap content', async () => {
