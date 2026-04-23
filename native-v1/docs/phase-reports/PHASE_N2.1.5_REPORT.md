@@ -2,7 +2,8 @@
 
 **Phase:** N2.1.5 — Hotfix: Bug D cold-launch race + Bug H xterm.js initial-mount artifacts + Bug I status-stale (closed not-reproduced)
 **Started:** 2026-04-22 (continuing CODER spawn, no reset)
-**Completed:** 2026-04-22 (same rotation; PENDING Jose's user-facing smoke per §3)
+**Completed:** 2026-04-22 (same rotation; Jose's user-facing smoke PARTIAL — see §3)
+**Status:** NOT CLOSED — 13 PASS + 2 FAIL. Bug D still fails first cold-launch (CODER's 3s deadline too short); Bug H layout-race fix HELD but NEW Bug K (encoding mojibake) surfaced. Native v1 NOT dogfood-ready. Routed to CTO for N2.1.6.
 **Coder session:** Claude Code coder session at `~/Desktop/Projects/jstudio-commander/`
 **Model / effort used:** Opus 4.7 (1M context) / effort=xhigh continuing
 **Status:** CODER-COMPLETE; awaiting Jose's user-facing smoke per SMOKE_DISCIPLINE.md §5
@@ -95,24 +96,40 @@ PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
 
 | Step (N2.1.1 §3.3 scenario) | Result | Notes |
 |---|---|---|
-| 1. `pnpm build:app:debug` succeeds | *[PENDING]* | |
-| 2. `.app` at expected path | *[PENDING]* | |
-| 3. Double-click launches Commander | *[PENDING]* | |
-| 4. Window within 2 s | *[PENDING]* | |
-| 5. Cmd+, → no "Sidecar unreachable" | *[PENDING]* | |
-| 6. "+ New session" opens modal | *[PENDING]* | |
-| 7. Path picker opens + stays open + 3 sections | *[PENDING]* | |
-| 8. Picking a project populates path, closes dropdown | *[PENDING]* | |
-| 9. Session type dropdown commits | *[PENDING]* | |
-| 10. **Submit spawns session + bootstrap AUTOSENDS on 5 consecutive cold launches** | *[PENDING — PRIMARY N2.1.5 TARGET (Bug D)]* | |
-| 11. **OSC 133 marker on first prompt + CLEAN terminal render** | *[PENDING — PRIMARY N2.1.5 TARGET (Bug H)]* | |
-| 12. Session in sidebar with live status | *[PENDING]* | |
-| 13. + Pane → 2nd session + input routes correctly | *[PENDING]* | N2.1.4 regression guard |
-| 14. Cmd+Opt+←/→ focus cycle | *[PENDING]* | N2.1.4 regression guard |
-| 15. Cmd+Q closes | *[PENDING]* | |
-| 16. Re-launch restores sessions | *[PENDING]* | |
+| 1. `pnpm build:app:debug` succeeds | PASS | |
+| 2. `.app` at expected path | PASS | |
+| 3. Double-click launches Commander | PASS | |
+| 4. Window within 2 s | PASS | |
+| 5. Cmd+, → no "Sidecar unreachable" | PASS (implicit — "Everything else is the same as before") | N2.1.1/N2.1.4 guards CLEAN |
+| 6. "+ New session" opens modal | PASS | |
+| 7. Path picker opens + stays open + 3 sections | PASS | |
+| 8. Picking a project populates path, closes dropdown | PASS | |
+| 9. Session type dropdown commits | PASS | |
+| 10. Submit spawns session + bootstrap AUTOSENDS on 5 consecutive cold launches | **FAIL on first cold-launch — PARTIAL FIX ONLY** | First-attempt cold-launch: bootstrap did NOT fire. Jose had to press Enter manually. Subsequent session opened within same app session (no quit) DID auto-send. CODER's own smoke-readiness probe flagged this exact case: "5/6 cold spawns clean; the one anomaly was a pathological Claude boot stall (10-second silence) — Claude-internal state we can't fix from the sidecar." **Jose's machine consistently lands in that >3s-boot regime**, so the 3s hard-deadline in the new `wait-for-paste-quiet` state fires BEFORE Claude-TUI can emit the paste-quiesce signal. Bracketed-paste escapes + post-write quiesce mechanism otherwise HELD (2nd+ spawn per-app-launch works). **Fix needed:** extend deadline to ≥12s OR replace with deterministic signal (wait for actual OSC 133 A from Claude's inner shell — observable boot-complete event rather than time budget). The 3s deadline is the direct bug; CODER's "pathological" is Jose's common. |
+| 11. OSC 133 marker + CLEAN terminal render | **FAIL — Bug H partial, NEW Bug K surfaced (encoding mojibake)** | **Bug H layout-race fix HELD** — "The laying and text issue was better at first" confirms rAF fit.fit() fixed initial-mount geometry. BUT a SECOND rendering bug surfaced at the character-encoding layer: text fills with `â`/`â¢`/`âµ`/`â³` mojibake — signature UTF-8-decoded-as-Latin-1 pattern (screenshots attached to smoke turn). Progressive degradation: "better at first, but then it got worse and worse. When I go from our session to another it gets worse. Same with me restarting the app." Corruption accumulates on session-switch + app-restart → NOT transient WebGL glitch → persistent-state corruption. **Bug K root-cause candidates:** (a) scrollback_blob BLOB deserialization uses wrong encoding (written as UTF-8 bytes, read as Latin-1 string on replay); (b) PTY locale/charset not explicitly set, spawned shell inherits ambient LANG/LC_CTYPE that differs cold-boot vs warm; (c) xterm.js `Terminal` config missing explicit UTF-8 decoder; (d) sidecar pty-output pipe Buffer-to-string conversion losing multi-byte awareness; (e) WebGL atlas cache carrying mojibake bytes into subsequent sessions. "Gets worse on switch/restart" → strongly suggests (a) or (d) = persistence + replay path corruption. |
+| 12. Session in sidebar with live status | PASS (implicit) + **kill-session affordance STILL MISSING — now a functional gap** | Jose: "If I quit and come back, I will still have that session opened since i don't have the option to stop and kill a session completely from the app at the moment." PM manually cleaned 42 orphaned sessions via direct DB write + zombie sidecar kill after Jose's request. Kill UI has now been smoke-surfaced EVERY rotation (N2.1.3, N2.1.4, N2.1.5). Recommend re-routing from "UI polish" → N3 or dedicated N2.1.x item as functional blocker for real-world use. |
+| 13. + Pane → 2nd session + input routes correctly | PASS (implicit — "Everything else is the same as before") | N2.1.4 Bug E fix held |
+| 14. Cmd+Opt+←/→ focus cycle | PASS (implicit) | N2.1.4 regression guard CLEAN |
+| 15. Cmd+Q closes | PASS (implicit) | |
+| 16. Re-launch restores sessions | PASS (implicit) — BUT also the mechanism CARRYING Bug K mojibake across restarts per hypothesis (a) | |
 
-*(PM appends Jose's step-by-step pass/fail here after dogfood.)*
+**Tally: 13 PASS (1-9, 12-16) + 2 FAIL (10 Bug D residual, 11 Bug H partial + NEW Bug K). 16/16 NOT achieved.**
+
+**N2.1.5 does NOT close cleanly** per SMOKE_DISCIPLINE.md §5.
+
+**What HELD from N2.1.5 fixes:**
+- Bracketed-paste wrappers + post-write quiesce (reliable on 2nd+ spawn per-app-launch).
+- `requestAnimationFrame` fit.fit() wrapper (initial-mount layout race fixed).
+- N2.1.4 Bug E pane input routing (regression guard CLEAN).
+- N2.1.4 ESC interrupt semantics (regression guard CLEAN).
+
+**What DID NOT HOLD:**
+- **Bug D first-cold-launch reliability.** 3s hard-deadline too short for Jose's actual cold-boot. CODER's probe caught the exact pathological case (10s Claude-internal silence) and marked it as un-fixable-from-sidecar; turns out it's Jose's common case, not pathological. 1-of-5 required consecutive cold-launches succeeded.
+- **Bug H full resolution.** Layout race fixed; encoding bug (Bug K) takes over. Not an N2.1.5 regression — previously-masked latent bug per SMOKE_DISCIPLINE §4.1 pattern.
+
+**NEW finding — Bug K (primary blocker):** character encoding mojibake. Progressive degradation on session-switch + app-restart. 5 candidate root causes above; full diagnosis needed.
+
+**Dogfood-ability assessment:** native v1 is NOT ready for dogfood. Bug K makes terminal unreadable within minutes of use; Bug D makes first-session-per-launch manual. **Recommend N2.1.6 narrow fix** (Bug D deadline + Bug K encoding) before dogfood declaration.
 
 ## 4. Deviations from dispatch
 
