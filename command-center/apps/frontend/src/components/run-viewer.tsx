@@ -74,6 +74,14 @@ export function RunViewer({ runId, onClose }: RunViewerProps) {
 
   const run = runQuery.data;
 
+  // Track whether the live WS stream has written any PTY bytes to the term.
+  // If yes, skip blob-seed on blob arrival — live stream already covered it.
+  // Without this guard, viewer opened on a running run would duplicate output
+  // when the run transitions to terminal + scrollback_blob arrives via poll
+  // refetch, because the race-handling seed effect would write the same
+  // content the live stream just wrote. Observed in N4a smoke step 7.
+  const liveStreamReceivedRef = useRef(false);
+
   // Keep the latest scrollback_blob in a ref so `onTermReady` can read it
   // without having it in useCallback deps — Debt 23 root cause.
   useEffect(() => {
@@ -85,6 +93,11 @@ export function RunViewer({ runId, onClose }: RunViewerProps) {
   const onTermReady = useCallback((term: Terminal) => {
     termRef.current = term;
     if (scrollbackSeededRef.current) return;
+    // If live stream already wrote bytes, don't seed from blob — would duplicate.
+    if (liveStreamReceivedRef.current) {
+      scrollbackSeededRef.current = true;
+      return;
+    }
     const blob = scrollbackBlobRef.current;
     if (blob && blob.length > 0) {
       try {
@@ -98,9 +111,15 @@ export function RunViewer({ runId, onClose }: RunViewerProps) {
 
   // If run data arrives AFTER the terminal mounted (race between xterm mount
   // and initial /api/runs/:id fetch), seed on data arrival. One-shot via the
-  // scrollbackSeededRef guard.
+  // scrollbackSeededRef guard. Also skip if live stream already wrote bytes —
+  // applies to viewer-opened-on-running-run + then-completed transition.
   useEffect(() => {
     if (!termRef.current || scrollbackSeededRef.current) return;
+    if (liveStreamReceivedRef.current) {
+      // Live stream covered content; mark seeded to suppress future triggers.
+      scrollbackSeededRef.current = true;
+      return;
+    }
     if (run?.scrollbackBlob && run.scrollbackBlob.length > 0) {
       try {
         termRef.current.write(decodeBase64(run.scrollbackBlob));
@@ -112,11 +131,13 @@ export function RunViewer({ runId, onClose }: RunViewerProps) {
   }, [run?.scrollbackBlob]);
 
   // Subscribe live. Every chunk writes into the Terminal via ref — no re-render.
+  // Mark liveStreamReceivedRef on first byte so blob-seed paths can suppress.
   const { hookEvents, status: wsStatus } = useSessionStream({
     sessionId: run?.sessionId ?? null,
     port: configQuery.data?.port ?? null,
     bearer: configQuery.data?.bearerToken ?? null,
     onPtyData: (bytes) => {
+      liveStreamReceivedRef.current = true;
       termRef.current?.write(bytes);
     },
   });
