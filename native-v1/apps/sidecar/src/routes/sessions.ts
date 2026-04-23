@@ -50,6 +50,11 @@ export interface SpawnedSession {
 export interface SessionOrchestrator {
   spawnSession(input: SpawnSessionInput): Promise<SpawnedSession>;
   stopSession(sessionId: string): Promise<void>;
+  /** N2.1.6 Task 3: kill the pty (SIGTERM → 5s wait → SIGKILL fallback) AND
+   *  delete the DB row + cascade rows (session_events, tool_events, etc.).
+   *  Used by the × button in the UI. Optional on the interface for
+   *  backward compat with the stub orchestrator. */
+  deleteSession?(sessionId: string): Promise<void>;
   writeInput(sessionId: string, data: string): void;
   /** Optional — Task 6+ PtyOrchestrator implements; stub throws. */
   interruptSession?(sessionId: string): void;
@@ -127,11 +132,18 @@ export const sessionRoutes = (
 
   app.delete<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
     try {
-      await orchestrator.stopSession(req.params.id);
+      // N2.1.6 Task 3: prefer deleteSession (kill + remove DB row + cascade).
+      // Fall back to stopSession only if deleteSession isn't implemented
+      // (stub orchestrator during tests). The latter leaves an orphan row.
+      if (orchestrator.deleteSession) {
+        await orchestrator.deleteSession(req.params.id);
+      } else {
+        await orchestrator.stopSession(req.params.id);
+      }
       return { ok: true };
     } catch (err) {
       reply.code(500);
-      return { error: 'stop_failed', message: (err as Error).message };
+      return { error: 'delete_failed', message: (err as Error).message };
     }
   });
 

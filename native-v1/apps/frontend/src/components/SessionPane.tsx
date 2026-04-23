@@ -2,12 +2,13 @@
 // + StateMdDrawer for a single sessionId. Empty pane shows a CTA to spawn or
 // claim a session into this slot.
 
+import { useState } from 'react';
 import { ContextBar } from './ContextBar.js';
 import { TerminalPane } from './TerminalPane.js';
 import { StateMdDrawer } from './StateMdDrawer.js';
 import { useWorkspaceStore, MAX_PANES } from '../stores/workspaceStore.js';
 import { useSessionStore } from '../stores/sessionStore.js';
-import { useSessions } from '../queries/sessions.js';
+import { useSessions, useStopSession } from '../queries/sessions.js';
 
 const M = 'Montserrat, system-ui, sans-serif';
 
@@ -23,6 +24,22 @@ export function SessionPane({ index, sessionId, focused }: Props) {
   const focusPane = useWorkspaceStore((s) => s.focusPane);
   const setPaneSession = useWorkspaceStore((s) => s.setPaneSession);
   const openNewSession = useSessionStore((s) => s.openNewSessionModal);
+  const killMutation = useStopSession();
+  const [killConfirmOpen, setKillConfirmOpen] = useState(false);
+
+  const confirmKill = async () => {
+    if (!sessionId) return;
+    // Optimistic UI: remove session from this pane immediately, server
+    // reconciles via `/api/sessions` refetch (mutation onSuccess invalidates).
+    setPaneSession(index, null);
+    setKillConfirmOpen(false);
+    try {
+      await killMutation.mutateAsync(sessionId);
+    } catch (err) {
+      console.warn('[sessionpane] kill failed, reattaching:', (err as Error).message);
+      setPaneSession(index, sessionId);
+    }
+  };
 
   return (
     <div
@@ -53,6 +70,20 @@ export function SessionPane({ index, sessionId, focused }: Props) {
       >
         <span>Pane {index + 1}</span>
         <div style={{ flex: 1 }} />
+        {sessionId ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setKillConfirmOpen(true);
+            }}
+            title="Stop and remove session (terminates pty, deletes session + scrollback)"
+            disabled={killMutation.isPending}
+            style={{ ...paneHeaderBtn, color: 'var(--color-danger)' }}
+          >
+            {killMutation.isPending ? '…' : '🗑'}
+          </button>
+        ) : null}
         {panesCount > 1 ? (
           <button
             type="button"
@@ -67,6 +98,13 @@ export function SessionPane({ index, sessionId, focused }: Props) {
           </button>
         ) : null}
       </div>
+      {killConfirmOpen && sessionId ? (
+        <KillConfirmModal
+          sessionId={sessionId}
+          onCancel={() => setKillConfirmOpen(false)}
+          onConfirm={confirmKill}
+        />
+      ) : null}
 
       {sessionId ? (
         <>
@@ -215,3 +253,91 @@ const paneHeaderBtn: React.CSSProperties = {
   cursor: 'pointer',
   lineHeight: '16px',
 };
+
+// N2.1.6 Task 3 kill-confirmation modal. Overlays the pane; click-outside
+// cancels; destructive confirm does the DELETE. Keyboard Escape / Enter
+// not yet wired — Jose's dogfood will tell us if that's needed.
+function KillConfirmModal({
+  sessionId,
+  onCancel,
+  onConfirm,
+}: {
+  sessionId: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0, 0, 0, 0.55)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 60,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          fontFamily: M,
+          background: 'var(--color-surface)',
+          color: 'var(--color-foreground)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 12,
+          padding: 20,
+          width: 420,
+          maxWidth: '92vw',
+          boxShadow: '0 30px 60px rgba(0, 0, 0, 0.55)',
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Stop and remove session?</h2>
+        <p style={{ margin: '10px 0 16px', fontSize: 13, opacity: 0.75, lineHeight: 1.5 }}>
+          The terminal process will be killed and the session record
+          removed (scrollback, events, and tool invocations cascade-delete).
+          Cannot be undone.
+        </p>
+        <p style={{ margin: '0 0 18px', fontSize: 11, opacity: 0.5, fontFamily: 'monospace' }}>
+          {sessionId}
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '6px 14px',
+              fontSize: 13,
+              fontFamily: M,
+              background: 'transparent',
+              color: 'var(--color-foreground)',
+              border: '1px solid var(--color-border-strong)',
+              borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            style={{
+              padding: '6px 14px',
+              fontSize: 13,
+              fontFamily: M,
+              fontWeight: 600,
+              background: 'var(--color-danger)',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            Stop and remove
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
