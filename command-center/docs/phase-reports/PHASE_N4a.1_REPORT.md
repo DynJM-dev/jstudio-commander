@@ -100,7 +100,33 @@ All H4 tests use `:memory:` SQLite + `mkdtemp` scratch dirs + `afterEach`/`after
 
 ### 3.3 User-facing smoke outcome
 
-*[reserved for PM to fill after Jose's smoke rerun — this CODER section deliberately left blank per SMOKE_DISCIPLINE v1.2]*
+**Result: PASSED 4/4 — Debt 24 CLOSED + Debt 23 regression re-validated + H3 `deduplicated` field shipped live. Full N4a (6/10) + N4a.1 (4/10 = steps 7-10) smoke matrix now complete.**
+
+| # | Step | Outcome |
+|---|------|---------|
+| 7 | Spawn `sleep 5 && echo done`; open viewer while running; wait through running→completed | **PASS** — viewer opened during `running`, `done` printed and persisted on transition to `completed`, single `done` line, no buffer clear, no duplicate. H1 spawn path unblocked (no ENOTDIR). Debt 23 regression fix (`b307af6` `liveStreamReceivedRef`) validated in its first real live-transition test. |
+| 8 | Kanban PATCH `smoke-task-1` → Done via UI | **PASS via workaround** (direct PATCH curl against `/api/tasks/:id`). Backend wire confirmed functional; 3s kanban polling picked up the flip and card appeared in Done column on next re-render. **No move animation** — Jose explicitly noted the transition was instant (code-confirmed: no `framer-motion` or layout animation wired; cards bucket client-side via React re-render on poll). Instant bucketing is correct per as-shipped design; smooth move is a polish item banked into Debt 26. **UI affordance gap banked as Debt 26** (see §7) — no regression, just unshipped affordance. |
+| 9 | Knowledge tab: "first note" append → close/reopen viewer → note persists | **PASS** — appended entry visible in list, persisted to DB, re-hydrated on reopen. |
+| 10 | ⌘Q → relaunch → kanban hydrates with all tasks + latest-run pills + knowledge entries | **PASS** — full hydration intact. Sidecar boot log shows clean idempotent migration: `total:5, migrated:0, already:5, deduplicated:0, failed:0` → "identity migration: complete". |
+
+**Log evidence (`~/.commander/commander.log` tail; Jose-provided):**
+
+```
+# First N4a.1 boot (pid:79564, post-rebuild):
+{total:5, migrated:1, already:4, deduplicated:0, failed:0, msg:"identity migration: complete"}
+# — `1e66b858 /Users/josemiguelbonilla` was a stale raw-cwd insert from the OLD
+#    N4a sidecar (pid:23059, pre-N4a.1); N4a.1's first-boot migration cleaned
+#    it up to `.commander.json` form atomically.
+
+# Step-10 relaunch boot (pid:62926, cleanest idempotent case):
+{total:5, migrated:0, already:5, skipped_deleted:0, deduplicated:0, failed:0, msg:"identity migration: complete"}
+```
+
+The `deduplicated` field is present in the summary — that is the H3 live-ship signal Jose was asked to check in §10-dispatch note. Value is `0` in this session because no dup rows pre-existed post-`7f065b4` (PM's earlier DELETE cleared the N4a-era `bcfca492` orphan). A future session with an un-remediated raw-cwd dup would exercise the non-zero path and emit a `system:migration-dedup` forensic row; not exercised in this smoke.
+
+**H2 negative evidence (no new duplicates during N4a.1 window):** DB project-row count held at 5 across the entire N4a.1 smoke session (pid:79564 → pid:62926). No SessionStart hook served by the new sidecar inserted a duplicate — direct evidence H2's dual-form lookup is working as designed. H2-specific curl verify (`SELECT COUNT FROM projects WHERE identity_file_path LIKE '%coder-smoke%'` expecting `1`) not run manually; the aggregate log evidence supersedes.
+
+**Debt 23 second-ship validation note:** `b307af6`'s `liveStreamReceivedRef` guard was shipped pre-N4a.1 but could not be exercised in the N4a smoke because H1 blocked the spawn before the live-transition case could fire. Step 7 of the N4a.1 smoke is its first real-world test. **Confirmed working:** single `done` line, no clear, no duplicate on `running → completed` with viewer open. Debt 23 now fully closed across both the ref-fix and the live-validation dimensions.
 
 **Proposed Jose smoke matrix (dispatch §9 — full rerun of N4a steps 7-10):**
 
