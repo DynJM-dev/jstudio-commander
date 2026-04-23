@@ -78,7 +78,19 @@ Run on `Command Center.app` against an **isolated temp `$HOME`** (`/tmp/n2-1-smo
 
 ### 3.3 User-facing smoke outcome
 
-**BLANK at filing.** PM appends after Jose runs dispatch §6's 3 steps against `Command Center.app`. 3/3 closes N2.1.
+**PASSED 3/3 by Jose on 2026-04-23.** Bearer contract locked end-to-end at the outermost user-observable layer.
+
+**Step-by-step outcomes (dispatch §6 target `Command Center.app` with pre-existing `config.json` moved to `config.json.backup`):**
+
+1. **Cold bearer mint** — PASS. First launch attempt hit a smoke-ordering issue (`mv` done while Command Center.app was still running → Preferences showed "Unreachable" because `read_config` Tauri IPC couldn't find the disk file the frontend polls to discover the sidecar port; running sidecar was unaffected but invisible to the UI). Resolved by quitting + relaunching. On the clean-boot attempt, the fresh-mint branch fired, wrote `config.json` atomically, Preferences → General showed a new bearer (value A). Note for future: dispatch §6 Step 1 wording "moves... Relaunches" implicitly assumes `⌘Q` first; tighter wording would say "quit Command Center.app → move config.json → relaunch."
+2. **Persistence across ⌘Q + relaunch** — PASS. Bearer still matches value A.
+3. **Persistence across second ⌘Q + relaunch** — PASS. Bearer still matches value A.
+
+Preservation logic held across all three launches. Sidecar log confirmed `readOutcome:"preserved"` on launches 2 + 3 (the same trace pattern that made this rotation's investigation tractable going forward).
+
+**Post-smoke cleanup per §9:** Jose restores `~/.commander/config.json.backup` → `~/.commander/config.json` to resume his pre-smoke state with the working N2 bearer he's been using across the day's sessions.
+
+**Debt 15 status: RESOLVED.** T3 regression test now ratchets the contract; §4 D2 hardening closes the residual operational risks that would have made future bearer rotation incidents invisible. §5 Issue 1 finding confirmed (CODER-induced via N2 T11 smoke-script `rm -rf`, not production code bug) — Debt 17 captures the corrective discipline for future rotations.
 
 ## 4. Deviations from dispatch
 
