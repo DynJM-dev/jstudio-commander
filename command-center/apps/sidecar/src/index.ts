@@ -70,6 +70,22 @@ async function main() {
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  // Parent-death watchdog — if the Rust shell exits without cleanly SIGTERM'ing
+  // us (AppleScript Quit / force-quit / crash), process.ppid flips to 1 on
+  // launchd re-parenting. Self-terminate to avoid zombie orphans that would
+  // otherwise hold the sidecar port range on next launch.
+  const originalPpid = process.ppid;
+  const parentWatcher = setInterval(() => {
+    if (process.ppid !== originalPpid) {
+      logger.warn(
+        { originalPpid, currentPpid: process.ppid },
+        'parent re-parented (shell exited) — self-terminating',
+      );
+      clearInterval(parentWatcher);
+      void shutdown('SIGTERM' as NodeJS.Signals);
+    }
+  }, 1000);
 }
 
 main().catch((err) => {

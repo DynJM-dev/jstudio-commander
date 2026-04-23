@@ -34,7 +34,7 @@ command-center/
 
 ## State
 
-- User data: `~/.jstudio-commander/commander.db` (SQLite) + `config.json` (bearer token, port) + `logs/<date>.log`.
+- User data: `~/.commander/commander.db` (SQLite) + `config.json` (bearer token, port) + `logs/<date>.log`.
 - Sidecar ports: 11002..11011 (scanned at boot; first available claimed).
 
 ## Docs

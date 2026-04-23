@@ -21,7 +21,7 @@ function home(): string {
 }
 
 export function configDir(): string {
-  return join(home(), '.jstudio-commander');
+  return join(home(), '.commander');
 }
 
 export function configFile(): string {

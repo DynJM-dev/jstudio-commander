@@ -19,7 +19,7 @@ struct SidecarState {
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-    PathBuf::from(home).join(".jstudio-commander").join("config.json")
+    PathBuf::from(home).join(".commander").join("config.json")
 }
 
 #[cfg(unix)]

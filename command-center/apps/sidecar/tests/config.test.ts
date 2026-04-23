@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { configDir, configFile, loadOrCreateConfig } from '../src/config';
 
 // Exercise the config shape + bearer-token persistence on a temp HOME so we
-// don't touch the real ~/.jstudio-commander/ during test. `config.ts` now
+// don't touch the real ~/.commander/ during test. `config.ts` now
 // resolves paths per call (homedir() read at each call), so stubbing HOME
 // in the test's beforeEach is sufficient — no import-cache dance needed.
 
@@ -26,8 +26,8 @@ describe('config.loadOrCreateConfig', () => {
   });
 
   it('resolves configDir/configFile against the stubbed HOME', () => {
-    expect(configDir()).toBe(join(tempHome, '.jstudio-commander'));
-    expect(configFile()).toBe(join(tempHome, '.jstudio-commander', 'config.json'));
+    expect(configDir()).toBe(join(tempHome, '.commander'));
+    expect(configFile()).toBe(join(tempHome, '.commander', 'config.json'));
   });
 
   it('mints a fresh UUID bearer on first run + persists config.json', async () => {
