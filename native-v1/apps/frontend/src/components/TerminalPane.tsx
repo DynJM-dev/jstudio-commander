@@ -116,8 +116,16 @@ export function TerminalPane({ sessionId, focused }: Props) {
         );
         if (cancelled) return;
         if (res.blob) {
-          const decoded = atob(res.blob);
-          term.write(decoded);
+          // N2.1.6 Bug K fix: atob(b64) returns a binary "string" where each
+          // JS char is one raw UTF-8 byte (codepoint 0-255). Passing that
+          // directly to term.write() caused UTF-16 mojibake — UTF-8 byte
+          // 0xE2 (start of em-dash) rendered as U+00E2 = `â`. xterm.js v5+
+          // accepts a Uint8Array and UTF-8-decodes internally (per xterm
+          // encoding guide + PR #1904), which is the correct path for a
+          // blob containing UTF-8 bytes.
+          // See docs/diagnostics/N2.1.6-bug-k-mojibake-evidence.md.
+          const bytes = Uint8Array.from(atob(res.blob), (c) => c.charCodeAt(0));
+          term.write(bytes);
         }
       } catch (err) {
         console.warn('[terminal] scrollback load failed:', (err as Error).message);
