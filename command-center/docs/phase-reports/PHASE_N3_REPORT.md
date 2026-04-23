@@ -95,7 +95,30 @@ The script contains **zero `rm -rf` against `~/.commander/`**, `~/.claude/`, `~/
 
 ### 3.3 User-facing smoke outcome
 
-**BLANK at filing.** PM appends after Jose runs dispatch §9's 9 steps against `Command Center.app`. 9/9 closes N3.
+**PASSED 9/9 by Jose on 2026-04-23.** External MCP session → spawn / view / cancel / wall-clock-timeout / cross-stream / cold-relaunch all verified with real pixels + real DB evidence.
+
+**Step-by-step outcomes (dispatch §9 target `Command Center.app` + external Claude Code session with `.mcp.json` at `~/Desktop/test-proj-mcp/`):**
+
+1. **Build + launch** — PASS. §3.4.1 triad held.
+2. **External MCP session connect** — PASS. `/mcp` reported `commander · ✓ connected` on first-try after PM refreshed `.mcp.json` bearer to current `d892a2c4…` (pre-smoke). N2.1 lock held — bearer did not drift during or after smoke.
+3. **Spawn `ls -la`** — PASS. Row appeared in Recent agent runs within 3s at `running` → `completed` 2s. Acc. 3.1 + 3.4.
+4. **Worktree check** — PASS via DB evidence. Initial attempt hit D2 non-git fallback because `~/Desktop/test-proj-mcp/` wasn't a git repo; `worktree_path=NULL` + run completed in degraded mode. After `git init` + retry, run `21b8ffa3-…` populated `worktree_path` to a real `.worktrees/run-<uuid>/` path (verified in DB). Live filesystem snapshot was empty by the time Jose `ls`'d because T3 auto-cleans worktrees on terminal-state transition (per §2 shipped design: "best-effort `git worktree remove --force` cleanup on terminal transitions"). Acc. 3.2 met at the DB layer; primary git-worktree path exercised.
+5. **Spawn + view `sleep 7 && echo done`** — PASS. RunViewer opened, `done` appeared progressively over ~7s, no 14px scrollbar-gutter strip, status flipped `running → completed`. Acc. 3.3 met. *One minor UX finding — see §7 Debt 23.*
+6. **Spawn + cancel `sleep 60`** — PASS. Click Cancel on a ~10s-old run; status flipped to `cancelled` near-instantly; `exit_reason: cancelled-sigterm` (sleep respected the signal within 5s grace, no SIGKILL path). WS connection held across the transition. Acc. 3.5 met.
+7. **Spawn + timeout `sleep 30` with `max_wall_clock_seconds=3`** — PASS. Status flipped to `timed-out` at ~3s. `exit_reason: timed-out-wall-clock-sigterm (ran 3s)` — wall-clock bound fired deterministically, SIGTERM-path kill, duration-tagged. KB-P1.6 + KB-P6.15 held. Acc. 3.6 met.
+8. **Cross-stream isolation** — PASS. Recent hook events panel showed 20 events, **all** carrying Jose's external Claude Code session's sid (`5be9ae19…`). Zero events carried any of the spawned-run session_ids (`a4be50af`, `4cbf2bcd`, `8104a80b`, `6e27979f`, `056bc135`). Hook stream and PTY streams kept cleanly separated per KB-P1.13. Acc. 3.7 met.
+9. **Cold relaunch regression** — PASS. After ⌘Q + relaunch: §3.4.1 triad held (9a), bearer unchanged at `d892a2c4…` preserving N2.1 lock (9b), all ~7 runs and hook events persisted across restart (9c). Acc. 3.8 met.
+
+All acceptance criteria observable in pixels + real MCP tool-call output + DB evidence. N3 close gate met.
+
+**PM-flagged observations (banked, non-blocking — folded into §7 Debt 23/24 + routed to CTO for N4 UX consideration):**
+
+- **UX Observation A (for CTO N4 scope):** RunViewer has only an Exit (×) affordance, no "Back" button. Low severity for N3 (single viewer surface at a time); more relevant when N4 kanban introduces card → viewer → card navigation. Banking for CTO N4 dispatch scope.
+- **Minor bug (§7 Debt 23):** RunViewer clears live xterm output on `running → completed` transition — "done" text disappeared from the open viewer when status flipped; data IS preserved in `sessions.scrollback_blob` (verified by close + reopen restoring the content). UX artifact in lifecycle effect, not data loss.
+- **Minor bug (§7 Debt 24):** Recent agent runs panel ordering is non-chronological — `bee17096` pinned at position 1 (the only NULL-worktree_path run) AND new entries land at arbitrary positions unrelated to timestamps. Cosmetic in a diagnostic panel. N4 kanban will reimplement ordering properly.
+- **Cosmetic:** sub-second wall-clock runs render as `—` instead of `0s` or `<1s` in the Recent runs panel. Not worth a debt entry; N4 formatter redesign will address.
+
+**Post-smoke cleanup:** None required. SMOKE_DISCIPLINE v1.2 §3.4.2 isolation held throughout — Jose's real `~/.commander/` state (including bearer) was never touched by the smoke; no backup-restore action needed.
 
 ## 4. Deviations from dispatch
 
@@ -159,7 +182,11 @@ Outcome: §4 D1 shift to stdout stream path. Total investigation ~10 min; NO sec
 
 **Debt 22 (NEW, LOW) — Biome a11y lint suppressions on the RunViewer backdrop.** Two `biome-ignore lint/a11y/useKeyWithClickEvents` in `apps/frontend/src/components/run-viewer.tsx`. **Severity:** LOW. **Why:** modal backdrop click-outside is a standard UI pattern; keyboard close via the aria-labeled Close button satisfies a11y semantically. **Est. effort:** N4 Radix Dialog adoption will restructure the modal + eliminate the need for raw div click-handlers. Suppressions disappear naturally.
 
-Debts 1–14 from earlier phases unchanged. Debts 15-17 resolved. Debt 18-22 new, all LOW severity.
+**Debt 23 (NEW, LOW, post-filing added by PM 2026-04-23 after Jose smoke) — RunViewer clears live xterm output on `running → completed` transition.** User watches run complete, `done` (or whatever final output) disappears from the open viewer at the exact moment status flips. Data IS preserved — close + reopen restores full scrollback from `sessions.scrollback_blob`. So it's a UI lifecycle artifact, not data loss. **Severity:** LOW. **Why:** likely `useSessionStream` hook resets state when it observes terminal-state transition, OR WS unsubscribe on terminal-state fires before xterm flushes the final byte, OR an effect dependency rerun clears the buffer. **Est. effort:** ~30-45 min — audit `use-session-stream.ts` + `run-viewer.tsx` effect lifecycle; keep xterm buffer intact on terminal-state transition, only stop ingesting new bytes. **Scheduling:** N4 RunViewer restructure (Radix Dialog) is the natural fold point.
+
+**Debt 24 (NEW, LOW, post-filing added by PM 2026-04-23 after Jose smoke) — Recent agent runs panel ordering is non-chronological.** The `bee17096` row (the only run with `worktree_path=NULL` from pre-git-init degraded-mode fallback) is pinned at position 1 regardless of timestamp; new entries land at arbitrary positions unrelated to `started_at` ordering. Screenshot evidence in §3.3 step 7 narrative. **Severity:** LOW (cosmetic in a diagnostic panel). **Why:** likely NULL-handling in SQL `ORDER BY` (e.g. NULLS FIRST) OR frontend `.sort()` comparator returning inconsistent order on some field combination. Cosmetic sub-second wall-clock displaying as `—` instead of `0s`/`<1s` also falls under this umbrella (render formatter quirk, not a separate debt). **Est. effort:** ~15-30 min to audit `services/agent-runs.ts` `listRecent` ORDER BY + frontend sort, swap to `ORDER BY started_at DESC` (or `ended_at DESC NULLS LAST, started_at DESC` if grouping terminal runs is preferred). N4 kanban will re-implement ordering from scratch, so potentially zero action needed if the kanban's implementation lands first.
+
+Debts 1–14 from earlier phases unchanged. Debts 15-17 resolved. Debt 18-24 new, all LOW severity.
 
 ## 8. Questions for PM
 
