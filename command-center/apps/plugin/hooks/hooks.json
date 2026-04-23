@@ -5,11 +5,9 @@
         "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/session-start",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" session-start",
+            "timeout": 5
           }
         ]
       }
@@ -18,11 +16,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/user-prompt-submit",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" user-prompt-submit",
+            "timeout": 5
           }
         ]
       }
@@ -32,11 +28,9 @@
         "matcher": ".*",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/pre-tool-use",
-            "timeout": 30,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" pre-tool-use",
+            "timeout": 30
           }
         ]
       }
@@ -46,11 +40,9 @@
         "matcher": ".*",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/post-tool-use",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" post-tool-use",
+            "timeout": 5
           }
         ]
       }
@@ -59,11 +51,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/notification",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" notification",
+            "timeout": 5
           }
         ]
       }
@@ -72,11 +62,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/stop",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" stop",
+            "timeout": 5
           }
         ]
       }
@@ -85,11 +73,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/subagent-stop",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" subagent-stop",
+            "timeout": 5
           }
         ]
       }
@@ -98,11 +84,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/session-end",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" session-end",
+            "timeout": 5
           }
         ]
       }
@@ -111,11 +95,9 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:${COMMANDER_PORT}/hooks/pre-compact",
-            "timeout": 5,
-            "headers": { "Authorization": "Bearer ${COMMANDER_TOKEN}" },
-            "allowedEnvVars": ["COMMANDER_TOKEN", "COMMANDER_PORT"]
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/forward.sh\" pre-compact",
+            "timeout": 5
           }
         ]
       }
