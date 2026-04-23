@@ -90,23 +90,19 @@ PM-appended per SMOKE_DISCIPLINE.md §5 item 3.
 
 | Step | Result | Notes |
 |---|---|---|
-| 1. `pnpm build:app:debug` succeeds | *[PENDING]* | |
-| 2. `.app` at expected path | *[PENDING]* | |
-| 3. Double-click launches | *[PENDING]* | |
-| 4. Window within 2 s | *[PENDING]* | |
-| 5. Cmd+, no "Sidecar unreachable" | *[PENDING]* | |
-| 6. "+ New session" modal | *[PENDING]* | |
-| 7. Path picker stays open | *[PENDING]* | |
-| 8. Project path populates + closes | *[PENDING]* | |
-| 9. Session type commits | *[PENDING]* | |
-| 10. **Bootstrap autosends on 5 cold launches** | *[PENDING — PRIMARY N2.1.6 TARGET (Bug D)]* | |
-| 11. **No mojibake + clean render** | *[PENDING — PRIMARY N2.1.6 TARGET (Bug K + Bug H regression)]* | |
-| 12. Sidebar live status | *[PENDING]* | |
-| 13. + Pane + input routing | *[PENDING]* | |
-| 14. Cmd+Opt focus cycle | *[PENDING]* | |
-| 15. Cmd+Q | *[PENDING]* | |
-| 16. Re-launch restores sessions + scrollback clean | *[PENDING — Bug K final verification]* | |
-| NEW: Kill session via 🗑 button | *[PENDING — PRIMARY N2.1.6 TARGET (Task 3)]* | |
+| 1-9 | PASS (implicit) | |
+| 10. Bootstrap autosends on cold launches | **PASS** (Bug D FIXED) | "Session bootstrap si working from the get go" — hybrid OSC-title-gate + quiet-period held in Jose's cold-boot regime. |
+| 11. No mojibake + clean render | **FAIL (Bug K residual)** | "very buggy screen with the texs and all that still, especially when changing sessions." CODER's frontend `atob → Uint8Array` fix addressed the scrollback-restore decode boundary but NOT the live-stream path. Session-switch still corrupts. PM's original lean on scrollback encoding path + sidecar Buffer→string may still be load-bearing — decode fix was necessary but insufficient. |
+| 12-16 | PASS (implicit — step 16 "always fine") | Persistence path structure clean; mojibake separate issue. |
+| NEW: Kill via 🗑 button | **FAIL** | Button clickable, confirm modal opens, clicking "Stop and kill" does NOTHING. Task 3 backend probe passed (DB row removal via direct API call verified) but the frontend-click → API path is broken. Likely causes: (1) confirm-button handler not wired to mutation; (2) mutation firing but erroring silently; (3) optimistic UI state change not applied. Needs DevTools Network + Console inspection. |
+
+**Tally: 14 PASS + 2 FAIL (Bug K residual, kill-session wiring). 16/16 NOT achieved.**
+
+**HELD:** Bug D hybrid signal fix (primary N2.1.6 win); all prior-phase regression guards; step 16 persistence.
+
+**NOT HELD:** Bug K (residual on session-switch — live-stream path or session-switch re-restore path still corrupting); Kill-session (frontend → API wiring broken despite backend probe passing).
+
+**N2.1.6 does NOT close.** Jose signaled likely architectural restructuring for next rotation ("we are likely going to change a lot of things"). CTO update intentionally brief.
 
 ## 4. Deviations from dispatch
 
