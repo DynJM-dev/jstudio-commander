@@ -1,0 +1,17 @@
+{
+  "name": "@commander/shell",
+  "version": "0.1.0-n1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:debug": "tauri build --features devtools",
+    "typecheck": "echo 'shell is Rust — no TS' && exit 0",
+    "test": "echo 'shell tests via cargo test' && exit 0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.1.0"
+  }
+}

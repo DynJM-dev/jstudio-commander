@@ -1,0 +1,25 @@
+{
+  "name": "@commander/sidecar",
+  "version": "0.1.0-n1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build:binary": "bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile bin/commander-sidecar",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@commander/shared": "workspace:*",
+    "drizzle-orm": "0.38.2",
+    "fastify": "5.2.0",
+    "pino": "9.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.1.14",
+    "drizzle-kit": "0.30.1",
+    "typescript": "5.7.2",
+    "vitest": "2.1.8"
+  }
+}

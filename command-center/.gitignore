@@ -1,0 +1,39 @@
+node_modules/
+dist/
+build/
+target/
+.turbo/
+.vite/
+
+# Bun
+.bun/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Tauri generated
+**/src-tauri/gen/schemas/
+
+# Tauri build output kept out of source tree
+**/src-tauri/target/
+
+# Sidecar single-binary output
+apps/sidecar/bin/
+
+# Test coverage
+coverage/
