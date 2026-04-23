@@ -74,7 +74,25 @@ Scaffold Command-Center from an empty monorepo target: Bun-workspaces layout (sh
 
 ### 3.3 User-facing smoke outcome
 
-**BLANK at filing.** PM appends after Jose runs dispatch §9's 8-step UI-only scenario on a Finder-launched build.
+**FAILED at step 2 on 2026-04-23 by Jose.** `bun run build:app` succeeded, `.app` produced. Jose moved `Commander.app` to `/Applications/`, double-clicked, **nothing happened** — no window, no crash dialog, no Gatekeeper prompt.
+
+**Step-level breakdown:**
+- Step 1 (build `.app`) — PASS. `bun run build:app` produced `Commander.app` (65 MB) + `Commander_0.1.0_aarch64.dmg` as reported in §2.
+- Step 2 (Finder launch → visible skeleton ≤200ms) — **FAIL (blocking).** Double-click is a silent no-op; no process spawns.
+- Steps 3-8 — BLOCKED (cannot proceed without launch).
+
+**PM diagnosis (evidence filed per G10 investigation discipline):**
+- `xattr -l /Applications/Commander.app` → only `com.apple.provenance` flag present; `com.apple.quarantine` absent. Classic unsigned-app Gatekeeper prompt path is NOT the cause.
+- `spctl -a -vvv` on both `/Applications/` copy AND build-output copy returns: *"code has no resources but signature indicates they must be present."* Reproducible from build output → not a move-artifact; bundle is malformed from the build itself.
+- `codesign -dv --verbose=4`: `Signature=adhoc`, `flags=0x20002(adhoc,linker-signed)`, `CodeDirectory hashes=1169+0` (no sealed resource hashes), `Info.plist=not bound`.
+- Bundle tree inspection: `Contents/_CodeSignature/` directory is **missing**. Only `MacOS/{commander-shell, commander-sidecar}` + `Resources/icon.icns` + `Info.plist`.
+- `strings Contents/MacOS/commander-shell | grep -iE "index\.html|frontend"` → frontend IS embedded in the Rust binary (Tauri v2 `include_dir!` path worked). The empty `Contents/Resources/` is expected Tauri behavior.
+
+**Root cause:** with `"signingIdentity": null` + Bun-based build pipeline, Tauri v2's output relies on the linker-injected ad-hoc Mach-O signature on `commander-shell` but never runs the bundle-level `codesign --force --deep --sign -` pass that produces `Contents/_CodeSignature/CodeResources`. Apple Silicon + macOS Sequoia's stricter verification sees a signature claiming resources exist while the bundle lacks the resource manifest → silent launch rejection.
+
+**Secondary finding (not blocking, worth fixing alongside):** four `Commander.app` bundles on disk, two (native-v1 archive + the N1 build) share bundle ID `studio.jstudio.commander`. Launch Services collision under same bundle ID.
+
+**Routing:** N1.1 hotfix dispatch required per dispatch §9 closing + §10. Scope proposed by PM: (T1) post-build codesign pass in `build:app` pipeline, (T2) rename `Commander` → `Command Center` with bundle ID update (eliminates v1 collision), (T3) stale-bundle cleanup instructions for Jose, (T4) CODER smoke-readiness + Jose re-runs 8-step §9 smoke. Estimated ~3 LOC in build scripts + `tauri.conf.json` edits. N1 close blocks on N1.1 passing.
 
 ## 4. Deviations from dispatch
 
