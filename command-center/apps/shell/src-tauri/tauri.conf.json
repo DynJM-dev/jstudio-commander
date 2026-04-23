@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Commander",
+  "productName": "Command Center",
   "version": "0.1.0",
-  "identifier": "studio.jstudio.commander",
+  "identifier": "studio.jstudio.command-center",
   "build": {
     "beforeDevCommand": "bun --filter '@commander/frontend' dev",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Commander",
+        "title": "Command Center",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

@@ -6,7 +6,7 @@ export function HomePage() {
 
   return (
     <main className="h-full w-full flex flex-col items-center justify-center gap-3 bg-neutral-950 text-neutral-100 select-none">
-      <div className="text-4xl font-semibold tracking-tight">Command-Center</div>
+      <div className="text-4xl font-semibold tracking-tight">Command Center</div>
       <div className="text-sm text-neutral-400">ready.</div>
       <div className="text-xs text-neutral-500 mt-6">
         <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-300">
