@@ -36,7 +36,7 @@ describe('config.loadOrCreateConfig', () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     expect(cfg.port).toBe(11005);
-    expect(cfg.version).toBe('0.1.0-n1');
+    expect(cfg.version).toBe('0.1.0-n2');
 
     const onDisk = JSON.parse(await readFile(configFile(), 'utf8'));
     expect(onDisk.bearerToken).toBe(cfg.bearerToken);
@@ -59,6 +59,6 @@ describe('config.loadOrCreateConfig', () => {
     const onDisk = JSON.parse(await readFile(configFile(), 'utf8'));
     expect(onDisk.bearerToken).toBe(preBearer);
     expect(onDisk.port).toBe(11007);
-    expect(onDisk.version).toBe('0.1.0-n1');
+    expect(onDisk.version).toBe('0.1.0-n2');
   });
 });

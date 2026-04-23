@@ -14,7 +14,12 @@ async function main() {
     process.exit(1);
   }
 
-  const config = await loadOrCreateConfig(port);
+  // Pass the boot logger so loadOrCreateConfig emits preserved/minted trace
+  // — lets future bearer-rotation incidents be diagnosed from logs alone.
+  const config = await loadOrCreateConfig(
+    port,
+    logger as unknown as Parameters<typeof loadOrCreateConfig>[1],
+  );
 
   let dbHandles: ReturnType<typeof openDb>;
   try {
